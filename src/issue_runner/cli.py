@@ -9,6 +9,7 @@ Examples:
 import argparse
 import logging
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -52,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _resolve_copilot_cmd(cmd: str) -> str:
+    if cmd != "copilot":
+        return cmd
+    fake = shutil.which("fake-copilot")
+    if fake:
+        return fake
+    return cmd
+
+
 def _load_issue(args, cfg, repo_dir: Path) -> dict:
     """Route the issue read: file > explicit GitHub --repo > origin remote (Gitea/GitHub)."""
     if args.issue_file:
@@ -84,6 +94,7 @@ def main(argv=None) -> int:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
+        force=True,
     )
 
     if not args.issue and not args.issue_file:
@@ -102,6 +113,7 @@ def main(argv=None) -> int:
         cfg.github_tickets = False
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
+    cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
     if args.max_ai_credits:
         cfg.max_ai_credits = args.max_ai_credits
     if args.model or args.effort:

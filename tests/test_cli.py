@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import subprocess
 import tomllib
@@ -71,6 +72,35 @@ def test_dry_run_makes_no_calls(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "copilot" in out and "--allow-all-tools" in out
     assert not (repo / ".issue-runner").exists()
+
+
+def test_verbose_plan_logging_uses_debug_stream(tmp_path, capsys, monkeypatch):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    make_fake_copilot(tmp_path, plan)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    main([
+        "--issue-file",
+        str(issue_file),
+        "--dir",
+        str(repo),
+        "--plan-only",
+        "--no-github-tickets",
+        "-v",
+    ])
+    assert "plan: 1 tickets" in capsys.readouterr().err
 
 
 def test_requires_issue_ref_or_file(tmp_path, capsys):
