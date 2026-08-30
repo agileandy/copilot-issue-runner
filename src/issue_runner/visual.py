@@ -79,4 +79,4 @@ def render_flow(report: Mapping[str, Any] | None) -> str:
     return _visual_snapshot_for_non_tty(report)
 
 
-__all__ = ["render_flow", "_visual_snapshot_for_non_tty"]
+__all__ = ["_visual_snapshot_for_non_tty", "render_flow"]

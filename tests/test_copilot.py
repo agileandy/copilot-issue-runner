@@ -87,3 +87,13 @@ def test_timeout_raises_copilot_error(tmp_path):
     client = make_client(tmp_path, hanging_runner)
     with pytest.raises(CopilotError, match="timed out"):
         client.run("q", role="planner")
+
+
+def test_visual_mode_never_touches_copilot_argv(tmp_path):
+    runner = RecordingRunner()
+    cfg = RunnerConfig(repo_dir=tmp_path, visual=True)
+    client = CopilotClient(cfg, runner=runner)
+    client.run("q", role="planner")
+    argv, _ = runner.calls[0]
+    assert "--visual" not in argv  # copilot has no such flag; visual is runner-side only
+    assert argv[argv.index("-C") + 1] == str(tmp_path)  # -C keeps its directory value

@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import RunnerConfig
-from .visual import render_flow
 from .copilot import CopilotError
 from .phases import devops
 from .phases.build import (
@@ -28,6 +27,7 @@ from .phases.devops import DevopsError
 from .phases.plan import plan_step
 from .phases.verify import VerifyError, verify_step
 from .tickets import Ticket, TicketStore
+from .visual import render_flow
 
 log = logging.getLogger("issue_runner")
 
@@ -40,15 +40,19 @@ class RunReport:
     details: list[str] = field(default_factory=list)
 
 
-def _render_visual(cfg: RunnerConfig, *, plan: str | None = None, branch: str | None = None, tickets: list[Ticket] | None = None) -> None:
+def _render_visual(
+    cfg: RunnerConfig,
+    *,
+    plan: str | None = None,
+    branch: str | None = None,
+    tickets: list[Ticket] | None = None,
+) -> None:
     if not cfg.visual:
         return
     payload = {
         "plan": plan if plan is not None else "pending",
         "branch": branch if branch is not None else "pending",
-        "tickets": [
-            {"id": ticket.id, "status": ticket.status} for ticket in (tickets or [])
-        ],
+        "tickets": [{"id": ticket.id, "status": ticket.status} for ticket in (tickets or [])],
     }
     print(render_flow(payload), flush=True)
 

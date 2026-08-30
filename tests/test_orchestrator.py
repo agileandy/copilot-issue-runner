@@ -32,43 +32,23 @@ def verdict(v, tf="make it stronger", cf="fix the code"):
 
 def test_render_flow_snapshot_contract():
     assert (
-        render_flow({"plan": "done", "branch": "active", "tickets": [{"id": 1, "status": "pending"}]})
-        == "\n".join(
-            [
-                "issue pipeline",
-                "plan: done",
-                "   ↓",
-                "branch: active",
-                "   ↓",
-                "per-ticket build/verify:",
-                "  ticket #1: pending",
-                "   ↓",
-                "commit: pending",
-            ]
+        render_flow(
+            {"plan": "done", "branch": "active", "tickets": [{"id": 1, "status": "pending"}]}
         )
+        == "issue pipeline\nplan: done\n   ↓\nbranch: active\n   ↓\nper-ticket build/verify:\n  ticket #1: pending\n   ↓\ncommit: pending"
         and render_flow({"plan": "done", "branch": "active", "tickets": []})
-        == "\n".join(
-            [
-                "issue pipeline",
-                "plan: done",
-                "   ↓",
-                "branch: active",
-                "   ↓",
-                "per-ticket build/verify:",
-                "  tickets: none",
-                "   ↓",
-                "commit: pending",
-            ]
-        )
+        == "issue pipeline\nplan: done\n   ↓\nbranch: active\n   ↓\nper-ticket build/verify:\n  tickets: none\n   ↓\ncommit: pending"
     )
 
 
 def test_render_flow_includes_ticket_id_in_snapshot():
-    assert "ticket 1" in render_flow({
-        "plan": "done",
-        "branch": "done",
-        "tickets": [{"id": 1, "title": "subtract ints", "status": "in_progress"}],
-    })
+    assert "ticket 1" in render_flow(
+        {
+            "plan": "done",
+            "branch": "done",
+            "tickets": [{"id": 1, "title": "subtract ints", "status": "in_progress"}],
+        }
+    )
 
 
 @pytest.fixture
