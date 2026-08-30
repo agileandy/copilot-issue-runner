@@ -1,6 +1,8 @@
 import json
 import stat
 import subprocess
+import tomllib
+from pathlib import Path
 
 from issue_runner.cli import gr_main, main
 
@@ -79,6 +81,11 @@ def test_requires_issue_ref_or_file(tmp_path, capsys):
 def test_gr_main_delegates_to_main(tmp_path, capsys):
     rc = gr_main(["--dir", str(tmp_path)])
     assert rc == 2
+
+
+def test_gr_runner_script_registered_in_pyproject():
+    data = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
+    assert data["project"]["scripts"]["gr-runner"] == "issue_runner.cli:gr_main"
 
 
 def test_gitea_origin_routes_to_gitea_fetch(tmp_path, capsys, monkeypatch):
