@@ -7,7 +7,7 @@ dependencies = []
 
 [project.scripts]
 issue-runner = "issue_runner.cli:main"
-gr-runner = "issue_runner.cli:gr_main"
+gh-runner = "issue_runner.cli:gh_main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]

@@ -131,8 +131,8 @@ def main(argv=None) -> int:
     return 0 if report.blocked == 0 else 3
 
 
-def gr_main(argv=None) -> int:
-    """Entry point for the `gr-runner` command; delegates to main."""
+def gh_main(argv=None) -> int:
+    """Entry point for the `gh-runner` command; delegates to main."""
     return main(argv)
 
 

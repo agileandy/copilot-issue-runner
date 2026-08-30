@@ -4,7 +4,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from issue_runner.cli import gr_main, main
+from issue_runner.cli import gh_main, main
 
 
 def make_fake_copilot(tmp_path, reply):
@@ -78,14 +78,14 @@ def test_requires_issue_ref_or_file(tmp_path, capsys):
     assert rc == 2
 
 
-def test_gr_main_delegates_to_main(tmp_path, capsys):
-    rc = gr_main(["--dir", str(tmp_path)])
+def test_gh_main_delegates_to_main(tmp_path, capsys):
+    rc = gh_main(["--dir", str(tmp_path)])
     assert rc == 2
 
 
 def test_gr_runner_script_registered_in_pyproject():
     data = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
-    assert data["project"]["scripts"]["gr-runner"] == "issue_runner.cli:gr_main"
+    assert data["project"]["scripts"]["gh-runner"] == "issue_runner.cli:gh_main"
 
 
 def test_gitea_origin_routes_to_gitea_fetch(tmp_path, capsys, monkeypatch):
@@ -102,7 +102,7 @@ def test_gitea_origin_routes_to_gitea_fetch(tmp_path, capsys, monkeypatch):
 
     def fake_fetch(api_base, owner_repo, number, token=None, getter=None):
         fetched.update(api_base=api_base, owner_repo=owner_repo, number=number)
-        return {"number": 1, "title": "wrapper", "body": "make gr-runner", "url": "u"}
+        return {"number": 1, "title": "wrapper", "body": "make gh-runner", "url": "u"}
 
     monkeypatch.setattr("issue_runner.cli.fetch_gitea_issue", fake_fetch)
     plan = json.dumps(
