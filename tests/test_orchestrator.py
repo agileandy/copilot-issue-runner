@@ -179,8 +179,8 @@ class RecordingBackend:
         self._next += 1
         return self._next
 
-    def close(self, number, comment):
-        self.closed.append((number, comment))
+    def close(self, ticket, comment):
+        self.closed.append((ticket.id, comment))
 
 
 def test_backend_mirrors_tickets_and_closes_on_pass(git_repo, cfg):
@@ -198,7 +198,8 @@ def test_backend_mirrors_tickets_and_closes_on_pass(git_repo, cfg):
     assert report.done == 1
     assert backend.created == [(17, 1)]
     assert len(backend.closed) == 1
-    assert backend.closed[0][0] == 101
+    assert backend.closed[0][0] == 1
+    assert "Done in " in backend.closed[0][1]
 
 
 def test_backend_backfills_on_resume(git_repo, cfg):
@@ -223,4 +224,4 @@ def test_backend_backfills_on_resume(git_repo, cfg):
     reloaded.load()
     assert reloaded.tickets[1].github_issue == 101
     # a backfilled ticket that is already done must not be left open in the tracker
-    assert backend.closed == [(101, "completed in an earlier run")]
+    assert backend.closed == [(2, "completed in an earlier run")]
