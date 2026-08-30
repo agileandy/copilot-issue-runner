@@ -111,6 +111,8 @@ def run_issue(
             report.details.append(
                 f"ticket {t.id} [{t.status}]: {t.title} — assert: {t.test_assertion}"
             )
+        emit(cfg.events, "phase", name="finished")
+        emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch="")
         return report
 
     if cfg.retry_blocked:

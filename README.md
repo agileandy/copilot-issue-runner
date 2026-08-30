@@ -71,3 +71,10 @@ uv sync
 uv run pytest        # no model calls: all agents are faked
 uv run ruff check src tests
 ```
+
+## Visual mode (issue #19)
+
+`--visual` on a TTY opens a contained Textual TUI: pipeline banner, live ticket
+board, streaming agent output, and run stats (calls, tokens, elapsed). `q`
+detaches the display while the run continues headless; the summary prints after
+exit. Non-TTY invocations fall back to plain text automatically.
