@@ -27,7 +27,7 @@ def test_builds_non_interactive_argv(tmp_path):
     client = make_client(tmp_path, runner)
     client.run("do a thing", role="builder.coder")
 
-    argv, kwargs = runner.calls[0]
+    argv, _kwargs = runner.calls[0]
     assert argv[0] == "copilot"
     assert "-p" in argv and "do a thing" in argv
     for flag in ("-s", "--allow-all-tools", "--no-ask-user", "--no-auto-update"):

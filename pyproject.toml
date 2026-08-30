@@ -21,6 +21,7 @@ packages = ["src/issue_runner"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+python_functions = "test_*"
 
 [tool.ruff]
 line-length = 100
