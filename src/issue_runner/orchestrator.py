@@ -13,7 +13,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import github_io
 from .config import RunnerConfig
 from .copilot import CopilotError
 from .phases import devops
@@ -57,10 +56,15 @@ def run_issue(
         store.set_tickets(tickets)
         store.save()
         log.info("plan: %d tickets — %s", len(tickets), summary)
-        if cfg.github_tickets and cfg.repo and issue["number"]:
-            for ticket in store.tickets:
-                ticket.github_issue = github_io.create_subissue(cfg.repo, issue["number"], ticket)
-            store.save()
+
+    # mirror tickets to the tracker; also backfills runs planned without a backend
+    if cfg.tickets_backend and issue["number"]:
+        for ticket in store.tickets:
+            if ticket.github_issue is None:
+                ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
+                if ticket.status == "done":
+                    cfg.tickets_backend.close(ticket.github_issue, "completed in an earlier run")
+        store.save()
 
     report = RunReport(
         done=sum(1 for t in store.tickets if t.status == "done"),
@@ -111,9 +115,9 @@ def _process_ticket(
                 store.save()
                 report.done += 1
                 report.details.append(f"ticket {ticket.id} done @ {sha}: {ticket.title}")
-                if ticket.github_issue and cfg.repo:
-                    github_io.close_subissue(
-                        cfg.repo, ticket.github_issue, f"Done in {sha} on {store.branch}"
+                if ticket.github_issue and cfg.tickets_backend:
+                    cfg.tickets_backend.close(
+                        ticket.github_issue, f"Done in {sha} on {store.branch}"
                     )
                 return
 

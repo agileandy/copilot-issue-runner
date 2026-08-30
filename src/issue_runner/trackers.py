@@ -7,6 +7,7 @@ from an http(s) remote URL or overridden by the GITEA_URL environment variable
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -92,3 +93,65 @@ def fetch_gitea_issue(
         "body": data.get("body") or "",
         "url": data.get("html_url", ""),
     }
+
+
+def gitea_write_token() -> str:
+    """Issue writes act as the claude bot; the human token is a warned fallback."""
+    token = os.environ.get("GITEA_CLAUDE_TOKEN")
+    if token:
+        return token
+    token = os.environ.get("GITEA_TOKEN")
+    if token:
+        logging.getLogger("issue_runner").warning(
+            "GITEA_CLAUDE_TOKEN not set — Gitea ticket writes will be attributed "
+            "to the human account, not the claude bot"
+        )
+        return token
+    raise TrackerError("neither GITEA_CLAUDE_TOKEN nor GITEA_TOKEN is set")
+
+
+def _http_json(method: str, url: str, token: str, payload: dict | None = None) -> str:
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={"Authorization": f"token {token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return response.read().decode()
+
+
+def create_gitea_subissue(
+    api_base: str,
+    owner_repo: str,
+    parent_number: int,
+    ticket,
+    token: str | None = None,
+    requester=_http_json,
+) -> int:
+    token = token or gitea_write_token()
+    body = (
+        f"Part of #{parent_number}.\n\n"
+        f"{ticket.description}\n\n"
+        f"**Single test assertion:** `{ticket.test_assertion}`"
+    )
+    url = f"{api_base.rstrip('/')}/api/v1/repos/{owner_repo}/issues"
+    reply = requester(
+        "POST", url, token, {"title": f"[#{parent_number}] {ticket.title}", "body": body}
+    )
+    return int(json.loads(reply)["number"])
+
+
+def close_gitea_issue(
+    api_base: str,
+    owner_repo: str,
+    number: int,
+    comment: str,
+    token: str | None = None,
+    requester=_http_json,
+) -> None:
+    token = token or gitea_write_token()
+    base = f"{api_base.rstrip('/')}/api/v1/repos/{owner_repo}/issues/{number}"
+    requester("POST", f"{base}/comments", token, {"body": comment})
+    requester("PATCH", base, token, {"state": "closed"})
