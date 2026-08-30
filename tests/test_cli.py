@@ -101,7 +101,9 @@ def test_gitea_origin_routes_to_gitea_fetch(tmp_path, capsys, monkeypatch):
     )
     fake = make_fake_copilot(tmp_path, plan)
 
-    rc = main(["1", "--dir", str(repo), "--copilot-cmd", str(fake), "--plan-only"])
+    rc = main(
+        ["1", "--dir", str(repo), "--copilot-cmd", str(fake), "--plan-only", "--no-github-tickets"]
+    )
     assert rc == 0
     assert fetched == {
         "api_base": "http://gitea.local:3000",
@@ -119,3 +121,46 @@ def test_tracker_error_is_friendly_not_traceback(tmp_path, capsys):
     assert rc == 2
     err = capsys.readouterr().err
     assert "origin" in err and "Traceback" not in err
+
+
+def test_gitea_origin_wires_mirror_backend(tmp_path, monkeypatch):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "http://gitea.local:3000/Org/thing.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    built = {}
+
+    class FakeBackend:
+        def __init__(self, api_base, owner_repo):
+            built.update(api_base=api_base, owner_repo=owner_repo)
+
+        def create(self, parent_number, ticket):
+            built.setdefault("created", []).append(ticket.id)
+            return 500 + ticket.id
+
+        def close(self, number, comment):
+            pass
+
+    monkeypatch.setattr("issue_runner.cli.GiteaTickets", FakeBackend)
+    monkeypatch.setattr(
+        "issue_runner.cli.fetch_gitea_issue",
+        lambda *a, **k: {"number": 1, "title": "wrapper", "body": "b", "url": "u"},
+    )
+    plan = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [{"title": "t1", "description": "d", "test_assertion": "a == 1"}],
+        }
+    )
+    fake = make_fake_copilot(tmp_path, plan)
+
+    rc = main(["1", "--dir", str(repo), "--copilot-cmd", str(fake), "--plan-only"])
+    assert rc == 0
+    assert built["api_base"] == "http://gitea.local:3000"
+    assert built["owner_repo"] == "Org/thing"
+    assert built["created"] == [1]

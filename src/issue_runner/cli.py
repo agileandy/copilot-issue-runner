@@ -17,6 +17,7 @@ from .copilot import CopilotClient
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.plan import PLAN_PROMPT
+from .ticket_mirror import GiteaTickets, GithubTickets
 from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 
@@ -56,17 +57,25 @@ def _load_issue(args, cfg, repo_dir: Path) -> dict:
     if args.issue_file:
         return issue_from_file(args.issue_file)
     if cfg.repo:
+        if cfg.github_tickets:
+            cfg.tickets_backend = GithubTickets(cfg.repo)
         return fetch_issue(args.issue, repo=cfg.repo)
     info = resolve(repo_dir)
     if info.kind == "gitea":
-        if cfg.github_tickets:
-            logging.getLogger("issue_runner").info(
-                "origin is Gitea: sub-issue mirroring is not supported yet; "
-                "tickets are tracked locally in .issue-runner/"
+        import os
+
+        api_base = info.api_base or os.environ.get("GITEA_URL")
+        if cfg.github_tickets and api_base:
+            cfg.tickets_backend = GiteaTickets(api_base, info.owner_repo)
+        elif cfg.github_tickets:
+            logging.getLogger("issue_runner").warning(
+                "cannot mirror tickets: Gitea API base underivable from ssh remote "
+                "(set GITEA_URL); tickets stay local in .issue-runner/"
             )
-        cfg.github_tickets = False
-        return fetch_gitea_issue(info.api_base, info.owner_repo, args.issue)
+        return fetch_gitea_issue(api_base, info.owner_repo, args.issue)
     cfg.repo = info.owner_repo
+    if cfg.github_tickets:
+        cfg.tickets_backend = GithubTickets(cfg.repo)
     return fetch_issue(args.issue, repo=cfg.repo)
 
 

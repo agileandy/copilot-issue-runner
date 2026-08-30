@@ -166,3 +166,61 @@ def test_copilot_error_blocks_ticket_not_run(git_repo, cfg):
     client = ExplodingClient([(plan_reply(), None)])
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
     assert report.blocked == 1 and report.done == 0
+
+
+class RecordingBackend:
+    def __init__(self):
+        self.created = []
+        self.closed = []
+        self._next = 100
+
+    def create(self, parent_number, ticket):
+        self.created.append((parent_number, ticket.id))
+        self._next += 1
+        return self._next
+
+    def close(self, number, comment):
+        self.closed.append((number, comment))
+
+
+def test_backend_mirrors_tickets_and_closes_on_pass(git_repo, cfg):
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1
+    assert backend.created == [(17, 1)]
+    assert len(backend.closed) == 1
+    assert backend.closed[0][0] == 101
+
+
+def test_backend_backfills_on_resume(git_repo, cfg):
+    from issue_runner.tickets import Ticket
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    mirrored = Ticket(id=1, title="a", description="d", test_assertion="x")
+    mirrored.status = "done"
+    mirrored.github_issue = 55
+    unmirrored = Ticket(id=2, title="b", description="d", test_assertion="y")
+    unmirrored.status = "done"
+    store.set_tickets([mirrored, unmirrored])
+    store.save()
+
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    report = run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 2
+    # only the unmirrored ticket gets a new Gitea issue
+    assert backend.created == [(17, 2)]
+    reloaded = TicketStore(git_repo / ".state", issue_ref="17")
+    reloaded.load()
+    assert reloaded.tickets[1].github_issue == 101
+    # a backfilled ticket that is already done must not be left open in the tracker
+    assert backend.closed == [(101, "completed in an earlier run")]
