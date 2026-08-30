@@ -1,5 +1,4 @@
 import json
-import subprocess
 
 from issue_runner.config import RunnerConfig
 from issue_runner.copilot import CopilotClient
@@ -63,15 +62,15 @@ def test_orchestrator_emits_lifecycle_events(git_repo, cfg):  # noqa: F811
 
 
 def test_copilot_client_emits_call_events(tmp_path):
+    from tests.test_copilot_stream import SCRIPT, FakeProc
+
     bus = EventBus()
     events = []
     bus.subscribe(lambda e: events.append(e))
 
-    def runner(argv, **kwargs):
-        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
-
+    # events bus => streaming path; MUST inject popen or the real copilot runs
     cfg = RunnerConfig(repo_dir=tmp_path, events=bus)
-    client = CopilotClient(cfg, runner=runner)
+    client = CopilotClient(cfg, popen=lambda argv, **kw: FakeProc(SCRIPT))
     client.run("q", role="builder.coder")
     kinds = [e.kind for e in events]
     assert kinds[0] == "agent_call_started"
