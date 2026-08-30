@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Local agent config
+.claude/
+.kiro/
+
+# Secrets
+.env
+*.secrets
