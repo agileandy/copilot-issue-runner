@@ -153,6 +153,24 @@ def main(argv=None) -> int:
         print(f"\n--- prompt ({len(prompt)} chars) ---\n{prompt}")
         return 0
 
+    if cfg.visual and sys.stdout.isatty():
+        try:
+            from .tui import run_visual
+        except ImportError:
+            logging.getLogger("issue_runner").warning(
+                "textual is not installed — falling back to the text visual"
+            )
+        else:
+            report, error, _detached = run_visual(cfg, client, issue, plan_only=args.plan_only)
+            if error is not None:
+                print(f"error: {error}", file=sys.stderr)
+                return 1
+            print(f"\nbranch: {report.branch or '(plan only)'}")
+            print(f"tickets done: {report.done}, blocked: {report.blocked}")
+            for line in report.details:
+                print(f"  - {line}")
+            return 0 if report.blocked == 0 else 3
+
     report = run_issue(cfg, client, issue, plan_only=args.plan_only)
 
     print(f"\nbranch: {report.branch or '(plan only)'}")

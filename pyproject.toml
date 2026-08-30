@@ -3,14 +3,14 @@ name = "issue-runner"
 version = "0.1.0"
 description = "Generic GitHub issue runner driving GitHub Copilot CLI through plan/build/verify phases"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["textual>=0.80"]
 
 [project.scripts]
 issue-runner = "issue_runner.cli:main"
 gh-runner = "issue_runner.cli:gh_main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -23,6 +23,7 @@ packages = ["src/issue_runner"]
 testpaths = ["tests"]
 addopts = "-q"
 python_functions = "test_*"
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

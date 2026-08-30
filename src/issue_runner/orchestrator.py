@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import RunnerConfig
 from .copilot import CopilotError
+from .events import emit, ticket_snapshot
 from .phases import devops
 from .phases.build import (
     BuildError,
@@ -70,6 +71,8 @@ def run_issue(
         issue_ref, branch_slug = devops.slugify(issue["title"], 20), ""
     state_dir = state_dir or Path(cfg.repo_dir) / ".issue-runner"
     store = TicketStore(state_dir, issue_ref=issue_ref)
+    emit(cfg.events, "run_started", issue_ref=issue_ref, title=issue["title"])
+    emit(cfg.events, "phase", name="plan")
 
     # Phase 1: plan (skipped on resume — the saved plan is the contract)
     if store.load():
@@ -82,6 +85,12 @@ def run_issue(
         store.save()
         _render_visual(cfg, plan="done", branch="pending", tickets=store.tickets)
         log.info("plan: %d tickets — %s", len(tickets), summary)
+    emit(
+        cfg.events,
+        "tickets_updated",
+        tickets=ticket_snapshot(store.tickets),
+        summary=store.plan_summary,
+    )
 
     # mirror tickets to the tracker; also backfills runs planned without a backend
     if cfg.tickets_backend and issue["number"]:
@@ -102,6 +111,8 @@ def run_issue(
             report.details.append(
                 f"ticket {t.id} [{t.status}]: {t.title} — assert: {t.test_assertion}"
             )
+        emit(cfg.events, "phase", name="finished")
+        emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch="")
         return report
 
     if cfg.retry_blocked:
@@ -114,6 +125,7 @@ def run_issue(
         store.save()
 
     # Phase 2: branch
+    emit(cfg.events, "phase", name="branch")
     _render_visual(cfg, plan="done", branch="pending", tickets=store.tickets)
     store.branch = devops.create_branch(cfg.repo_dir, issue_ref, branch_slug)
     store.save()
@@ -123,9 +135,12 @@ def run_issue(
     _render_visual(cfg, plan="done", branch=store.branch, tickets=store.tickets)
 
     # Phase 3: build/verify loop
+    emit(cfg.events, "phase", name="build")
     for ticket in store.pending():
         _process_ticket(cfg, client, store, ticket, report)
 
+    emit(cfg.events, "phase", name="finished")
+    emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch=report.branch)
     return report
 
 
@@ -135,6 +150,8 @@ def _process_ticket(
     ticket.status = "in_progress"
     store.save()
     log.info("ticket %d: %s", ticket.id, ticket.title)
+    emit(cfg.events, "ticket_started", ticket_id=ticket.id, title=ticket.title)
+    emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     try:
         try:
             test_path = tester_step(client, cfg, ticket)
@@ -150,12 +167,21 @@ def _process_ticket(
             log.info(
                 "ticket %d verdict: %s (%s)", ticket.id, verdict.verdict, "; ".join(verdict.reasons)
             )
+            emit(
+                cfg.events,
+                "verdict",
+                ticket_id=ticket.id,
+                verdict=verdict.verdict,
+                reasons=verdict.reasons,
+            )
             if verdict.verdict == "pass":
                 sha = devops.commit_ticket(cfg.repo_dir, ticket)
                 ticket.status = "done"
                 store.save()
                 report.done += 1
                 report.details.append(f"ticket {ticket.id} done @ {sha}: {ticket.title}")
+                emit(cfg.events, "ticket_done", ticket_id=ticket.id, note=f"committed {sha}")
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
                 if ticket.github_issue and cfg.tickets_backend:
                     cfg.tickets_backend.close(ticket, f"Done in {sha} on {store.branch}")
                 return
@@ -238,6 +264,9 @@ def _block(
     report.blocked += 1
     report.details.append(f"ticket {ticket.id} BLOCKED: {reason}")
     log.warning("ticket %d blocked: %s", ticket.id, reason)
+    if cfg:
+        emit(cfg.events, "ticket_blocked", ticket_id=ticket.id, reason=reason)
+        emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     backend = cfg.tickets_backend if cfg else None
     if ticket.github_issue and backend and hasattr(backend, "block"):
         backend.block(ticket, reason)
