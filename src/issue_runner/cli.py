@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the planner invocation and exit without any model call",
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
+    p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
     p.add_argument("--effort", help="default reasoning effort for all roles")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
@@ -118,6 +119,8 @@ def main(argv=None) -> int:
         cfg.github_tickets = False
     if args.retry_blocked:
         cfg.retry_blocked = True
+    if args.visual:
+        cfg.visual = True
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
     cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
