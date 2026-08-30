@@ -20,7 +20,11 @@ Explore the codebase (read-only) and produce a detailed, atomic implementation
 plan for this issue as an ordered list of sub-task tickets.
 
 RULES for tickets:
-- Each ticket is ONE atomic change (roughly <=50 lines of production code).
+- Each ticket is ONE atomic BEHAVIOUR change: the production code AND the test
+  that proves it belong to the SAME ticket. NEVER create test-only, code-only,
+  or refactor-only tickets — a ticket whose behaviour already exists cannot be
+  test-driven and will be rejected.
+- Each ticket is small (roughly <=50 lines of production code).
 - Each ticket has exactly ONE logical test assertion — the single observable
   behaviour that proves the ticket done. Be concrete: name real functions,
   inputs, and expected outputs from THIS codebase.

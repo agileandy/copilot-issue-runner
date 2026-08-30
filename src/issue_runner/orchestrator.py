@@ -15,10 +15,12 @@ from pathlib import Path
 
 from . import github_io
 from .config import RunnerConfig
+from .copilot import CopilotError
 from .phases import devops
 from .phases.build import BuildError, coder_step, run_tests, tester_step
+from .phases.devops import DevopsError
 from .phases.plan import plan_step
-from .phases.verify import verify_step
+from .phases.verify import VerifyError, verify_step
 from .tickets import Ticket, TicketStore
 
 log = logging.getLogger("issue_runner")
@@ -39,7 +41,10 @@ def run_issue(
     state_dir: Path | None = None,
     plan_only: bool = False,
 ) -> RunReport:
-    issue_ref = str(issue["number"]) if issue["number"] else devops.slugify(issue["title"], 20)
+    if issue["number"]:
+        issue_ref, branch_slug = str(issue["number"]), devops.slugify(issue["title"])
+    else:
+        issue_ref, branch_slug = devops.slugify(issue["title"], 20), ""
     state_dir = state_dir or Path(cfg.repo_dir) / ".issue-runner"
     store = TicketStore(state_dir, issue_ref=issue_ref)
 
@@ -70,12 +75,10 @@ def run_issue(
         return report
 
     # Phase 2: branch
-    if not store.branch:
-        store.branch = devops.create_branch(cfg.repo_dir, issue_ref, devops.slugify(issue["title"]))
-        store.save()
-    else:
-        devops.create_branch(cfg.repo_dir, issue_ref, devops.slugify(issue["title"]))
-    devops.ensure_excluded(cfg.repo_dir, ".issue-runner/")
+    store.branch = devops.create_branch(cfg.repo_dir, issue_ref, branch_slug)
+    store.save()
+    for pattern in devops.DEFAULT_EXCLUDES:
+        devops.ensure_excluded(cfg.repo_dir, pattern)
     report.branch = store.branch
 
     # Phase 3: build/verify loop
@@ -142,7 +145,8 @@ def _process_ticket(
                     )
             else:  # rework_code
                 coder_step(client, cfg, ticket, test_path, feedback=verdict.code_feedback)
-    except BuildError as e:
+    except (BuildError, CopilotError, VerifyError, DevopsError) as e:
+        # contain the failure to this ticket; the run (and its state) continues
         _block(store, ticket, report, str(e))
 
 

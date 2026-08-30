@@ -78,3 +78,12 @@ def test_custom_copilot_cmd(tmp_path):
     client = make_client(tmp_path, runner, copilot_cmd="/fake/copilot")
     client.run("q", role="planner")
     assert runner.calls[0][0][0] == "/fake/copilot"
+
+
+def test_timeout_raises_copilot_error(tmp_path):
+    def hanging_runner(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+
+    client = make_client(tmp_path, hanging_runner)
+    with pytest.raises(CopilotError, match="timed out"):
+        client.run("q", role="planner")

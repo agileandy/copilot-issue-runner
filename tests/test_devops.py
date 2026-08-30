@@ -57,3 +57,25 @@ def test_commit_ticket_refuses_on_main(git_repo):
     (git_repo / "new.py").write_text("x = 1")
     with pytest.raises(DevopsError, match="main"):
         commit_ticket(git_repo, _ticket())
+
+
+def test_create_branch_without_slug(git_repo):
+    branch = create_branch(git_repo, "add-subtract", "")
+    assert branch == "issue-add-subtract"
+
+
+def test_commit_ticket_skips_default_junk(git_repo):
+    from issue_runner.phases.devops import DEFAULT_EXCLUDES, ensure_excluded
+
+    create_branch(git_repo, "17", "x")
+    for pattern in DEFAULT_EXCLUDES:
+        ensure_excluded(git_repo, pattern)
+    (git_repo / "__pycache__").mkdir()
+    (git_repo / "__pycache__" / "junk.pyc").write_text("x")
+    (git_repo / "real.py").write_text("x = 1")
+    commit_ticket(git_repo, _ticket())
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=git_repo, capture_output=True, text=True, check=False
+    ).stdout
+    assert "real.py" in tracked
+    assert "junk.pyc" not in tracked

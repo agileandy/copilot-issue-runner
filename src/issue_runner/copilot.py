@@ -35,13 +35,18 @@ class CopilotClient:
         session_name: str | None = None,
     ) -> str:
         argv = self._build_argv(prompt, role, read_only, session_name)
-        result = self.runner(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=self.config.timeout,
-            cwd=str(self.config.repo_dir),
-        )
+        try:
+            result = self.runner(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout,
+                cwd=str(self.config.repo_dir),
+            )
+        except subprocess.TimeoutExpired as e:
+            raise CopilotError(
+                f"copilot timed out after {self.config.timeout}s for role {role}"
+            ) from e
         if result.returncode != 0:
             raise CopilotError(
                 f"copilot exited {result.returncode} for role {role}: "

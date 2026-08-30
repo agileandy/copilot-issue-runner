@@ -152,3 +152,17 @@ def test_resume_skips_planning(git_repo, cfg):
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
     assert report.done == 1
     assert client.calls == []
+
+
+def test_copilot_error_blocks_ticket_not_run(git_repo, cfg):
+    from issue_runner.copilot import CopilotError
+
+    class ExplodingClient(FakeClient):
+        def run(self, prompt, role, read_only=False, session_name=None):
+            if role == "builder.tester":
+                raise CopilotError("copilot timed out")
+            return super().run(prompt, role, read_only, session_name)
+
+    client = ExplodingClient([(plan_reply(), None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1 and report.done == 0

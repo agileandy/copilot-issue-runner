@@ -33,8 +33,12 @@ def slugify(text: str, max_len: int = 40) -> str:
     return slug[:max_len].rstrip("-") or "change"
 
 
+# junk a `git add -A` must never sweep into a ticket commit
+DEFAULT_EXCLUDES = (".issue-runner/", "__pycache__/", "*.pyc", ".pytest_cache/")
+
+
 def create_branch(repo_dir: Path, issue_ref: str, slug: str) -> str:
-    branch = f"issue-{issue_ref}-{slug}"
+    branch = f"issue-{issue_ref}-{slug}" if slug else f"issue-{issue_ref}"
     exists = (
         subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", branch],
