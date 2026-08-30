@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import RunnerConfig
+from .visual import render_flow
 from .copilot import CopilotError
 from .phases import devops
 from .phases.build import (
@@ -39,6 +40,19 @@ class RunReport:
     details: list[str] = field(default_factory=list)
 
 
+def _render_visual(cfg: RunnerConfig, *, plan: str | None = None, branch: str | None = None, tickets: list[Ticket] | None = None) -> None:
+    if not cfg.visual:
+        return
+    payload = {
+        "plan": plan if plan is not None else "pending",
+        "branch": branch if branch is not None else "pending",
+        "tickets": [
+            {"id": ticket.id, "status": ticket.status} for ticket in (tickets or [])
+        ],
+    }
+    print(render_flow(payload), flush=True)
+
+
 def run_issue(
     cfg: RunnerConfig,
     client,
@@ -57,10 +71,12 @@ def run_issue(
     if store.load():
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
     else:
+        _render_visual(cfg, plan="pending", branch="pending", tickets=[])
         summary, tickets = plan_step(client, cfg, issue)
         store.plan_summary = summary
         store.set_tickets(tickets)
         store.save()
+        _render_visual(cfg, plan="done", branch="pending", tickets=store.tickets)
         log.info("plan: %d tickets — %s", len(tickets), summary)
 
     # mirror tickets to the tracker; also backfills runs planned without a backend
@@ -94,11 +110,13 @@ def run_issue(
         store.save()
 
     # Phase 2: branch
+    _render_visual(cfg, plan="done", branch="pending", tickets=store.tickets)
     store.branch = devops.create_branch(cfg.repo_dir, issue_ref, branch_slug)
     store.save()
     for pattern in devops.DEFAULT_EXCLUDES:
         devops.ensure_excluded(cfg.repo_dir, pattern)
     report.branch = store.branch
+    _render_visual(cfg, plan="done", branch=store.branch, tickets=store.tickets)
 
     # Phase 3: build/verify loop
     for ticket in store.pending():

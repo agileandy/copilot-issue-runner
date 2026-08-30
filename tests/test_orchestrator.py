@@ -63,6 +63,14 @@ def test_render_flow_snapshot_contract():
     )
 
 
+def test_render_flow_includes_ticket_id_in_snapshot():
+    assert "ticket 1" in render_flow({
+        "plan": "done",
+        "branch": "done",
+        "tickets": [{"id": 1, "title": "subtract ints", "status": "in_progress"}],
+    })
+
+
 @pytest.fixture
 def git_repo(repo):
     def git(*args):
