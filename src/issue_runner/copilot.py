@@ -10,9 +10,11 @@ is a human decision. Deny rules take precedence over --allow-all-tools.
 """
 
 import subprocess
+import time
 from pathlib import Path
 
 from .config import RunnerConfig
+from .events import emit
 
 ALWAYS_DENY = ("shell(git push)",)
 READ_ONLY_DENY = ("write", "shell(git:*)")
@@ -35,6 +37,15 @@ class CopilotClient:
         session_name: str | None = None,
     ) -> str:
         argv = self._build_argv(prompt, role, read_only, session_name)
+        role_cfg = self.config.role(role)
+        emit(
+            self.config.events,
+            "agent_call_started",
+            role=role,
+            session=session_name,
+            model=role_cfg.model,
+        )
+        started = time.monotonic()
         try:
             result = self.runner(
                 argv,
@@ -47,6 +58,14 @@ class CopilotClient:
             raise CopilotError(
                 f"copilot timed out after {self.config.timeout}s for role {role}"
             ) from e
+        emit(
+            self.config.events,
+            "agent_call_finished",
+            role=role,
+            session=session_name,
+            elapsed=round(time.monotonic() - started, 1),
+            ok=result.returncode == 0,
+        )
         if result.returncode != 0:
             raise CopilotError(
                 f"copilot exited {result.returncode} for role {role}: "
