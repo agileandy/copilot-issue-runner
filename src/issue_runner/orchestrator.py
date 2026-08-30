@@ -63,7 +63,7 @@ def run_issue(
             if ticket.github_issue is None:
                 ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
                 if ticket.status == "done":
-                    cfg.tickets_backend.close(ticket.github_issue, "completed in an earlier run")
+                    cfg.tickets_backend.close(ticket, "completed in an earlier run")
         store.save()
 
     report = RunReport(
@@ -116,9 +116,7 @@ def _process_ticket(
                 report.done += 1
                 report.details.append(f"ticket {ticket.id} done @ {sha}: {ticket.title}")
                 if ticket.github_issue and cfg.tickets_backend:
-                    cfg.tickets_backend.close(
-                        ticket.github_issue, f"Done in {sha} on {store.branch}"
-                    )
+                    cfg.tickets_backend.close(ticket, f"Done in {sha} on {store.branch}")
                 return
 
             ticket.rounds += 1
