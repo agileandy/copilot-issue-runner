@@ -9,6 +9,7 @@ The non-stub rule is enforced by the harness, not by trusting the model:
 """
 
 import hashlib
+import os
 import re
 import shlex
 import subprocess
@@ -40,8 +41,17 @@ class TestAlreadyPasses(BuildError):
 
 def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
     cmd = shlex.split(cfg.test_cmd.format(test_path=shlex.quote(test_path)))
+    # No bytecode: the coder may rewrite a same-sized file within the same second
+    # as the red check, and stale .pyc reuse would report a phantom failure.
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     result = subprocess.run(
-        cmd, cwd=str(cfg.repo_dir), capture_output=True, text=True, timeout=600, check=False
+        cmd,
+        cwd=str(cfg.repo_dir),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+        env=env,
     )
     output = (result.stdout + result.stderr).strip()
     return result.returncode == 0, output
