@@ -128,3 +128,25 @@ def test_write_token_missing_raises(monkeypatch):
     monkeypatch.delenv("GITEA_TOKEN", raising=False)
     with pytest.raises(TrackerError):
         gitea_write_token()
+
+
+def test_upsert_note_annotates_line_and_close_clears_it():
+    out = upsert_task_line("desc", 1, "task", done=False)
+    out = upsert_task_line(out, 1, "task", done=False, note="blocked: verifier refused")
+    assert "- [ ] 1. task — ⚠️ blocked: verifier refused" in out
+    out = upsert_task_line(out, 1, "task", done=True)
+    assert "- [x] 1. task" in out
+    assert "⚠️" not in out
+
+
+def test_block_annotates_checklist_and_comments():
+    api = FakeGiteaApi()
+    backend = GiteaTickets("http://g:3000", "Org/repo", requester=api)
+    ticket = make_ticket(2, "log progress")
+    ticket.github_issue = backend.create(2, ticket)
+    long_reason = "verifier refused to confirm: " + "x" * 300
+    backend.block(ticket, long_reason)
+    assert "- [ ] 2. log progress — ⚠️ blocked" in api.body
+    assert len(api.comments) == 1
+    assert api.comments[0].startswith("Sub-task 2 (log progress) BLOCKED:")
+    assert "x" * 300 in api.comments[0]  # full reason lives in the comment

@@ -59,5 +59,9 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
     return int(match.group(1))
 
 
+def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None:
+    _run(["gh", "issue", "comment", "-R", repo, str(number), "--body", body], run)
+
+
 def close_subissue(repo: str, number: int, comment: str, run=subprocess.run) -> None:
     _run(["gh", "issue", "close", "-R", repo, str(number), "--comment", comment], run)

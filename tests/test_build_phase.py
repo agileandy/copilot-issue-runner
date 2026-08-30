@@ -109,3 +109,17 @@ def test_coder_retries_then_fails(repo, cfg):
     client = FakeClient([("done", None), ("done again", None)])
     with pytest.raises(BuildError):
         coder_step(client, cfg, ticket(), "test_subtract.py")
+
+
+def test_tester_raises_already_passes_when_final_attempt_is_green(repo, cfg):
+    from issue_runner.phases.build import TestAlreadyPasses
+
+    client = FakeClient(
+        [
+            (reply(), write_test_file(repo, "assert PASS  # attempt 1: green")),
+            (reply(), write_test_file(repo, "assert PASS  # attempt 2: still green")),
+        ]
+    )
+    with pytest.raises(TestAlreadyPasses) as exc:
+        tester_step(client, cfg, ticket())
+    assert exc.value.test_path == "test_subtract.py"

@@ -91,15 +91,17 @@ def test_verbose_plan_logging_uses_debug_stream(tmp_path, capsys, monkeypatch):
     make_fake_copilot(tmp_path, plan)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
 
-    main([
-        "--issue-file",
-        str(issue_file),
-        "--dir",
-        str(repo),
-        "--plan-only",
-        "--no-github-tickets",
-        "-v",
-    ])
+    main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--plan-only",
+            "--no-github-tickets",
+            "-v",
+        ]
+    )
     assert "plan: 1 tickets" in capsys.readouterr().err
 
 

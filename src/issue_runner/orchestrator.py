@@ -16,7 +16,13 @@ from pathlib import Path
 from .config import RunnerConfig
 from .copilot import CopilotError
 from .phases import devops
-from .phases.build import BuildError, coder_step, run_tests, tester_step
+from .phases.build import (
+    BuildError,
+    TestAlreadyPasses,
+    coder_step,
+    run_tests,
+    tester_step,
+)
 from .phases.devops import DevopsError
 from .phases.plan import plan_step
 from .phases.verify import VerifyError, verify_step
@@ -78,6 +84,15 @@ def run_issue(
             )
         return report
 
+    if cfg.retry_blocked:
+        for ticket in store.tickets:
+            if ticket.status == "blocked":
+                ticket.status = "pending"
+                ticket.rounds = 0
+                ticket.blocked_reason = None
+                report.blocked -= 1
+        store.save()
+
     # Phase 2: branch
     store.branch = devops.create_branch(cfg.repo_dir, issue_ref, branch_slug)
     store.save()
@@ -99,7 +114,11 @@ def _process_ticket(
     store.save()
     log.info("ticket %d: %s", ticket.id, ticket.title)
     try:
-        test_path = tester_step(client, cfg, ticket)
+        try:
+            test_path = tester_step(client, cfg, ticket)
+        except TestAlreadyPasses as e:
+            _arbitrate_already_satisfied(cfg, client, store, ticket, e, report)
+            return
         ticket.test_path = test_path
         store.save()
         coder_step(client, cfg, ticket, test_path)
@@ -127,6 +146,7 @@ def _process_ticket(
                     ticket,
                     report,
                     f"exceeded max_rounds={cfg.max_rounds}; last verdict {verdict.verdict}",
+                    cfg,
                 )
                 return
 
@@ -149,13 +169,53 @@ def _process_ticket(
                 coder_step(client, cfg, ticket, test_path, feedback=verdict.code_feedback)
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
         # contain the failure to this ticket; the run (and its state) continues
-        _block(store, ticket, report, str(e))
+        _block(store, ticket, report, str(e), cfg)
 
 
-def _block(store: TicketStore, ticket: Ticket, report: RunReport, reason: str) -> None:
+def _arbitrate_already_satisfied(
+    cfg: RunnerConfig, client, store: TicketStore, ticket: Ticket, e, report: RunReport
+) -> None:
+    """Every candidate test passed without new code: let the verifier rule.
+
+    pass -> the behaviour exists and the test is robust; commit the test as the
+    ticket's regression artifact and mark done. Anything else -> blocked, with
+    the verifier's reasoning recorded (and mirrored to the tracker).
+    """
+    log.info("ticket %d: candidate tests keep passing — asking verifier to arbitrate", ticket.id)
+    verdict = verify_step(client, cfg, ticket, e.test_path)
+    if verdict.verdict == "pass":
+        ticket.test_path = e.test_path
+        try:
+            sha = devops.commit_ticket(cfg.repo_dir, ticket)
+        except DevopsError as de:
+            if "nothing to commit" not in str(de):
+                raise
+            sha = "(no new files)"
+        ticket.status = "done"
+        store.save()
+        report.done += 1
+        note = f"already satisfied by existing code — verifier confirmed; regression test @ {sha}"
+        report.details.append(f"ticket {ticket.id} done: {note}")
+        if ticket.github_issue and cfg.tickets_backend:
+            cfg.tickets_backend.close(ticket, note)
+        return
+    reason = (
+        "behaviour appears pre-existing but the verifier refused to confirm "
+        f"({verdict.verdict}): {'; '.join(verdict.reasons)} "
+        f"{verdict.test_feedback or verdict.code_feedback}".strip()
+    )
+    _block(store, ticket, report, reason, cfg)
+
+
+def _block(
+    store: TicketStore, ticket: Ticket, report: RunReport, reason: str, cfg: RunnerConfig = None
+) -> None:
     ticket.status = "blocked"
     ticket.blocked_reason = reason
     store.save()
     report.blocked += 1
     report.details.append(f"ticket {ticket.id} BLOCKED: {reason}")
     log.warning("ticket %d blocked: %s", ticket.id, reason)
+    backend = cfg.tickets_backend if cfg else None
+    if ticket.github_issue and backend and hasattr(backend, "block"):
+        backend.block(ticket, reason)

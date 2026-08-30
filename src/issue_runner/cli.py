@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--plan-only", action="store_true", help="stop after the plan phase")
     p.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="reset blocked tickets to pending and run them again",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="print the planner invocation and exit without any model call",
@@ -111,6 +116,8 @@ def main(argv=None) -> int:
         cfg.max_rounds = args.max_rounds
     if args.no_github_tickets:
         cfg.github_tickets = False
+    if args.retry_blocked:
+        cfg.retry_blocked = True
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
     cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)

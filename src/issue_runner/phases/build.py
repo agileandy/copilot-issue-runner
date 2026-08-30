@@ -26,6 +26,18 @@ class BuildError(RuntimeError):
     pass
 
 
+class TestAlreadyPasses(BuildError):
+    """Every tester attempt produced a valid test that passes without new code.
+
+    Strong signal the behaviour already exists — the orchestrator escalates to
+    the verifier to arbitrate instead of blocking blindly.
+    """
+
+    def __init__(self, message: str, test_path: str):
+        super().__init__(message)
+        self.test_path = test_path
+
+
 def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
     cmd = shlex.split(cfg.test_cmd.format(test_path=shlex.quote(test_path)))
     result = subprocess.run(
@@ -97,6 +109,7 @@ def tester_step(
 ) -> str:
     extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{feedback}" if feedback else ""
     last_error = "no attempt made"
+    already_green_path = None
     for _ in range(cfg.tester_retries + 1):
         prompt = TESTER_PROMPT.format(
             title=ticket.title,
@@ -115,12 +128,15 @@ def tester_step(
 
         full = Path(cfg.repo_dir) / test_path
         if not full.is_file():
+            already_green_path = None
             last_error = f"declared test file {test_path} does not exist"
         elif not _has_assertion(full.read_text()):
+            already_green_path = None
             last_error = f"test {test_path} contains no real assertion — it is a stub"
         else:
             passed, output = run_tests(cfg, test_path)
             if require_red and passed:
+                already_green_path = test_path
                 last_error = (
                     f"test {test_path} already passes with no implementation — "
                     "it does not exercise the new behaviour and must fail first. "
@@ -129,6 +145,12 @@ def tester_step(
             else:
                 return test_path
         extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+    if already_green_path:
+        raise TestAlreadyPasses(
+            f"ticket {ticket.id}: every candidate test passes without new code — "
+            "the behaviour may already exist",
+            already_green_path,
+        )
     raise BuildError(f"builder.tester failed for ticket {ticket.id}: {last_error}")
 
 

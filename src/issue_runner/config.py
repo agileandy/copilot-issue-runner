@@ -34,6 +34,7 @@ class RunnerConfig:
     timeout: int = 1800
     roles: dict[str, RoleConfig] = field(default_factory=dict)
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
+    retry_blocked: bool = False
 
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name, RoleConfig())

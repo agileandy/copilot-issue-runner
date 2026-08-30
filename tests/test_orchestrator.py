@@ -172,6 +172,7 @@ class RecordingBackend:
     def __init__(self):
         self.created = []
         self.closed = []
+        self.blocked = []
         self._next = 100
 
     def create(self, parent_number, ticket):
@@ -181,6 +182,9 @@ class RecordingBackend:
 
     def close(self, ticket, comment):
         self.closed.append((ticket.id, comment))
+
+    def block(self, ticket, reason):
+        self.blocked.append((ticket.id, reason))
 
 
 def test_backend_mirrors_tickets_and_closes_on_pass(git_repo, cfg):
@@ -225,3 +229,64 @@ def test_backend_backfills_on_resume(git_repo, cfg):
     assert reloaded.tickets[1].github_issue == 101
     # a backfilled ticket that is already done must not be left open in the tracker
     assert backend.closed == [(2, "completed in an earlier run")]
+
+
+def already_green_script(git_repo):
+    """Tester writes a green (already-satisfied) test on every attempt."""
+    return [
+        (plan_reply(), None),
+        (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert PASS # v1")),
+        (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert PASS # v2")),
+    ]
+
+
+def test_already_satisfied_ticket_arbitrated_done(git_repo, cfg):
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    client = FakeClient([*already_green_script(git_repo), (verdict("pass"), None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    roles = [c["role"] for c in client.calls]
+    assert roles == ["planner", "builder.tester", "builder.tester", "verifier"]
+    # the regression test the tester wrote gets committed
+    log = subprocess.run(
+        ["git", "log", "--pretty=%s"], cwd=git_repo, capture_output=True, text=True, check=False
+    ).stdout
+    assert "subtract ints" in log
+    assert "already satisfied" in backend.closed[0][1]
+
+
+def test_already_satisfied_but_verifier_refuses_blocks_with_reason(git_repo, cfg):
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    client = FakeClient(
+        [*already_green_script(git_repo), (verdict("refine_test", tf="test is a tautology"), None)]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1
+    assert backend.blocked, "backend.block must be called with the reason"
+    assert backend.blocked[0][0] == 1
+    assert "tautology" in backend.blocked[0][1] or "verifier" in backend.blocked[0][1]
+
+
+def test_retry_blocked_resets_and_reruns(git_repo, cfg):
+    from issue_runner.tickets import Ticket
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    t = Ticket(id=1, title="subtract ints", description="d", test_assertion="a")
+    t.status = "blocked"
+    t.rounds = 3
+    t.blocked_reason = "old reason"
+    store.set_tickets([t])
+    store.save()
+
+    cfg.retry_blocked = True
+    client = FakeClient(
+        [
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
