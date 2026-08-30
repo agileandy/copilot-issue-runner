@@ -1,10 +1,12 @@
 import json
+import os
 import stat
 import subprocess
 import tomllib
 from pathlib import Path
 
-from issue_runner.cli import gh_main, main
+from issue_runner.cli import build_parser, gh_main, main
+from issue_runner.visual import _visual_snapshot_for_non_tty, render_flow
 
 
 def make_fake_copilot(tmp_path, reply):
@@ -71,6 +73,113 @@ def test_dry_run_makes_no_calls(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "copilot" in out and "--allow-all-tools" in out
     assert not (repo / ".issue-runner").exists()
+
+
+def test_verbose_plan_logging_uses_debug_stream(tmp_path, capsys, monkeypatch):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    make_fake_copilot(tmp_path, plan)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--plan-only",
+            "--no-github-tickets",
+            "-v",
+        ]
+    )
+    assert "plan: 1 tickets" in capsys.readouterr().err
+
+
+def test_verbose_ticket_verdict_logging_in_build_verify_loop(tmp_path, capsys):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add ints\n\nNeed a function to add integers.")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_ticket_flow.py").write_text(
+        "from app import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+    )
+    (repo / "app.py").write_text("def add(a, b):\n    return a - b\n")
+
+    fake = tmp_path / "fake-copilot"
+    fake.write_text(
+        """#!/bin/sh
+prompt="${2:-}"
+case "$prompt" in
+  *'You are the planner'*)
+    cat <<'EOF'
+{"summary":"one ticket","tickets":[{"title":"add ints","description":"implement integer add","test_assertion":"add(2, 3) == 5","files_hint":["app.py","tests/test_ticket_flow.py"]}]}
+EOF
+    ;;
+  *'You are builder.tester'*)
+    cat <<'EOF'
+{"test_path":"tests/test_ticket_flow.py"}
+EOF
+    ;;
+  *'You are builder.coder'*)
+    cat > app.py <<'EOF'
+def add(a, b):
+    return a + b
+EOF
+    cat <<'EOF'
+{"changed_files":["app.py"],"notes":"fix add"}
+EOF
+    ;;
+  *'You are the verifier'*)
+    cat <<'EOF'
+{"verdict":"pass","reasons":["works"],"test_feedback":"","code_feedback":""}
+EOF
+    ;;
+  *)
+    echo '{}'
+    ;;
+esac
+"""
+    )
+    fake.chmod(fake.stat().st_mode | 0o111)
+
+    main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--no-github-tickets",
+            "-v",
+        ]
+    )
+    assert "ticket 1 verdict: pass" in capsys.readouterr().err
+
+
+def test_visual_flag_sets_boolean():
+    args = build_parser().parse_args(["--visual"])
+    assert args.visual is True
+
+
+def test_visual_snapshot_falls_back_to_plain_text_for_non_tty(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    assert "plan" in render_flow(
+        {"plan": "done", "branch": "pending"}
+    ) or "plan" in _visual_snapshot_for_non_tty({"plan": "done", "branch": "pending"})
 
 
 def test_requires_issue_ref_or_file(tmp_path, capsys):

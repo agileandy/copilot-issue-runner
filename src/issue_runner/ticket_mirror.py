@@ -22,9 +22,13 @@ MARK_END = "<!-- /issue-runner:tasks -->"
 _LINE_RE = re.compile(r"^- \[[ x]\] (\d+)\. (.*)$")
 
 
-def upsert_task_line(body: str, ticket_id: int, title: str, done: bool) -> str:
+def upsert_task_line(
+    body: str, ticket_id: int, title: str, done: bool, note: str | None = None
+) -> str:
     """Add or update one checklist line inside the runner-owned section."""
     line = f"- [{'x' if done else ' '}] {ticket_id}. {title}"
+    if note:
+        line += f" — ⚠️ {note}"
     if MARK_START in body and MARK_END in body:
         head, rest = body.split(MARK_START, 1)
         section, tail = rest.split(MARK_END, 1)
@@ -52,6 +56,9 @@ class GithubTickets:
     def close(self, ticket, comment: str) -> None:
         github_io.close_subissue(self.repo, ticket.github_issue, comment)
 
+    def block(self, ticket, reason: str) -> None:
+        github_io.comment_issue(self.repo, ticket.github_issue, f"BLOCKED: {reason}")
+
 
 class GiteaTickets:
     def __init__(self, api_base: str, owner_repo: str, requester=_http_json):
@@ -62,10 +69,10 @@ class GiteaTickets:
     def _issue_url(self, number: int) -> str:
         return f"{self.api_base}/api/v1/repos/{self.owner_repo}/issues/{number}"
 
-    def _update_line(self, parent_number: int, ticket, done: bool) -> None:
+    def _update_line(self, parent_number: int, ticket, done: bool, note: str | None = None) -> None:
         token = gitea_write_token()
         issue = json.loads(self.requester("GET", self._issue_url(parent_number), token))
-        body = upsert_task_line(issue.get("body") or "", ticket.id, ticket.title, done)
+        body = upsert_task_line(issue.get("body") or "", ticket.id, ticket.title, done, note)
         self.requester("PATCH", self._issue_url(parent_number), token, {"body": body})
 
     def create(self, parent_number: int, ticket) -> int:
@@ -75,9 +82,18 @@ class GiteaTickets:
     def close(self, ticket, comment: str) -> None:
         parent_number = ticket.github_issue
         self._update_line(parent_number, ticket, done=True)
+        self._comment(parent_number, f"Sub-task {ticket.id} ({ticket.title}): {comment}")
+
+    def block(self, ticket, reason: str) -> None:
+        parent_number = ticket.github_issue
+        short = reason.splitlines()[0][:80].rstrip()
+        self._update_line(parent_number, ticket, done=False, note=f"blocked: {short}")
+        self._comment(parent_number, f"Sub-task {ticket.id} ({ticket.title}) BLOCKED: {reason}")
+
+    def _comment(self, parent_number: int, body: str) -> None:
         self.requester(
             "POST",
             f"{self._issue_url(parent_number)}/comments",
             gitea_write_token(),
-            {"body": f"Sub-task {ticket.id} ({ticket.title}): {comment}"},
+            {"body": body},
         )

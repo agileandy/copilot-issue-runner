@@ -72,6 +72,7 @@ class CopilotClient:
             "-C",
             str(Path(cfg.repo_dir)),
         ]
+        # cfg.visual is runner-side rendering only — it must never alter this argv
         deny = list(ALWAYS_DENY) + (list(READ_ONLY_DENY) if read_only else [])
         for tool in deny:
             argv += ["--deny-tool", tool]

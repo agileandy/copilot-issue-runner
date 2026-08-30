@@ -7,6 +7,7 @@ BYOK (COPILOT_PROVIDER_* env vars) passes straight through the environment, so
 pointing the whole runner at a local model needs no config here.
 """
 
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,16 +25,18 @@ class RoleConfig:
 class RunnerConfig:
     repo_dir: Path
     repo: str | None = None  # owner/name for gh; None = infer from repo_dir remote
-    test_cmd: str = "pytest {test_path} -q"
+    test_cmd: str = f"{sys.executable} -m pytest {{test_path}} -q"
     max_rounds: int = 3
     tester_retries: int = 2
     coder_retries: int = 2
     github_tickets: bool = True
     copilot_cmd: str = "copilot"
+    visual: bool = False
     max_ai_credits: int | None = None
     timeout: int = 1800
     roles: dict[str, RoleConfig] = field(default_factory=dict)
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
+    retry_blocked: bool = False
 
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name, RoleConfig())
@@ -52,6 +55,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         "coder_retries",
         "github_tickets",
         "copilot_cmd",
+        "visual",
         "max_ai_credits",
         "timeout",
         "repo",

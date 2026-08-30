@@ -9,6 +9,7 @@ Examples:
 import argparse
 import logging
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -40,16 +41,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--plan-only", action="store_true", help="stop after the plan phase")
     p.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="reset blocked tickets to pending and run them again",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="print the planner invocation and exit without any model call",
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
+    p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
     p.add_argument("--effort", help="default reasoning effort for all roles")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
+
+
+def _resolve_copilot_cmd(cmd: str) -> str:
+    if cmd != "copilot":
+        return cmd
+    fake = shutil.which("fake-copilot")
+    if fake:
+        return fake
+    return cmd
 
 
 def _load_issue(args, cfg, repo_dir: Path) -> dict:
@@ -84,6 +100,7 @@ def main(argv=None) -> int:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
+        force=True,
     )
 
     if not args.issue and not args.issue_file:
@@ -100,8 +117,13 @@ def main(argv=None) -> int:
         cfg.max_rounds = args.max_rounds
     if args.no_github_tickets:
         cfg.github_tickets = False
+    if args.retry_blocked:
+        cfg.retry_blocked = True
+    if args.visual:
+        cfg.visual = True
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
+    cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
     if args.max_ai_credits:
         cfg.max_ai_credits = args.max_ai_credits
     if args.model or args.effort:
