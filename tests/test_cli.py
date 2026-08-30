@@ -2,7 +2,7 @@ import json
 import stat
 import subprocess
 
-from issue_runner.cli import main
+from issue_runner.cli import gr_main, main
 
 
 def make_fake_copilot(tmp_path, reply):
@@ -73,6 +73,11 @@ def test_dry_run_makes_no_calls(tmp_path, capsys):
 
 def test_requires_issue_ref_or_file(tmp_path, capsys):
     rc = main(["--dir", str(tmp_path)])
+    assert rc == 2
+
+
+def test_gr_main_delegates_to_main(tmp_path, capsys):
+    rc = gr_main(["--dir", str(tmp_path)])
     assert rc == 2
 
 
