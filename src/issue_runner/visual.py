@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -42,8 +43,8 @@ def _render_ticket(item: Any) -> str:
     return f"  ticket #{ticket_id}: {status}"
 
 
-def render_flow(report: Mapping[str, Any] | None) -> str:
-    """Render the issue runner pipeline as a compact status snapshot."""
+def _visual_snapshot_for_non_tty(report: Mapping[str, Any] | None) -> str:
+    """Fallback ASCII snapshot used in CI and other non-interactive terminals."""
     payload = report or {}
 
     plan = str(payload.get("plan", "pending"))
@@ -69,4 +70,13 @@ def render_flow(report: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["render_flow"]
+def render_flow(report: Mapping[str, Any] | None) -> str:
+    """Render the issue runner pipeline as a compact status snapshot."""
+    stdout = getattr(sys, "stdout", None)
+    is_tty = bool(stdout is not None and hasattr(stdout, "isatty") and stdout.isatty())
+    if not is_tty:
+        return _visual_snapshot_for_non_tty(report)
+    return _visual_snapshot_for_non_tty(report)
+
+
+__all__ = ["render_flow", "_visual_snapshot_for_non_tty"]

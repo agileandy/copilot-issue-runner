@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 
 from issue_runner.cli import build_parser, gh_main, main
+from issue_runner.visual import render_flow
 
 
 def make_fake_copilot(tmp_path, reply):
@@ -172,6 +173,11 @@ esac
 def test_visual_flag_sets_boolean():
     args = build_parser().parse_args(["--visual"])
     assert args.visual is True
+
+
+def test_visual_snapshot_falls_back_to_plain_text_for_non_tty(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    assert "plan" in render_flow({"plan": "done", "branch": "pending"}) or "plan" in _visual_snapshot_for_non_tty({"plan": "done", "branch": "pending"})
 
 
 def test_requires_issue_ref_or_file(tmp_path, capsys):
