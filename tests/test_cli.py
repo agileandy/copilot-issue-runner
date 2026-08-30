@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 
 from issue_runner.cli import build_parser, gh_main, main
-from issue_runner.visual import render_flow
+from issue_runner.visual import _visual_snapshot_for_non_tty, render_flow
 
 
 def make_fake_copilot(tmp_path, reply):
