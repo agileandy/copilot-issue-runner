@@ -5,6 +5,7 @@ import pytest
 
 from issue_runner.orchestrator import run_issue
 from issue_runner.tickets import TicketStore
+from issue_runner.visual import render_flow
 from tests.conftest import FakeClient
 
 ISSUE = {"number": 17, "title": "Add subtract", "body": "need it", "url": ""}
@@ -27,6 +28,39 @@ def plan_reply():
 
 def verdict(v, tf="make it stronger", cf="fix the code"):
     return json.dumps({"verdict": v, "reasons": ["r"], "test_feedback": tf, "code_feedback": cf})
+
+
+def test_render_flow_snapshot_contract():
+    assert (
+        render_flow({"plan": "done", "branch": "active", "tickets": [{"id": 1, "status": "pending"}]})
+        == "\n".join(
+            [
+                "issue pipeline",
+                "plan: done",
+                "   ↓",
+                "branch: active",
+                "   ↓",
+                "per-ticket build/verify:",
+                "  ticket #1: pending",
+                "   ↓",
+                "commit: pending",
+            ]
+        )
+        and render_flow({"plan": "done", "branch": "active", "tickets": []})
+        == "\n".join(
+            [
+                "issue pipeline",
+                "plan: done",
+                "   ↓",
+                "branch: active",
+                "   ↓",
+                "per-ticket build/verify:",
+                "  tickets: none",
+                "   ↓",
+                "commit: pending",
+            ]
+        )
+    )
 
 
 @pytest.fixture
