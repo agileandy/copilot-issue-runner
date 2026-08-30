@@ -27,8 +27,8 @@ Constraint: free Copilot plan — limited model calls; test e2e sparingly.
 - Permissions: `--deny-tool 'shell(git push)'`, `--deny-tool write`, deny > allow
 - `--output-format json` (JSONL events); `--usage-output-file` writes usage JSON
 - **BYOK**: `COPILOT_PROVIDER_BASE_URL/_TYPE/_API_KEY` + `COPILOT_MODEL` → any
-  OpenAI-compatible endpoint. Studio oMLX (192.168.1.205:7777, key 7777,
-  Qwen3.8-27B-oQ6e) = zero-credit end-to-end testing rail.
+  OpenAI-compatible endpoint. A local model server (Studio oMLX Qwen) provides
+  a zero-credit end-to-end testing rail.
 
 ## Design decisions (deviations from literal spec — flagged to Andy)
 

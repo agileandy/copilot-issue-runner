@@ -51,12 +51,15 @@ developing or rehearsing, point Copilot CLI at a local OpenAI-compatible model
 (BYOK) — the runner passes the environment straight through:
 
 ```bash
-export COPILOT_PROVIDER_BASE_URL=http://192.168.1.205:7777/v1
+export COPILOT_PROVIDER_BASE_URL=http://<your-local-llm-host>:<port>/v1
 export COPILOT_PROVIDER_TYPE=openai
-export COPILOT_PROVIDER_API_KEY=7777
-export COPILOT_MODEL=Qwen3.8-27B-oQ6e
+export COPILOT_PROVIDER_API_KEY=<your-key>
+export COPILOT_MODEL=<a-model-served-by-that-endpoint>
 uv run issue-runner --issue-file issue.md --dir /path/to/repo
 ```
+
+Any OpenAI-compatible server works (Ollama, vLLM, LM Studio, oMLX, …). Local
+agent calls are slow compared to hosted models — fine for rehearsal runs.
 
 Per-role budgets go in `runner.toml` (see `runner.example.toml`): e.g. a cheap
 model for the verifier, the default for the coder.
