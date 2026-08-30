@@ -140,5 +140,10 @@ def main(argv=None) -> int:
     return 0 if report.blocked == 0 else 3
 
 
+def gh_main(argv=None) -> int:
+    """Entry point for the `gh-runner` command; delegates to main."""
+    return main(argv)
+
+
 if __name__ == "__main__":
     sys.exit(main())
