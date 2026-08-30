@@ -14,9 +14,10 @@ from pathlib import Path
 
 from .config import ROLES, RoleConfig, load_config
 from .copilot import CopilotClient
-from .github_io import fetch_issue, issue_from_file
+from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.plan import PLAN_PROMPT
+from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,6 +49,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
+
+
+def _load_issue(args, cfg, repo_dir: Path) -> dict:
+    """Route the issue read: file > explicit GitHub --repo > origin remote (Gitea/GitHub)."""
+    if args.issue_file:
+        return issue_from_file(args.issue_file)
+    if cfg.repo:
+        return fetch_issue(args.issue, repo=cfg.repo)
+    info = resolve(repo_dir)
+    if info.kind == "gitea":
+        if cfg.github_tickets:
+            logging.getLogger("issue_runner").info(
+                "origin is Gitea: sub-issue mirroring is not supported yet; "
+                "tickets are tracked locally in .issue-runner/"
+            )
+        cfg.github_tickets = False
+        return fetch_gitea_issue(info.api_base, info.owner_repo, args.issue)
+    cfg.repo = info.owner_repo
+    return fetch_issue(args.issue, repo=cfg.repo)
 
 
 def main(argv=None) -> int:
@@ -83,11 +103,11 @@ def main(argv=None) -> int:
                 effort=existing.effort or args.effort,
             )
 
-    issue = (
-        issue_from_file(args.issue_file)
-        if args.issue_file
-        else fetch_issue(args.issue, repo=cfg.repo)
-    )
+    try:
+        issue = _load_issue(args, cfg, repo_dir)
+    except (TrackerError, GithubError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     client = CopilotClient(cfg)
     if args.dry_run:

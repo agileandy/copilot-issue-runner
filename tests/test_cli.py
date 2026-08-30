@@ -74,3 +74,48 @@ def test_dry_run_makes_no_calls(tmp_path, capsys):
 def test_requires_issue_ref_or_file(tmp_path, capsys):
     rc = main(["--dir", str(tmp_path)])
     assert rc == 2
+
+
+def test_gitea_origin_routes_to_gitea_fetch(tmp_path, capsys, monkeypatch):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "http://gitea.local:3000/Org/thing.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    fetched = {}
+
+    def fake_fetch(api_base, owner_repo, number, token=None, getter=None):
+        fetched.update(api_base=api_base, owner_repo=owner_repo, number=number)
+        return {"number": 1, "title": "wrapper", "body": "make gr-runner", "url": "u"}
+
+    monkeypatch.setattr("issue_runner.cli.fetch_gitea_issue", fake_fetch)
+    plan = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [{"title": "t1", "description": "d", "test_assertion": "a == 1"}],
+        }
+    )
+    fake = make_fake_copilot(tmp_path, plan)
+
+    rc = main(["1", "--dir", str(repo), "--copilot-cmd", str(fake), "--plan-only"])
+    assert rc == 0
+    assert fetched == {
+        "api_base": "http://gitea.local:3000",
+        "owner_repo": "Org/thing",
+        "number": "1",
+    }
+    assert "t1" in capsys.readouterr().out
+
+
+def test_tracker_error_is_friendly_not_traceback(tmp_path, capsys):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)  # no origin remote
+    rc = main(["1", "--dir", str(repo)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "origin" in err and "Traceback" not in err
