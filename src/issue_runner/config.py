@@ -39,6 +39,7 @@ class RunnerConfig:
     visual: bool = False
     max_ai_credits: int | None = None
     max_run_credits: int | None = None
+    empty_reply_retries: int = 2
     timeout: int = 1800
     roles: dict[str, RoleConfig] = field(default_factory=dict)
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
@@ -84,6 +85,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         "visual",
         "max_ai_credits",
         "max_run_credits",
+        "empty_reply_retries",
         "timeout",
         "repo",
     ):
