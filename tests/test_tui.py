@@ -1,5 +1,11 @@
 from issue_runner.events import EventBus, RunEvent
-from issue_runner.tui import RunnerApp, format_board, format_pipeline, format_stats
+from issue_runner.tui import (
+    RunnerApp,
+    format_board,
+    format_pipeline,
+    format_stats,
+    format_summary,
+)
 
 # -- pure formatting -------------------------------------------------------
 
@@ -55,7 +61,8 @@ def test_stats_line_formats_tokens_and_current_call():
 # -- app smoke (headless pilot) -------------------------------------------
 
 
-async def test_app_applies_events_and_exits_on_run_finished():
+async def test_app_holds_a_finished_state_for_review_instead_of_exiting():
+    """Regression: the TUI used to self-close 1.5s after the run finished."""
     bus = EventBus()
     app = RunnerApp(bus)
     async with app.run_test() as pilot:
@@ -88,10 +95,65 @@ async def test_app_applies_events_and_exits_on_run_finished():
         assert "wire flag" in str(board)
         assert app.stats["calls"] == 1
 
-        app.apply_event(RunEvent("run_finished", {"done": 1, "blocked": 0, "branch": "b"}))
+        app.apply_event(
+            RunEvent(
+                "run_finished",
+                {
+                    "done": 1,
+                    "blocked": 0,
+                    "branch": "b",
+                    "pr_url": "https://x/pull/2",
+                    "usage": "usage — calls: 4",
+                },
+            )
+        )
         await pilot.pause(delay=2.0)
-    assert app.finished is True
+
+        assert app.finished is True
+        assert app.is_running, "the app must stay open for the user to review"
+        summary = str(app.query_one("#summary").render())
+        assert "RUN FINISHED" in summary
+        assert "https://x/pull/2" in summary
+        assert "usage — calls: 4" in summary
+
+        await pilot.press("q")
     assert app.return_value == "finished"
+
+
+async def test_q_before_the_run_ends_still_detaches():
+    bus = EventBus()
+    app = RunnerApp(bus)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.finished is False
+        await pilot.press("q")
+    assert app.return_value == "detached"
+
+
+async def test_summary_panel_is_hidden_until_the_run_finishes():
+    bus = EventBus()
+    app = RunnerApp(bus)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#summary").display is False
+        app.apply_event(RunEvent("run_finished", {"done": 0, "blocked": 2, "branch": "b"}))
+        await pilot.pause()
+        assert app.query_one("#summary").display is True
+
+
+def test_summary_reports_blocked_tickets():
+    out = format_summary({"done": 1, "blocked": 2, "branch": "b"})
+    assert "2 blocked" in out
+    assert "press q to close" in out
+
+
+def test_summary_reports_a_budget_stop():
+    out = format_summary({"done": 1, "blocked": 1, "budget_exhausted": True})
+    assert "credit budget exhausted" in out
+
+
+def test_summary_reports_a_clean_run():
+    assert "all tickets done" in format_summary({"done": 3, "blocked": 0, "branch": "b"})
 
 
 async def test_bus_events_reach_app_through_queue():
@@ -101,3 +163,48 @@ async def test_bus_events_reach_app_through_queue():
         bus.emit("phase", name="build")  # emitted from "another thread" via queue
         await pilot.pause(delay=0.3)
         assert app.state["phase"] == "build"
+
+
+def test_summary_reports_an_aborted_run():
+    out = format_summary({"done": 0, "blocked": 0, "error": "planner failed: no JSON"})
+    assert "run aborted" in out
+    assert "planner failed" in out
+
+
+async def test_pipeline_crash_still_reaches_the_finished_state(monkeypatch):
+    """A crash must not leave the TUI on a live-looking display forever."""
+    from issue_runner import orchestrator, tui
+
+    def boom(cfg, client, issue, plan_only=False):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(orchestrator, "run_issue", boom)
+
+    seen = []
+
+    class StubApp:
+        """Stands in for the Textual app: runs the pipeline, records the bus."""
+
+        def __init__(self, bus, pipeline_thread=None):
+            bus.subscribe(seen.append)
+            self._thread = pipeline_thread
+
+        def run(self):
+            self._thread.start()
+            self._thread.join()
+            return "finished"
+
+    monkeypatch.setattr(tui, "RunnerApp", StubApp)
+
+    class Cfg:
+        events = None
+
+    report, error, detached = tui.run_visual(Cfg(), object(), {"number": 1, "title": "t"})
+
+    assert report is None
+    assert isinstance(error, RuntimeError)
+    assert detached is False
+    finished = [e for e in seen if e.kind == "run_finished"]
+    assert finished, "a crash must still emit run_finished so the TUI can settle"
+    assert finished[0].payload["error"] == "kaboom"
+    assert "run aborted" in format_summary(finished[0].payload)

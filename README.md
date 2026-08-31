@@ -192,9 +192,21 @@ uv run ruff check src tests
 ## Visual mode
 
 `--visual` on a TTY opens a contained Textual TUI: pipeline banner, live ticket
-board, streaming agent output, and run stats (calls, tokens, elapsed). `q`
-detaches the display while the run continues headless; the summary prints after
-exit. Non-TTY invocations fall back to plain text automatically.
+board, streaming agent output, and run stats (calls, tokens, elapsed). Non-TTY
+invocations fall back to plain text automatically.
+
+`q` does one of two things depending on when you press it:
+
+- **during the run** — detaches the display; the run continues headless and
+  progress is printed as plain lines.
+- **after the run** — closes the review. When the pipeline finishes the TUI
+  *stays open* on a finished state showing the outcome, tickets done/blocked,
+  the branch, the pull request URL and the usage line, so you can read the
+  final board and agent output before dismissing it. The same summary is
+  printed to the terminal on exit.
+
+A crash also settles into that finished state, showing the error, rather than
+leaving a live-looking display.
 
 Visual mode is also the only path that yields token counts, since it is the one
 that runs copilot with `--output-format json`.

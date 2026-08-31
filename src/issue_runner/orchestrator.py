@@ -92,7 +92,15 @@ def run_issue(
             report.details.append(f"planning did not start: {e}")
             _record_usage(client, state_dir, issue_ref, report)
             emit(cfg.events, "phase", name="finished")
-            emit(cfg.events, "run_finished", done=0, blocked=0, branch="")
+            emit(
+                cfg.events,
+                "run_finished",
+                done=0,
+                blocked=0,
+                branch="",
+                usage=report.usage_summary,
+                budget_exhausted=True,
+            )
             return report
         store.plan_summary = summary
         store.set_tickets(tickets)
@@ -126,7 +134,14 @@ def run_issue(
                 f"ticket {t.id} [{t.status}]: {t.title} — assert: {t.test_assertion}"
             )
         emit(cfg.events, "phase", name="finished")
-        emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch="")
+        emit(
+            cfg.events,
+            "run_finished",
+            done=report.done,
+            blocked=report.blocked,
+            branch="",
+            usage=report.usage_summary,
+        )
         _record_usage(client, state_dir, issue_ref, report)
         return report
 
@@ -167,7 +182,16 @@ def run_issue(
     _open_pull_request(cfg, issue, store, report)
     _record_usage(client, state_dir, issue_ref, report)
     emit(cfg.events, "phase", name="finished")
-    emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch=report.branch)
+    emit(
+        cfg.events,
+        "run_finished",
+        done=report.done,
+        blocked=report.blocked,
+        branch=report.branch,
+        pr_url=report.pr_url,
+        usage=report.usage_summary,
+        budget_exhausted=report.budget_exhausted,
+    )
     return report
 
 

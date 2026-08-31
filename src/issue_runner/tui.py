@@ -83,15 +83,44 @@ def format_stats(stats: dict) -> str:
     return line
 
 
+def format_summary(summary: dict) -> str:
+    """The end-of-run panel. Shown only once the pipeline has finished."""
+    done = summary.get("done", 0)
+    blocked = summary.get("blocked", 0)
+    if summary.get("error"):
+        outcome = "[red]run aborted[/]"
+    elif summary.get("budget_exhausted"):
+        outcome = "[red]stopped: credit budget exhausted[/]"
+    elif blocked:
+        outcome = f"[red]{blocked} blocked[/]"
+    else:
+        outcome = "[green]all tickets done[/]"
+    lines = [
+        f"[bold reverse] RUN FINISHED [/]  {outcome}",
+        f"tickets done [bold]{done}[/]  ·  blocked [bold]{blocked}[/]",
+    ]
+    if summary.get("error"):
+        lines.append(f"[red]{summary['error'][:300]}[/]")
+    if summary.get("branch"):
+        lines.append(f"branch [bold]{summary['branch']}[/]")
+    if summary.get("pr_url"):
+        lines.append(f"pull request {summary['pr_url']}")
+    if summary.get("usage"):
+        lines.append(f"[dim]{summary['usage']}[/]")
+    lines.append("[dim]press q to close — the summary is also printed on exit[/]")
+    return "\n".join(lines)
+
+
 class RunnerApp(App):
     TITLE = "issue-runner"
-    BINDINGS: ClassVar = [("q", "detach", "detach (run continues)")]
+    BINDINGS: ClassVar = [("q", "close", "detach / close")]
     CSS = """
     #pipeline { height: 3; padding: 1 2 0 2; }
     #middle { height: 1fr; }
     #board { width: 42%; border: round $primary; padding: 0 1; }
     #agent { width: 58%; border: round $secondary; }
     #stats { height: 3; border: round $accent; padding: 0 1; content-align: left middle; }
+    #summary { height: auto; border: round $success; padding: 0 1; }
     """
 
     def __init__(self, bus: EventBus, pipeline_thread: threading.Thread | None = None):
@@ -103,6 +132,7 @@ class RunnerApp(App):
         self._call_started: float | None = None
         self.state: dict = {"phase": "plan", "branch": "", "tickets": []}
         self.stats: dict = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+        self.summary: dict = {}
         self.finished = False
 
     def compose(self) -> ComposeResult:
@@ -111,6 +141,9 @@ class RunnerApp(App):
             yield Static(id="board")
             yield RichLog(id="agent", wrap=True, markup=False, max_lines=2000)
         yield Static(id="stats")
+        summary = Static(id="summary")
+        summary.display = False  # revealed only when the run finishes
+        yield summary
         yield Footer()
 
     def on_mount(self) -> None:
@@ -120,8 +153,9 @@ class RunnerApp(App):
         if self._thread is not None:
             self._thread.start()
 
-    def action_detach(self) -> None:
-        self.exit("detached")
+    def action_close(self) -> None:
+        """Before the run ends `q` detaches; afterwards it closes the review."""
+        self.exit("finished" if self.finished else "detached")
 
     # -- event application -------------------------------------------------
 
@@ -142,10 +176,20 @@ class RunnerApp(App):
         elif kind == "tickets_updated":
             self.state["tickets"] = p["tickets"]
         elif kind == "run_finished":
+            # hold the display: the user reviews the board and closes with `q`
             self.state["phase"] = "finished"
             self.state["branch"] = p.get("branch", self.state.get("branch", ""))
             self.finished = True
-            self.set_timer(1.5, lambda: self.exit("finished"))
+            self.summary = {
+                "done": p.get("done", 0),
+                "blocked": p.get("blocked", 0),
+                "branch": self.state["branch"],
+                "pr_url": p.get("pr_url", ""),
+                "usage": p.get("usage", ""),
+                "budget_exhausted": p.get("budget_exhausted", False),
+                "error": p.get("error", ""),
+            }
+            self.query_one("#summary", Static).display = True
         elif kind == "agent_call_started":
             self.stats["calls"] += 1
             self.stats["current_role"] = p.get("role")
@@ -171,6 +215,8 @@ class RunnerApp(App):
     def _render_all(self) -> None:
         self.query_one("#pipeline", Static).update(format_pipeline(self.state))
         self.query_one("#board", Static).update(format_board(self.state["tickets"]))
+        if self.finished:
+            self.query_one("#summary", Static).update(format_summary(self.summary))
         self._refresh_stats()
 
     def _refresh_stats(self) -> None:
@@ -195,6 +241,8 @@ def run_visual(cfg, client, issue: dict, plan_only: bool = False):
             result["report"] = run_issue(cfg, client, issue, plan_only=plan_only)
         except BaseException as e:  # noqa: BLE001 — surfaced after teardown
             result["error"] = e
+            # without this the TUI would sit on a live-looking display forever
+            bus.emit("run_finished", done=0, blocked=0, branch="", error=str(e))
 
     thread = threading.Thread(target=target, name="issue-runner-pipeline")
     app = RunnerApp(bus, pipeline_thread=thread)
