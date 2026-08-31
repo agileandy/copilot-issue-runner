@@ -14,12 +14,16 @@ import sys
 from pathlib import Path
 
 from .config import ROLES, RoleConfig, load_config
-from .copilot import CopilotClient
+from .copilot import CopilotClient, CopilotError
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
-from .phases.plan import PLAN_PROMPT
+from .phases.devops import DevopsError
+from .phases.plan import PLAN_PROMPT, PlanError
 from .ticket_mirror import GiteaTickets, GithubTickets
 from .trackers import TrackerError, fetch_gitea_issue, resolve
+
+# failures that abort a whole run: report them, never traceback at the user
+PipelineError = (PlanError, CopilotError, DevopsError)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -182,7 +186,11 @@ def main(argv=None) -> int:
             _print_summary(report)
             return _exit_code(report)
 
-    report = run_issue(cfg, client, issue, plan_only=args.plan_only)
+    try:
+        report = run_issue(cfg, client, issue, plan_only=args.plan_only)
+    except PipelineError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     _print_summary(report)
     return _exit_code(report)

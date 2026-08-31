@@ -15,6 +15,7 @@ is a human decision. Deny rules take precedence over --allow-all-tools.
 """
 
 import json
+import logging
 import queue
 import subprocess
 import threading
@@ -25,6 +26,8 @@ from .budget import RunBudget
 from .config import RunnerConfig
 from .events import emit
 from .usage import UsageLedger
+
+log = logging.getLogger("issue_runner")
 
 ALWAYS_DENY = ("shell(git push)",)
 READ_ONLY_DENY = ("write", "shell(git:*)")
@@ -49,6 +52,37 @@ class CopilotClient:
         read_only: bool = False,
         session_name: str | None = None,
     ) -> str:
+        """Run one model call, retrying a blank reply.
+
+        The real Copilot CLI intermittently exits 0 having written nothing to
+        stdout. Returning that empty string let callers spend a retry on a
+        nonsense parse error, so it is treated here as the transport failure it
+        is. Every attempt is still budgeted and accounted — a wasted call is
+        real spend.
+        """
+        attempts = max(0, self.config.empty_reply_retries) + 1
+        for attempt in range(1, attempts + 1):
+            reply = self._attempt(prompt, role, read_only, session_name)
+            if reply:
+                return reply
+            log.warning(
+                "copilot returned an empty reply for role %s (attempt %d/%d)",
+                role,
+                attempt,
+                attempts,
+            )
+        raise CopilotError(
+            f"copilot returned an empty reply for role {role} after {attempts} attempts "
+            "(exit 0, no output) — this is a CLI transport failure, not a model refusal"
+        )
+
+    def _attempt(
+        self,
+        prompt: str,
+        role: str,
+        read_only: bool,
+        session_name: str | None,
+    ) -> str:
         stream = self.config.events is not None
         self.budget.check()  # never start a call the run budget cannot afford
         argv = self._build_argv(prompt, role, read_only, session_name, stream=stream)
@@ -72,16 +106,16 @@ class CopilotClient:
             self._record(role, role_cfg, session_name, started, ok=False, usage=None)
             raise
         elapsed = round(time.monotonic() - started, 1)
-        self._record(
-            role, role_cfg, session_name, started, ok=returncode == 0, usage=usage, elapsed=elapsed
-        )
+        reply = (reply or "").strip()
+        ok = returncode == 0 and bool(reply)
+        self._record(role, role_cfg, session_name, started, ok=ok, usage=usage, elapsed=elapsed)
         emit(
             self.config.events,
             "agent_call_finished",
             role=role,
             session=session_name,
             elapsed=elapsed,
-            ok=returncode == 0,
+            ok=ok,
             usage=usage,
         )
         if returncode != 0:
