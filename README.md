@@ -42,6 +42,26 @@ Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--copilot-cmd /path/to/fake`.
 
+### Test command
+
+The runner detects the target repo's test command from its project markers, so
+a non-Python repo works without configuration:
+
+| Marker | Command |
+|---|---|
+| `pyproject.toml`, `setup.py`, `setup.cfg` | `python -m pytest {test_path} -q` |
+| `package.json` with a `test` script | `npm test -- {test_path}` |
+| `go.mod` | `go test ./...` |
+| `Cargo.toml` | `cargo test` |
+
+The first marker in that order wins in a polyglot repo, and the choice is logged
+at INFO. With no marker recognised it falls back to pytest and warns. `go test`
+and `cargo test` deliberately run unfiltered: their selector flags take a test
+*name*, not a file path, so a path filter would match nothing and exit 0 — which
+the harness would misread as a passing test.
+
+`test_cmd` in `runner.toml` and `--test-cmd` always override detection.
+
 When a run finishes clean — every ticket done, none blocked — the runner pushes
 the issue branch and opens a pull request titled `Fixes #<n> — <issue title>`,
 bodied with the plan summary and each ticket's assertion, and prints its URL.
