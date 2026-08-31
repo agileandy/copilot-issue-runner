@@ -1,6 +1,6 @@
 import pytest
 
-from issue_runner.demo.roman import to_roman
+from issue_runner.demo.roman import from_roman, to_roman
 
 
 def test_converts_1994_with_subtractive_notation():
@@ -38,3 +38,23 @@ def test_bool_is_rejected():
 def test_non_int_raises(number):
     with pytest.raises(ValueError):
         to_roman(number)
+
+
+def test_from_roman_round_trips_to_roman():
+    assert from_roman(to_roman(2024)) == 2024
+
+
+def test_from_roman_is_case_insensitive():
+    assert from_roman("mcmxciv") == 1994
+
+
+@pytest.mark.parametrize("numeral", ["IIII", "IC", "VX", "MMMM"])
+def test_from_roman_rejects_non_canonical(numeral):
+    with pytest.raises(ValueError):
+        from_roman(numeral)
+
+
+@pytest.mark.parametrize("numeral", ["", "   ", "ABC", "MC!", 5, None])
+def test_from_roman_rejects_bad_input(numeral):
+    with pytest.raises(ValueError):
+        from_roman(numeral)
