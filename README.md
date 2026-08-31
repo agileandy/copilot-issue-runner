@@ -30,6 +30,24 @@ plan  ->  branch  ->  per ticket: [ builder.tester -> builder.coder -> verifier 
      every transition, so a crashed or credit-capped run resumes with no
      repeated model calls.
 
+## Install
+
+To get `gh-runner` (and `issue-runner`) on your PATH from anywhere:
+
+```bash
+uv tool install --editable /path/to/copilot-issue-runner
+```
+
+`--editable` keeps the commands pointed at the working copy, so source changes
+take effect without reinstalling. Both names are the same program and accept the
+same arguments; `--dir` defaults to the current directory, so from inside a
+target repo:
+
+```bash
+gh-runner 7                 # implement issue 7 of the repo you are standing in
+gh-runner 7 --plan-only -v
+```
+
 ## Usage
 
 ```bash

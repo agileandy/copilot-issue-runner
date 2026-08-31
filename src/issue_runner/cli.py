@@ -26,9 +26,10 @@ from .trackers import TrackerError, fetch_gitea_issue, resolve
 PipelineError = (PlanError, CopilotError, DevopsError)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="issue-runner",
+        # follow the name the user actually typed: issue-runner or gh-runner
+        prog=prog or Path(sys.argv[0]).name or "issue-runner",
         description="Drive GitHub Copilot CLI through plan/build/verify to implement an issue.",
     )
     p.add_argument("issue", nargs="?", help="GitHub issue number (in --repo or the --dir repo)")

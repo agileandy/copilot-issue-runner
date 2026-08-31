@@ -416,3 +416,43 @@ def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     # the usage file must not be mistaken for a ticket state file
     state_files = list((repo / ".issue-runner").glob("issue-*.json"))
     assert len(state_files) == 1
+
+
+def test_parser_prog_follows_the_invoked_command_name():
+    """`gh-runner --help` must not tell the user to type `issue-runner`."""
+    assert build_parser(prog="gh-runner").prog == "gh-runner"
+    assert build_parser(prog="issue-runner").prog == "issue-runner"
+
+
+def test_gh_main_passes_arguments_through(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["dir"] = cfg.repo_dir
+        seen["max_rounds"] = cfg.max_rounds
+        seen["plan_only"] = plan_only
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    rc = cli.gh_main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--max-rounds",
+            "9",
+        ]
+    )
+    assert rc == 0
+    assert seen["dir"] == repo.resolve()
+    assert seen["max_rounds"] == 9
