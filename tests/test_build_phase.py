@@ -123,3 +123,100 @@ def test_tester_raises_already_passes_when_final_attempt_is_green(repo, cfg):
     with pytest.raises(TestAlreadyPasses) as exc:
         tester_step(client, cfg, ticket())
     assert exc.value.test_path == "test_subtract.py"
+
+
+# --- test-file restoration (production failure: "could not be restored from git") ---
+#
+# The test file is written by the tester during THIS run and is not committed
+# until the verifier passes, so `git checkout -- <path>` could never restore it:
+# for a new file the pathspec does not match, and for a tracked file it reverts
+# to HEAD, destroying the tester's work. Restoration uses an in-memory snapshot.
+
+
+import subprocess
+
+
+def git_repo_with_committed_test(repo, content):
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    (repo / "test_subtract.py").write_text(content)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def test_tampered_new_test_file_is_restored_and_the_coder_continues(repo, cfg):
+    """The test file is untracked, so git could never have restored it."""
+    (repo / "test_subtract.py").write_text("assert RED")
+
+    def cheat():
+        (repo / "test_subtract.py").write_text("assert PASS  # weakened")
+
+    def honest():
+        (repo / "impl.py").write_text("code")
+
+    client = FakeClient([("done", cheat), ("done", honest)])
+    coder_step(client, cfg, ticket(), "test_subtract.py")
+    assert (repo / "test_subtract.py").read_text() == "assert RED", "the spec must survive"
+    assert (repo / "impl.py").exists()
+
+
+def test_tampered_tracked_test_file_is_restored_to_the_testers_version(repo, cfg):
+    """Regression: git checkout would revert to HEAD and delete the new test."""
+    git_repo_with_committed_test(repo, "assert OLD COMMITTED\n")
+    tester_version = "assert OLD COMMITTED\nassert RED  # added by the tester this run\n"
+    (repo / "test_subtract.py").write_text(tester_version)
+
+    def cheat():
+        (repo / "test_subtract.py").write_text("assert PASS\n")
+
+    def honest():
+        (repo / "impl.py").write_text("code")
+
+    client = FakeClient([("done", cheat), ("done", honest)])
+    coder_step(client, cfg, ticket(), "test_subtract.py")
+    assert (repo / "test_subtract.py").read_text() == tester_version
+
+
+def test_deleted_test_file_is_restored(repo, cfg):
+    (repo / "test_subtract.py").write_text("assert RED")
+
+    def delete_it():
+        (repo / "test_subtract.py").unlink()
+
+    def honest():
+        (repo / "impl.py").write_text("code")
+
+    client = FakeClient([("done", delete_it), ("done", honest)])
+    coder_step(client, cfg, ticket(), "test_subtract.py")
+    assert (repo / "test_subtract.py").read_text() == "assert RED"
+
+
+def test_repeated_tampering_still_fails_the_ticket_cleanly(repo, cfg):
+    (repo / "test_subtract.py").write_text("assert RED")
+
+    def cheat():
+        (repo / "test_subtract.py").write_text("assert PASS")
+
+    client = FakeClient([("done", cheat), ("done", cheat)])
+    with pytest.raises(BuildError, match="modified the test file"):
+        coder_step(client, cfg, ticket(), "test_subtract.py")
+    assert (repo / "test_subtract.py").read_text() == "assert RED"
+
+
+def test_the_coder_is_told_it_tampered(repo, cfg):
+    (repo / "test_subtract.py").write_text("assert RED")
+
+    def cheat():
+        (repo / "test_subtract.py").write_text("assert PASS")
+
+    def honest():
+        (repo / "impl.py").write_text("code")
+
+    client = FakeClient([("done", cheat), ("done", honest)])
+    coder_step(client, cfg, ticket(), "test_subtract.py")
+    assert "modified the test file" in client.calls[1]["prompt"]

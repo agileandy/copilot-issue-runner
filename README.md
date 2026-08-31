@@ -51,14 +51,21 @@ gh-runner 7 --plan-only -v
 ## Usage
 
 ```bash
-uv run issue-runner 17 --repo owner/name --dir ~/src/target-repo
-uv run issue-runner --issue-file ./issue.md --dir . --plan-only   # plan, no build
-uv run issue-runner 17 --dry-run                                  # print the planner call, zero credits
+gh-runner 17 --repo owner/name --dir ~/src/target-repo
+gh-runner --issue-file ./issue.md --dir . --plan-only   # plan, no build
+gh-runner 17 --dry-run                                  # print the planner call, zero credits
+gh-runner 17 --retry-blocked                            # retry only what blocked last time
 ```
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
-`--no-github-tickets` · `--no-pr` · `--plan-only` · `--copilot-cmd /path/to/fake`.
+`--max-run-credits 300` · `--parallel N` · `--issue-file PATH` ·
+`--retry-blocked` · `--visual` ·
+`--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
+`--copilot-cmd /path/to/fake` · `-v`.
+
+Without a global install, prefix any of these with `uv run` from the runner's
+own directory (`uv run issue-runner 17 --dir ~/src/target-repo`).
 
 ### Test command
 
@@ -80,16 +87,25 @@ the harness would misread as a passing test.
 
 `test_cmd` in `runner.toml` and `--test-cmd` always override detection.
 
+### Pull requests
+
 When a run finishes clean — every ticket done, none blocked — the runner pushes
 the issue branch and opens a pull request titled `Fixes #<n> — <issue title>`,
 bodied with the plan summary and each ticket's assertion, and prints its URL.
 This needs a GitHub repo (`--repo`, or a github.com `origin`); it is skipped for
-`--plan-only`, `--dry-run` and Gitea remotes. Disable it with `--no-pr` or
-`open_pr = false` in `runner.toml`. A push or `gh` failure is reported, not
-fatal — the commits are already on the branch.
+`--plan-only`, `--dry-run`, a budget stop, and Gitea remotes. Disable it with
+`--no-pr` or `open_pr = false` in `runner.toml`. A push or `gh` failure is
+reported, not fatal — the commits are already on the branch.
 
-Exit codes: `0` all tickets done · `2` bad invocation · `3` some tickets blocked ·
-`4` stopped on the run credit budget.
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | all tickets done |
+| `1` | the run aborted (planner failure, copilot transport failure, git failure) |
+| `2` | bad invocation |
+| `3` | some tickets blocked |
+| `4` | stopped on the run credit budget |
 
 ### Ticket dependencies
 
@@ -135,6 +151,16 @@ Token counts only exist on the streaming path (i.e. with `--visual`); on the
 plain path copilot reports none, so token totals stay absent rather than being
 shown as a misleading zero.
 
+### Blank replies
+
+The Copilot CLI sometimes exits 0 having written nothing to stdout — usually a
+sign it cannot validate its token (`gh auth status`, or `/login` inside
+`copilot`). A blank reply is treated as a transport failure, not as a model
+answer: it is retried `empty_reply_retries` times (default 2, set in
+`runner.toml`) before the run aborts with exit 1. Every attempt is budgeted and
+counted as a failed call in the usage report, because a wasted call is real
+spend.
+
 ## Frugal mode (free Copilot plan)
 
 Model calls per issue ≈ `1 + 3 × tickets` minimum. To spend nothing while
@@ -163,9 +189,12 @@ uv run pytest        # no model calls: all agents are faked
 uv run ruff check src tests
 ```
 
-## Visual mode (issue #19)
+## Visual mode
 
 `--visual` on a TTY opens a contained Textual TUI: pipeline banner, live ticket
 board, streaming agent output, and run stats (calls, tokens, elapsed). `q`
 detaches the display while the run continues headless; the summary prints after
 exit. Non-TTY invocations fall back to plain text automatically.
+
+Visual mode is also the only path that yields token counts, since it is the one
+that runs copilot with `--output-format json`.

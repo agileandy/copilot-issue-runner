@@ -110,6 +110,26 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _current_hash(path: Path) -> str | None:
+    """Hash of the file as it stands, or None if the coder deleted it."""
+    try:
+        return _hash_file(path)
+    except OSError:
+        return None
+
+
+def _restore(path: Path, original: bytes, test_path: str) -> None:
+    """Put the tester's exact test back, whatever the coder did to it."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original)
+    except OSError as e:
+        raise BuildError(
+            f"builder.coder modified test file {test_path} and it could not be "
+            f"restored: {e} — aborting ticket"
+        ) from e
+
+
 def tester_step(
     client,
     cfg: RunnerConfig,
@@ -172,7 +192,10 @@ def coder_step(
     feedback: str | None = None,
 ) -> None:
     full = Path(cfg.repo_dir) / test_path
-    test_hash = _hash_file(full)
+    # snapshot the spec in memory: it was written by the tester during THIS run
+    # and is not committed until the verifier passes, so git cannot restore it
+    original = full.read_bytes()
+    test_hash = hashlib.sha256(original).hexdigest()
     extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{feedback}" if feedback else ""
     last_error = "no attempt made"
     for _ in range(cfg.coder_retries + 1):
@@ -185,20 +208,10 @@ def coder_step(
         )
         client.run(prompt, role="builder.coder", session_name=f"coder-t{ticket.id}")
 
-        if _hash_file(full) != test_hash:
+        if _current_hash(full) != test_hash:
             # restore the specification and reject the attempt
             last_error = "you modified the test file — that is forbidden; the test is the spec"
-            subprocess.run(
-                ["git", "checkout", "--", test_path],
-                cwd=str(cfg.repo_dir),
-                capture_output=True,
-                check=False,
-            )
-            if _hash_file(full) != test_hash:
-                raise BuildError(
-                    f"builder.coder tampered with test file {test_path} and it could "
-                    "not be restored from git — aborting ticket"
-                )
+            _restore(full, original, test_path)
         else:
             passed, output = run_tests(cfg, test_path)
             if passed:
