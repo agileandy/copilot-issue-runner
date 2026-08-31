@@ -1,7 +1,15 @@
 import json
 import subprocess
 
-from issue_runner.github_io import create_subissue, fetch_issue, issue_from_file
+import pytest
+
+from issue_runner.github_io import (
+    GithubError,
+    create_subissue,
+    fetch_issue,
+    issue_from_file,
+    open_pull_request,
+)
 from issue_runner.tickets import Ticket
 
 
@@ -44,3 +52,21 @@ def test_create_subissue_parses_number():
     assert argv[:3] == ["gh", "issue", "create"]
     body = argv[argv.index("--body") + 1]
     assert "#17" in body and "a == 1" in body
+
+
+def test_open_pull_request_returns_url():
+    run = FakeRun(stdout="https://github.com/owner/repo/pull/7\n")
+    url = open_pull_request(
+        "owner/repo", head="issue-1-x", title="Fixes #1", body="Closes #1", run=run
+    )
+    assert url == "https://github.com/owner/repo/pull/7"
+    argv = run.calls[0]
+    assert argv[:3] == ["gh", "pr", "create"]
+    assert argv[argv.index("--head") + 1] == "issue-1-x"
+    assert argv[argv.index("--title") + 1] == "Fixes #1"
+
+
+def test_open_pull_request_raises_without_url():
+    run = FakeRun(stdout="no url here\n")
+    with pytest.raises(GithubError):
+        open_pull_request("owner/repo", head="b", title="t", body="b", run=run)

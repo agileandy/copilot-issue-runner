@@ -13,9 +13,11 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import github_io
 from .config import RunnerConfig
 from .copilot import CopilotError
 from .events import emit, ticket_snapshot
+from .github_io import GithubError
 from .phases import devops
 from .phases.build import (
     BuildError,
@@ -38,6 +40,7 @@ class RunReport:
     branch: str = ""
     done: int = 0
     blocked: int = 0
+    pr_url: str = ""
     details: list[str] = field(default_factory=list)
 
 
@@ -139,9 +142,48 @@ def run_issue(
     for ticket in store.pending():
         _process_ticket(cfg, client, store, ticket, report)
 
+    _open_pull_request(cfg, issue, store, report)
     emit(cfg.events, "phase", name="finished")
     emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch=report.branch)
     return report
+
+
+def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
+    lines = [f"Closes #{issue['number']}", ""]
+    if store.plan_summary:
+        lines += [store.plan_summary, ""]
+    lines.append("### Tickets")
+    for ticket in store.tickets:
+        if ticket.status == "done":
+            lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    lines += ["", f"Branch `{report.branch}`, opened by issue-runner. Co-authored with AI."]
+    return "\n".join(lines)
+
+
+def _open_pull_request(
+    cfg: RunnerConfig, issue: dict, store: TicketStore, report: RunReport
+) -> None:
+    """Publish the branch and open a PR — only for a clean run on a known GitHub repo.
+
+    A failure here never fails the run: the commits are already on the branch, so
+    the reason is recorded in the report and the user can open the PR by hand.
+    """
+    if not cfg.open_pr or not cfg.repo or not issue["number"]:
+        return
+    if report.blocked or not report.done:
+        return
+    title = f"Fixes #{issue['number']} — {issue['title']}"
+    try:
+        devops.push_branch(cfg.repo_dir, report.branch)
+        report.pr_url = github_io.open_pull_request(
+            cfg.repo, head=report.branch, title=title, body=_pr_body(issue, store, report)
+        )
+    except (DevopsError, GithubError) as e:
+        log.warning("pull request not opened: %s", e)
+        report.details.append(f"pull request not opened: {e}")
+        return
+    report.details.append(f"pull request opened: {report.pr_url}")
+    emit(cfg.events, "pull_request_opened", url=report.pr_url)
 
 
 def _process_ticket(

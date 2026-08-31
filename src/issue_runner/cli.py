@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--plan-only", action="store_true", help="stop after the plan phase")
     p.add_argument(
+        "--no-pr",
+        action="store_true",
+        help="do not open a pull request when the run finishes clean",
+    )
+    p.add_argument(
         "--retry-blocked",
         action="store_true",
         help="reset blocked tickets to pending and run them again",
@@ -117,6 +122,8 @@ def main(argv=None) -> int:
         cfg.max_rounds = args.max_rounds
     if args.no_github_tickets:
         cfg.github_tickets = False
+    if args.no_pr:
+        cfg.open_pr = False
     if args.retry_blocked:
         cfg.retry_blocked = True
     if args.visual:
@@ -165,19 +172,22 @@ def main(argv=None) -> int:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
                 return 1
-            print(f"\nbranch: {report.branch or '(plan only)'}")
-            print(f"tickets done: {report.done}, blocked: {report.blocked}")
-            for line in report.details:
-                print(f"  - {line}")
+            _print_summary(report)
             return 0 if report.blocked == 0 else 3
 
     report = run_issue(cfg, client, issue, plan_only=args.plan_only)
 
+    _print_summary(report)
+    return 0 if report.blocked == 0 else 3
+
+
+def _print_summary(report) -> None:
     print(f"\nbranch: {report.branch or '(plan only)'}")
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
+    if report.pr_url:
+        print(f"pull request: {report.pr_url}")
     for line in report.details:
         print(f"  - {line}")
-    return 0 if report.blocked == 0 else 3
 
 
 def gh_main(argv=None) -> int:
