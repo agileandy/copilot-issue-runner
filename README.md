@@ -73,6 +73,18 @@ fatal — the commits are already on the branch.
 Exit codes: `0` all tickets done · `2` bad invocation · `3` some tickets blocked ·
 `4` stopped on the run credit budget.
 
+### Ticket dependencies
+
+The planner may give a ticket a `depends_on` list. The build loop drains the
+*ready* set — tickets whose every dependency is `done` — in plan order, so a
+ticket is never built before its prerequisite. Tickets are still executed one at
+a time.
+
+If nothing is ready but tickets remain, they are blocked explicitly rather than
+left pending, with the cause named: `depends on ticket N which is blocked`,
+`depends on unknown ticket N`, or a dependency cycle. Root causes are attributed
+first, so a dependent points at the prerequisite that actually failed.
+
 ### Credit budgets
 
 `--max-ai-credits N` caps a single Copilot call. `--max-run-credits N` (or

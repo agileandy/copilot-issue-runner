@@ -148,12 +148,18 @@ def run_issue(
 
     # Phase 3: build/verify loop
     emit(cfg.events, "phase", name="build")
-    for ticket in store.pending():
-        _process_ticket(cfg, client, store, ticket, report)
+    while True:
+        ready = store.ready()
+        if not ready:
+            break
+        _process_ticket(cfg, client, store, ready[0], report)
         if report.budget_exhausted:
             log.warning("run stopped: credit budget exhausted; re-run to resume")
             report.details.append("run stopped early: credit budget exhausted (state is resumable)")
             break
+
+    if not report.budget_exhausted:
+        _block_unsatisfiable(cfg, store, report)
 
     _open_pull_request(cfg, issue, store, report)
     emit(cfg.events, "phase", name="finished")
@@ -197,6 +203,30 @@ def _open_pull_request(
         return
     report.details.append(f"pull request opened: {report.pr_url}")
     emit(cfg.events, "pull_request_opened", url=report.pr_url)
+
+
+def _block_unsatisfiable(cfg: RunnerConfig, store: TicketStore, report: RunReport) -> None:
+    """Nothing is ready but tickets remain: their dependencies can never be met.
+
+    Blocking each one explicitly (rather than leaving it pending) makes the
+    failure visible in the report and the tracker, and keeps the run terminating.
+    Tickets with a nameable cause are blocked first so a dependent cites the
+    prerequisite that actually failed; only what is left over is a true cycle.
+    """
+    while True:
+        remaining = store.pending()
+        if not remaining:
+            return
+        nameable = [(t, store.dependency_failure(t)) for t in remaining]
+        nameable = [(t, reason) for t, reason in nameable if reason]
+        if not nameable:
+            # a true cycle has no root cause; label every member the same way
+            reasons = [(t, store.unsatisfiable_reason(t)) for t in remaining]
+            for ticket, reason in reasons:
+                _block(store, ticket, report, reason, cfg)
+            return
+        for ticket, reason in nameable:
+            _block(store, ticket, report, reason, cfg)
 
 
 def _process_ticket(
