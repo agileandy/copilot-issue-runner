@@ -17,6 +17,7 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, RichLog, Static
 
 from .events import EventBus, RunEvent
+from .usage import format_aiu
 
 STATUS_GLYPHS = {
     "pending": "○",
@@ -73,6 +74,10 @@ def format_stats(stats: dict) -> str:
     line = (
         f"calls [bold]{stats.get('calls', 0)}[/]"
         f"  ·  tokens in [bold]{tokens_in:,}[/] / out [bold]{tokens_out:,}[/]"
+    )
+    if stats.get("nano_aiu"):
+        line += f"  ·  credits [bold]{format_aiu(stats['nano_aiu'])}[/]"
+    line += (
         f"  ·  run [bold]{int(stats.get('run_elapsed', 0)) // 60}m"
         f"{int(stats.get('run_elapsed', 0)) % 60:02d}s[/]"
     )
@@ -204,6 +209,7 @@ class RunnerApp(App):
             usage = p.get("usage") or {}
             self.stats["input_tokens"] += usage.get("input_tokens", 0)
             self.stats["output_tokens"] += usage.get("output_tokens", 0)
+            self.stats["nano_aiu"] = self.stats.get("nano_aiu", 0) + usage.get("nano_aiu", 0)
             self.query_one("#agent", RichLog).write(f"── done in {p.get('elapsed', '?')}s ──")
         elif kind == "ticket_blocked":
             self.query_one("#agent", RichLog).write(f"⚠ BLOCKED: {p.get('reason', '')[:300]}")

@@ -119,3 +119,79 @@ def test_no_bus_keeps_legacy_path(tmp_path):
     cfg = RunnerConfig(repo_dir=tmp_path)
     client = CopilotClient(cfg, runner=runner)
     assert client.run("q", role="planner") == "plain"
+
+
+# --- real payload shapes, captured from copilot 1.0.82 -----------------------
+#
+# The previous fixture invented {"usage": {"input_tokens", "output_tokens"}}.
+# The binary actually reports OpenAI-style names, so the parser filtered
+# everything out and every run recorded null tokens.
+
+REAL_CALL_SUCCESS = {
+    "modelCall": {"model": "claude-opus-5"},
+    "responseChunk": {
+        "usage": {
+            "prompt_tokens": 32854,
+            "completion_tokens": 4,
+            "total_tokens": 32858,
+            "prompt_tokens_details": {"cached_tokens": 11, "cache_creation_tokens": 32852},
+        }
+    },
+    "responseUsage": {
+        "prompt_tokens": 32854,
+        "completion_tokens": 4,
+        "prompt_tokens_details": {"cached_tokens": 11, "cache_creation_tokens": 32852},
+    },
+    "copilotUsage": {
+        "token_details": [{"token_type": "input", "token_count": 2}],
+        "total_nano_aiu": 20543500000,
+    },
+}
+
+
+def parse(kind, **data):
+    from issue_runner.copilot import _parse_event_line
+
+    return _parse_event_line(json.dumps({"type": kind, "data": data}))
+
+
+def test_real_call_success_yields_tokens():
+    _, _, _, usage = parse("model.model_call_success", **REAL_CALL_SUCCESS)
+    assert usage["input_tokens"] == 32854
+    assert usage["output_tokens"] == 4
+
+
+def test_real_call_success_yields_actual_credits():
+    _, _, _, usage = parse("model.model_call_success", **REAL_CALL_SUCCESS)
+    assert usage["nano_aiu"] == 20543500000
+
+
+def test_real_call_success_yields_cached_tokens():
+    _, _, _, usage = parse("model.model_call_success", **REAL_CALL_SUCCESS)
+    assert usage["cached_tokens"] == 11
+
+
+def test_anthropic_style_token_names_are_still_accepted():
+    _, _, _, usage = parse(
+        "model.model_call_success",
+        responseChunk={"usage": {"input_tokens": 7, "output_tokens": 3}},
+    )
+    assert (usage["input_tokens"], usage["output_tokens"]) == (7, 3)
+
+
+def test_call_success_without_usage_reports_nothing():
+    assert parse("model.model_call_success", responseChunk={})[3] is None
+
+
+def test_streamed_run_records_real_tokens_and_credits(tmp_path):
+    script = (
+        jl("assistant.message", messageId="m1", content="the reply")
+        + json.dumps({"type": "model.model_call_success", "data": REAL_CALL_SUCCESS})
+        + "\n"
+    )
+    client, _ = make_client(tmp_path, FakeProc(script))
+    assert client.run("p", role="planner", session_name="planner") == "the reply"
+    totals = client.usage.totals()
+    assert totals["input_tokens"] == 32854
+    assert totals["output_tokens"] == 4
+    assert totals["nano_aiu"] == 20543500000

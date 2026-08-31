@@ -36,6 +36,11 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+def format_aiu(nano_aiu: int) -> str:
+    """Copilot bills in nano-AIU; show the AIU figure a user can compare."""
+    return f"{nano_aiu / 1_000_000_000:.2f} AIU"
+
+
 def _ticket_id(session: str | None) -> int | None:
     match = _TICKET_RE.search(session or "")
     return int(match.group(1)) if match else None
@@ -61,6 +66,8 @@ class CallRecord:
     ok: bool
     input_tokens: int | None
     output_tokens: int | None
+    cached_tokens: int | None
+    nano_aiu: int | None
 
 
 class UsageLedger:
@@ -90,6 +97,8 @@ class UsageLedger:
                 ok=bool(ok),
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
+                cached_tokens=usage.get("cached_tokens"),
+                nano_aiu=usage.get("nano_aiu"),
             )
         )
 
@@ -100,10 +109,14 @@ class UsageLedger:
             "seconds": round(sum(c.seconds for c in calls), 1),
             "input_tokens": None,
             "output_tokens": None,
+            "cached_tokens": None,
+            "nano_aiu": None,
         }
         for call in calls:
             bucket["input_tokens"] = _add(bucket["input_tokens"], call.input_tokens)
             bucket["output_tokens"] = _add(bucket["output_tokens"], call.output_tokens)
+            bucket["cached_tokens"] = _add(bucket["cached_tokens"], call.cached_tokens)
+            bucket["nano_aiu"] = _add(bucket["nano_aiu"], call.nano_aiu)
         return bucket
 
     def totals(self) -> dict:
@@ -132,7 +145,12 @@ class UsageLedger:
         if totals["input_tokens"] is not None or totals["output_tokens"] is not None:
             incoming = totals["input_tokens"] or 0
             outgoing = totals["output_tokens"] or 0
-            parts.append(f"tokens: {incoming} in / {outgoing} out")
+            tokens = f"tokens: {incoming:,} in / {outgoing:,} out"
+            if totals["cached_tokens"]:
+                tokens += f" ({totals['cached_tokens']:,} cached)"
+            parts.append(tokens)
+        if totals["nano_aiu"] is not None:
+            parts.append(f"credits: {format_aiu(totals['nano_aiu'])}")
         roles = ", ".join(
             f"{role}={data['calls']}" for role, data in sorted(self.by_role().items())
         )
@@ -189,8 +207,10 @@ def _combine(buckets: list[dict]) -> dict:
         "seconds": round(sum(b.get("seconds", 0) for b in buckets), 1),
         "input_tokens": None,
         "output_tokens": None,
+        "cached_tokens": None,
+        "nano_aiu": None,
     }
     for bucket in buckets:
-        combined["input_tokens"] = _add(combined["input_tokens"], bucket.get("input_tokens"))
-        combined["output_tokens"] = _add(combined["output_tokens"], bucket.get("output_tokens"))
+        for key in ("input_tokens", "output_tokens", "cached_tokens", "nano_aiu"):
+            combined[key] = _add(combined[key], bucket.get(key))
     return combined
