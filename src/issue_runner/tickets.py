@@ -66,6 +66,38 @@ class TicketStore:
     def pending(self) -> list[Ticket]:
         return [t for t in self.tickets if t.status in ("pending", "in_progress")]
 
+    def _by_id(self) -> dict[int, Ticket]:
+        return {t.id: t for t in self.tickets}
+
+    def ready(self) -> list[Ticket]:
+        """Pending tickets whose every dependency is done, in plan order.
+
+        A ticket whose dependency is missing, blocked, or part of a cycle is
+        never ready — the orchestrator blocks it explicitly rather than
+        silently skipping it, so the run cannot deadlock.
+        """
+        by_id = self._by_id()
+        return [
+            t
+            for t in self.pending()
+            if all(dep in by_id and by_id[dep].status == "done" for dep in t.depends_on)
+        ]
+
+    def dependency_failure(self, ticket: Ticket) -> str | None:
+        """A concrete, nameable reason this ticket can never run — or None."""
+        by_id = self._by_id()
+        for dep in ticket.depends_on:
+            if dep not in by_id:
+                return f"depends on unknown ticket {dep}"
+            if by_id[dep].status == "blocked":
+                return f"depends on ticket {dep} which is blocked"
+        return None
+
+    def unsatisfiable_reason(self, ticket: Ticket) -> str:
+        return self.dependency_failure(ticket) or (
+            "dependency cycle: no ordering of the remaining tickets can satisfy it"
+        )
+
     def save(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         payload = {
