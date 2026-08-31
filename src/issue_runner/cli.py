@@ -60,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
     p.add_argument("--effort", help="default reasoning effort for all roles")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
+    p.add_argument(
+        "--max-run-credits",
+        type=int,
+        help="whole-run AI credit budget; the run stops cleanly (exit 4) before exceeding it",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -133,6 +138,8 @@ def main(argv=None) -> int:
     cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
     if args.max_ai_credits:
         cfg.max_ai_credits = args.max_ai_credits
+    if args.max_run_credits:
+        cfg.max_run_credits = args.max_run_credits
     if args.model or args.effort:
         for role in ROLES:
             existing = cfg.roles.get(role, RoleConfig())
@@ -173,17 +180,26 @@ def main(argv=None) -> int:
                 print(f"error: {error}", file=sys.stderr)
                 return 1
             _print_summary(report)
-            return 0 if report.blocked == 0 else 3
+            return _exit_code(report)
 
     report = run_issue(cfg, client, issue, plan_only=args.plan_only)
 
     _print_summary(report)
+    return _exit_code(report)
+
+
+def _exit_code(report) -> int:
+    """4 (budget stop) is distinct from 3 (blocked) so queue callers can retry."""
+    if report.budget_exhausted:
+        return 4
     return 0 if report.blocked == 0 else 3
 
 
 def _print_summary(report) -> None:
     print(f"\nbranch: {report.branch or '(plan only)'}")
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
+    if report.budget_exhausted:
+        print("run stopped: AI credit budget exhausted — re-run to resume")
     if report.pr_url:
         print(f"pull request: {report.pr_url}")
     for line in report.details:

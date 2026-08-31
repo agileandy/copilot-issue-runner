@@ -21,6 +21,7 @@ import threading
 import time
 from pathlib import Path
 
+from .budget import RunBudget
 from .config import RunnerConfig
 from .events import emit
 
@@ -37,6 +38,7 @@ class CopilotClient:
         self.config = config
         self.runner = runner
         self.popen = popen
+        self.budget = RunBudget(limit=config.max_run_credits, per_call=config.max_ai_credits or 1)
 
     def run(
         self,
@@ -46,6 +48,7 @@ class CopilotClient:
         session_name: str | None = None,
     ) -> str:
         stream = self.config.events is not None
+        self.budget.check()  # never start a call the run budget cannot afford
         argv = self._build_argv(prompt, role, read_only, session_name, stream=stream)
         role_cfg = self.config.role(role)
         emit(
@@ -56,6 +59,7 @@ class CopilotClient:
             model=role_cfg.model,
         )
         started = time.monotonic()
+        self.budget.charge()
         if stream:
             returncode, reply, detail, usage = self._stream_call(argv, role, session_name)
         else:

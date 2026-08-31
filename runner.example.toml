@@ -10,6 +10,7 @@ coder_retries = 2
 github_tickets = true # mirror tickets as gh sub-issues (needs --repo + write access)
 open_pr = true        # open a PR when a run finishes with no blocked tickets
 # max_ai_credits = 30 # per-call soft cap (copilot minimum is 30)
+# max_run_credits = 300 # whole-run budget; the run stops cleanly (exit 4) before exceeding it
 
 # Per-role model/effort — spend where it matters, save where it doesn't.
 # Run `copilot` and use /model to see what your plan offers.
