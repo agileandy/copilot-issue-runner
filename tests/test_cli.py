@@ -301,3 +301,76 @@ def test_open_pr_defaults_true_and_reads_config(tmp_path):
     assert RunnerConfig(repo_dir=tmp_path).open_pr is True
     (tmp_path / "runner.toml").write_text("open_pr = false\n")
     assert load_config(tmp_path).open_pr is False
+
+
+def test_budget_stop_exits_with_code_4(tmp_path, monkeypatch, capsys):
+    """A budget stop must be distinguishable from ordinary blocked tickets (3)."""
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+
+    report = RunReport(branch="issue-1-t", done=1, blocked=1, budget_exhausted=True)
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: report)
+
+    rc = cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--max-run-credits",
+            "60",
+        ]
+    )
+    assert rc == 4
+    assert "budget exhausted" in capsys.readouterr().out
+
+
+def test_blocked_without_budget_stop_still_exits_3(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: RunReport(done=0, blocked=1))
+    rc = cli.main(["--issue-file", str(issue_file), "--dir", str(repo), "--no-github-tickets"])
+    assert rc == 3
+
+
+def test_max_run_credits_flag_reaches_config(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["max_run_credits"] = cfg.max_run_credits
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--max-run-credits",
+            "120",
+        ]
+    )
+    assert seen["max_run_credits"] == 120

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import github_io
+from .budget import BudgetExhausted
 from .config import RunnerConfig
 from .copilot import CopilotError
 from .events import emit, ticket_snapshot
@@ -41,6 +42,7 @@ class RunReport:
     done: int = 0
     blocked: int = 0
     pr_url: str = ""
+    budget_exhausted: bool = False
     details: list[str] = field(default_factory=list)
 
 
@@ -82,7 +84,14 @@ def run_issue(
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
     else:
         _render_visual(cfg, plan="pending", branch="pending", tickets=[])
-        summary, tickets = plan_step(client, cfg, issue)
+        try:
+            summary, tickets = plan_step(client, cfg, issue)
+        except BudgetExhausted as e:
+            report = RunReport(budget_exhausted=True)
+            report.details.append(f"planning did not start: {e}")
+            emit(cfg.events, "phase", name="finished")
+            emit(cfg.events, "run_finished", done=0, blocked=0, branch="")
+            return report
         store.plan_summary = summary
         store.set_tickets(tickets)
         store.save()
@@ -141,6 +150,10 @@ def run_issue(
     emit(cfg.events, "phase", name="build")
     for ticket in store.pending():
         _process_ticket(cfg, client, store, ticket, report)
+        if report.budget_exhausted:
+            log.warning("run stopped: credit budget exhausted; re-run to resume")
+            report.details.append("run stopped early: credit budget exhausted (state is resumable)")
+            break
 
     _open_pull_request(cfg, issue, store, report)
     emit(cfg.events, "phase", name="finished")
@@ -170,7 +183,7 @@ def _open_pull_request(
     """
     if not cfg.open_pr or not cfg.repo or not issue["number"]:
         return
-    if report.blocked or not report.done:
+    if report.blocked or not report.done or report.budget_exhausted:
         return
     title = f"Fixes #{issue['number']} — {issue['title']}"
     try:
@@ -257,6 +270,10 @@ def _process_ticket(
                     )
             else:  # rework_code
                 coder_step(client, cfg, ticket, test_path, feedback=verdict.code_feedback)
+    except BudgetExhausted as e:
+        # stop the whole run, not just this ticket: remaining tickets stay pending
+        report.budget_exhausted = True
+        _block(store, ticket, report, str(e), cfg)
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
         # contain the failure to this ticket; the run (and its state) continues
         _block(store, ticket, report, str(e), cfg)

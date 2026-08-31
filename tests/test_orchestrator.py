@@ -427,3 +427,90 @@ def test_push_failure_does_not_fail_the_run(git_repo, cfg, monkeypatch):
     assert report.done == 1 and report.blocked == 0
     assert report.pr_url == ""
     assert any("no origin remote" in line for line in report.details)
+
+
+def test_budget_exhaustion_stops_the_run_and_saves_resumable_state(git_repo, cfg):
+    from issue_runner.budget import BudgetExhausted
+
+    cfg.max_run_credits = 3
+
+    class BudgetedClient(FakeClient):
+        """Affords the plan and the first ticket's tester, then runs dry."""
+
+        def __init__(self, script, allowance):
+            super().__init__(script)
+            self.allowance = allowance
+
+        def run(self, prompt, role, read_only=False, session_name=None):
+            if len(self.calls) >= self.allowance:
+                raise BudgetExhausted("run credit budget exhausted: 3/3 credits spent")
+            return super().run(prompt, role, read_only, session_name)
+
+    client = BudgetedClient(
+        [
+            (two_ticket_plan(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+        ],
+        allowance=2,
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert report.budget_exhausted is True
+    assert report.done == 0
+    # only the ticket in flight is blocked; the second is untouched and resumable
+    assert len(client.calls) == 2
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    assert store.load()
+    assert store.tickets[0].status == "blocked"
+    assert "budget" in store.tickets[0].blocked_reason
+    assert store.tickets[1].status == "pending"
+
+
+def test_budget_exhaustion_does_not_start_later_tickets(git_repo, cfg):
+    from issue_runner.budget import BudgetExhausted
+
+    class ImmediatelyBrokeClient(FakeClient):
+        def run(self, prompt, role, read_only=False, session_name=None):
+            if role == "builder.tester":
+                raise BudgetExhausted("run credit budget exhausted")
+            return super().run(prompt, role, read_only, session_name)
+
+    client = ImmediatelyBrokeClient([(two_ticket_plan(), None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.budget_exhausted is True
+    assert report.blocked == 1, "the second ticket must stay pending, not be blocked"
+    # the raising override never records, so only the plan call is logged: the
+    # second ticket's tester was never even attempted
+    assert [c["role"] for c in client.calls] == ["planner"]
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert [t.status for t in store.tickets] == ["blocked", "pending"]
+
+
+def test_budget_exhaustion_skips_the_pull_request(git_repo, cfg, pull_requests):
+    from issue_runner.budget import BudgetExhausted
+
+    cfg.repo = "owner/repo"
+
+    class BrokeClient(FakeClient):
+        def run(self, prompt, role, read_only=False, session_name=None):
+            if role == "builder.tester":
+                raise BudgetExhausted("run credit budget exhausted")
+            return super().run(prompt, role, read_only, session_name)
+
+    client = BrokeClient([(plan_reply(), None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.budget_exhausted is True
+    assert pull_requests.created == []
+
+
+def two_ticket_plan():
+    return json.dumps(
+        {
+            "summary": "two tickets",
+            "tickets": [
+                {"title": "a", "description": "d", "test_assertion": "a == 1"},
+                {"title": "b", "description": "d", "test_assertion": "b == 2"},
+            ],
+        }
+    )

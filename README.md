@@ -70,7 +70,22 @@ This needs a GitHub repo (`--repo`, or a github.com `origin`); it is skipped for
 `open_pr = false` in `runner.toml`. A push or `gh` failure is reported, not
 fatal — the commits are already on the branch.
 
-Exit codes: `0` all tickets done · `2` bad invocation · `3` some tickets blocked.
+Exit codes: `0` all tickets done · `2` bad invocation · `3` some tickets blocked ·
+`4` stopped on the run credit budget.
+
+### Credit budgets
+
+`--max-ai-credits N` caps a single Copilot call. `--max-run-credits N` (or
+`max_run_credits` in `runner.toml`) caps the whole run: planner plus every
+tester/coder/verifier round. The check runs *before* each call, so the budget is
+never exceeded — the ticket in flight is marked blocked with a budget reason,
+remaining tickets stay `pending`, state is saved, and the run exits `4`. Re-run
+the same command to resume, or add `--retry-blocked` to retry the stopped ticket.
+
+The Copilot CLI does not report how much credit a call actually consumed, so the
+budget is enforced on a worst case: a call is assumed to cost `--max-ai-credits`
+when set, and 1 otherwise. It is a floor on what the runner will attempt, not an
+exact meter. Unset by default — no run-level cap.
 
 ## Frugal mode (free Copilot plan)
 
