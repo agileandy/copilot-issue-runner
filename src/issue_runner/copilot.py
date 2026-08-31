@@ -241,6 +241,34 @@ class CopilotClient:
         return argv
 
 
+def _extract_usage(data: dict) -> dict | None:
+    """Pull tokens and the real credit charge out of a model_call_success event.
+
+    Copilot reports OpenAI-style token names (`prompt_tokens`/`completion_tokens`);
+    an earlier version of this parser looked for `input_tokens`/`output_tokens`
+    and so silently recorded nothing. Anthropic-style names are still accepted in
+    case the shape varies by provider.
+
+    `copilotUsage.total_nano_aiu` is the actual credit charged for the call, in
+    nano-AIU — the only trustworthy cost signal the CLI exposes.
+    """
+    raw = data.get("responseUsage") or (data.get("responseChunk") or {}).get("usage") or {}
+    usage: dict = {}
+    incoming = raw.get("prompt_tokens", raw.get("input_tokens"))
+    outgoing = raw.get("completion_tokens", raw.get("output_tokens"))
+    if incoming is not None:
+        usage["input_tokens"] = incoming
+    if outgoing is not None:
+        usage["output_tokens"] = outgoing
+    cached = (raw.get("prompt_tokens_details") or {}).get("cached_tokens")
+    if cached is not None:
+        usage["cached_tokens"] = cached
+    nano_aiu = (data.get("copilotUsage") or {}).get("total_nano_aiu")
+    if nano_aiu is not None:
+        usage["nano_aiu"] = nano_aiu
+    return usage or None
+
+
 def _parse_event_line(line: str):
     """Map one copilot JSONL event to (output_chunk, message, failure, usage)."""
     line = line.strip()
@@ -264,10 +292,7 @@ def _parse_event_line(line: str):
     if kind == "assistant.message":
         return None, data.get("content"), None, None
     if kind == "model.model_call_success":
-        usage = (data.get("responseChunk") or {}).get("usage") or None
-        if usage:
-            usage = {k: usage[k] for k in ("input_tokens", "output_tokens") if k in usage}
-        return None, None, None, usage
+        return None, None, None, _extract_usage(data)
     if kind in ("model.turn_failed", "session.error"):
         return None, None, json.dumps(data)[:500], None
     return None, None, None, None
