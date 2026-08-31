@@ -374,3 +374,45 @@ def test_max_run_credits_flag_reaches_config(tmp_path, monkeypatch):
         ]
     )
     assert seen["max_run_credits"] == 120
+
+
+def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    fake = make_fake_copilot(tmp_path, plan)
+
+    rc = main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--plan-only",
+            "--no-github-tickets",
+        ]
+    )
+    assert rc == 0
+    assert "usage —" in capsys.readouterr().out
+
+    usage_files = list((repo / ".issue-runner").glob("usage-issue-*.json"))
+    assert len(usage_files) == 1
+    data = json.loads(usage_files[0].read_text())
+    assert data["totals"]["calls"] == 1
+    assert (repo / ".issue-runner" / "usage.log").exists()
+
+    # the usage file must not be mistaken for a ticket state file
+    state_files = list((repo / ".issue-runner").glob("issue-*.json"))
+    assert len(state_files) == 1

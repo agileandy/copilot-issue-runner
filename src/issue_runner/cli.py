@@ -200,6 +200,8 @@ def _print_summary(report) -> None:
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
     if report.budget_exhausted:
         print("run stopped: AI credit budget exhausted — re-run to resume")
+    if report.usage_summary:
+        print(report.usage_summary)
     if report.pr_url:
         print(f"pull request: {report.pr_url}")
     for line in report.details:

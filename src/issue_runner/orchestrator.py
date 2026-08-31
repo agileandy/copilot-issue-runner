@@ -43,6 +43,7 @@ class RunReport:
     blocked: int = 0
     pr_url: str = ""
     budget_exhausted: bool = False
+    usage_summary: str = ""
     details: list[str] = field(default_factory=list)
 
 
@@ -89,6 +90,7 @@ def run_issue(
         except BudgetExhausted as e:
             report = RunReport(budget_exhausted=True)
             report.details.append(f"planning did not start: {e}")
+            _record_usage(client, state_dir, issue_ref, report)
             emit(cfg.events, "phase", name="finished")
             emit(cfg.events, "run_finished", done=0, blocked=0, branch="")
             return report
@@ -125,6 +127,7 @@ def run_issue(
             )
         emit(cfg.events, "phase", name="finished")
         emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch="")
+        _record_usage(client, state_dir, issue_ref, report)
         return report
 
     if cfg.retry_blocked:
@@ -162,6 +165,7 @@ def run_issue(
         _block_unsatisfiable(cfg, store, report)
 
     _open_pull_request(cfg, issue, store, report)
+    _record_usage(client, state_dir, issue_ref, report)
     emit(cfg.events, "phase", name="finished")
     emit(cfg.events, "run_finished", done=report.done, blocked=report.blocked, branch=report.branch)
     return report
@@ -203,6 +207,18 @@ def _open_pull_request(
         return
     report.details.append(f"pull request opened: {report.pr_url}")
     emit(cfg.events, "pull_request_opened", url=report.pr_url)
+
+
+def _record_usage(client, state_dir: Path, issue_ref: str, report: RunReport) -> None:
+    """Persist per-run accounting. Optional: fakes and stubs carry no ledger."""
+    ledger = getattr(client, "usage", None)
+    if ledger is None:
+        return
+    report.usage_summary = ledger.summary_line()
+    try:
+        ledger.save(state_dir, issue_ref)
+    except OSError as e:
+        log.warning("could not write the usage file: %s", e)
 
 
 def _block_unsatisfiable(cfg: RunnerConfig, store: TicketStore, report: RunReport) -> None:

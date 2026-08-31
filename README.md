@@ -86,7 +86,6 @@ left pending, with the cause named: `depends on ticket N which is blocked`,
 first, so a dependent points at the prerequisite that actually failed.
 
 ### Credit budgets
-
 `--max-ai-credits N` caps a single Copilot call. `--max-run-credits N` (or
 `max_run_credits` in `runner.toml`) caps the whole run: planner plus every
 tester/coder/verifier round. The check runs *before* each call, so the budget is
@@ -98,6 +97,25 @@ The Copilot CLI does not report how much credit a call actually consumed, so the
 budget is enforced on a worst case: a call is assumed to cost `--max-ai-credits`
 when set, and 1 otherwise. It is a floor on what the runner will attempt, not an
 exact meter. Unset by default — no run-level cap.
+
+### Usage accounting
+
+Every model call is recorded with its role, model, effort, wall-clock duration,
+outcome and — when copilot reports it — token counts. At the end of a run the
+summary prints in both the plain and `--visual` paths:
+
+```
+usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5, builder.tester=6, planner=1, verifier=2
+```
+
+Rollups are written to `.issue-runner/usage-issue-<n>.json`, with per-role and
+per-ticket breakdowns. A resumed run **appends** to `runs` and updates the
+cumulative `totals`, so the file is the whole history of an issue, not just the
+last attempt. Each run also appends one JSON line to `.issue-runner/usage.log`.
+
+Token counts only exist on the streaming path (i.e. with `--visual`); on the
+plain path copilot reports none, so token totals stay absent rather than being
+shown as a misleading zero.
 
 ## Frugal mode (free Copilot plan)
 
