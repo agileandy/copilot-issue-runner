@@ -1,5 +1,8 @@
 # Copy to <target-repo>/runner.toml (or pass --config). CLI flags override.
 
+# Omit test_cmd to auto-detect it from the repo's project markers
+# (pyproject/setup.py -> pytest, package.json -> npm test, go.mod -> go test,
+#  Cargo.toml -> cargo test; pytest is the fallback).
 test_cmd = "pytest {test_path} -q"
 max_rounds = 3        # verifier hand-backs per ticket before it is blocked
 tester_retries = 2    # harness bounces (stub/green test) before giving up
