@@ -24,6 +24,7 @@ from pathlib import Path
 from .budget import RunBudget
 from .config import RunnerConfig
 from .events import emit
+from .usage import UsageLedger
 
 ALWAYS_DENY = ("shell(git push)",)
 READ_ONLY_DENY = ("write", "shell(git:*)")
@@ -39,6 +40,7 @@ class CopilotClient:
         self.runner = runner
         self.popen = popen
         self.budget = RunBudget(limit=config.max_run_credits, per_call=config.max_ai_credits or 1)
+        self.usage = UsageLedger()
 
     def run(
         self,
@@ -60,16 +62,25 @@ class CopilotClient:
         )
         started = time.monotonic()
         self.budget.charge()
-        if stream:
-            returncode, reply, detail, usage = self._stream_call(argv, role, session_name)
-        else:
-            returncode, reply, detail, usage = self._plain_call(argv, role)
+        try:
+            if stream:
+                returncode, reply, detail, usage = self._stream_call(argv, role, session_name)
+            else:
+                returncode, reply, detail, usage = self._plain_call(argv, role)
+        except Exception:
+            # a timeout or crash still consumed wall-clock time and possibly credit
+            self._record(role, role_cfg, session_name, started, ok=False, usage=None)
+            raise
+        elapsed = round(time.monotonic() - started, 1)
+        self._record(
+            role, role_cfg, session_name, started, ok=returncode == 0, usage=usage, elapsed=elapsed
+        )
         emit(
             self.config.events,
             "agent_call_finished",
             role=role,
             session=session_name,
-            elapsed=round(time.monotonic() - started, 1),
+            elapsed=elapsed,
             ok=returncode == 0,
             usage=usage,
         )
@@ -78,6 +89,17 @@ class CopilotClient:
                 f"copilot exited {returncode} for role {role}: {detail.strip()[:500]}"
             )
         return reply
+
+    def _record(self, role, role_cfg, session_name, started, ok, usage, elapsed=None):
+        self.usage.record(
+            role=role,
+            model=role_cfg.model,
+            effort=role_cfg.effort,
+            session=session_name,
+            seconds=elapsed if elapsed is not None else round(time.monotonic() - started, 1),
+            ok=ok,
+            usage=usage,
+        )
 
     def _plain_call(self, argv, role):
         try:
