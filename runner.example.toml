@@ -5,6 +5,7 @@ max_rounds = 3        # verifier hand-backs per ticket before it is blocked
 tester_retries = 2    # harness bounces (stub/green test) before giving up
 coder_retries = 2
 github_tickets = true # mirror tickets as gh sub-issues (needs --repo + write access)
+open_pr = true        # open a PR when a run finishes with no blocked tickets
 # max_ai_credits = 30 # per-call soft cap (copilot minimum is 30)
 
 # Per-role model/effort — spend where it matters, save where it doesn't.

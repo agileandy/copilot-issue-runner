@@ -55,6 +55,11 @@ def create_branch(repo_dir: Path, issue_ref: str, slug: str) -> str:
     return branch
 
 
+def push_branch(repo_dir: Path, branch: str) -> None:
+    """Publish the issue branch so a PR can be opened against it."""
+    _git(repo_dir, "push", "-u", "origin", branch)
+
+
 def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     """Keep runner state out of the target repo's commits without touching .gitignore."""
     exclude = Path(repo_dir) / ".git" / "info" / "exclude"

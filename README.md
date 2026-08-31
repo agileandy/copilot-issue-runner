@@ -40,7 +40,15 @@ uv run issue-runner 17 --dry-run                                  # print the pl
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
-`--no-github-tickets` · `--plan-only` · `--copilot-cmd /path/to/fake`.
+`--no-github-tickets` · `--no-pr` · `--plan-only` · `--copilot-cmd /path/to/fake`.
+
+When a run finishes clean — every ticket done, none blocked — the runner pushes
+the issue branch and opens a pull request titled `Fixes #<n> — <issue title>`,
+bodied with the plan summary and each ticket's assertion, and prints its URL.
+This needs a GitHub repo (`--repo`, or a github.com `origin`); it is skipped for
+`--plan-only`, `--dry-run` and Gitea remotes. Disable it with `--no-pr` or
+`open_pr = false` in `runner.toml`. A push or `gh` failure is reported, not
+fatal — the commits are already on the branch.
 
 Exit codes: `0` all tickets done · `2` bad invocation · `3` some tickets blocked.
 

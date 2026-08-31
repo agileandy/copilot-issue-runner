@@ -65,3 +65,25 @@ def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None
 
 def close_subissue(repo: str, number: int, comment: str, run=subprocess.run) -> None:
     _run(["gh", "issue", "close", "-R", repo, str(number), "--comment", comment], run)
+
+
+def open_pull_request(repo: str, head: str, title: str, body: str, run=subprocess.run) -> str:
+    """Open a PR for `head` against the repo's default base branch; return its URL."""
+    argv = [
+        "gh",
+        "pr",
+        "create",
+        "-R",
+        repo,
+        "--head",
+        head,
+        "--title",
+        title,
+        "--body",
+        body,
+    ]
+    stdout = _run(argv, run)
+    match = re.search(r"https?://\S+", stdout)
+    if not match:
+        raise GithubError(f"could not parse a PR URL from gh output: {stdout[:200]!r}")
+    return match.group(0)

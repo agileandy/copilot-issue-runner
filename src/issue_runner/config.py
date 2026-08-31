@@ -30,6 +30,7 @@ class RunnerConfig:
     tester_retries: int = 2
     coder_retries: int = 2
     github_tickets: bool = True
+    open_pr: bool = True
     copilot_cmd: str = "copilot"
     visual: bool = False
     max_ai_credits: int | None = None
@@ -55,6 +56,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         "tester_retries",
         "coder_retries",
         "github_tickets",
+        "open_pr",
         "copilot_cmd",
         "visual",
         "max_ai_credits",

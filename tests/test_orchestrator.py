@@ -312,3 +312,118 @@ def test_retry_blocked_resets_and_reruns(git_repo, cfg):
     )
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
     assert report.done == 1 and report.blocked == 0
+
+
+class RecordingPullRequests:
+    """Stands in for the gh CLI: records the push and the PR that would be opened."""
+
+    def __init__(self):
+        self.pushed = []
+        self.created = []
+
+    def push_branch(self, repo_dir, branch):
+        self.pushed.append(branch)
+
+    def open_pull_request(self, repo, head, title, body):
+        self.created.append({"repo": repo, "head": head, "title": title, "body": body})
+        return f"https://github.com/{repo}/pull/{len(self.created)}"
+
+
+@pytest.fixture
+def pull_requests(monkeypatch):
+    from issue_runner import github_io
+    from issue_runner.phases import devops
+
+    fake = RecordingPullRequests()
+    monkeypatch.setattr(devops, "push_branch", fake.push_branch)
+    monkeypatch.setattr(github_io, "open_pull_request", fake.open_pull_request)
+    return fake
+
+
+def test_clean_run_opens_pull_request(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 0
+    assert pull_requests.pushed == [report.branch]
+    created = pull_requests.created[0]
+    assert created["repo"] == "owner/repo"
+    assert created["head"] == report.branch
+    assert "#17" in created["title"] and "Add subtract" in created["title"]
+    assert "Closes #17" in created["body"]
+    assert "subtract ints" in created["body"]
+    assert report.pr_url.endswith("/pull/1")
+    assert any("pull request" in line for line in report.details)
+
+
+def test_blocked_run_does_not_open_pull_request(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("rework_code"), None),
+            ("rework 1", None),
+            (verdict("rework_code"), None),
+            ("rework 2", None),
+            (verdict("rework_code"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1
+    assert pull_requests.created == []
+    assert report.pr_url == ""
+
+
+def test_open_pr_disabled_skips_pull_request(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    cfg.open_pr = False
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1
+    assert pull_requests.created == []
+
+
+def test_plan_only_never_opens_pull_request(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    client = FakeClient([(plan_reply(), None)])
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state", plan_only=True)
+    assert pull_requests.created == [] and pull_requests.pushed == []
+
+
+def test_push_failure_does_not_fail_the_run(git_repo, cfg, monkeypatch):
+    from issue_runner.phases import devops
+    from issue_runner.phases.devops import DevopsError
+
+    def boom(repo_dir, branch):
+        raise DevopsError("no origin remote")
+
+    monkeypatch.setattr(devops, "push_branch", boom)
+    cfg.repo = "owner/repo"
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    assert report.pr_url == ""
+    assert any("no origin remote" in line for line in report.details)

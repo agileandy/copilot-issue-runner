@@ -285,3 +285,19 @@ def test_gitea_origin_wires_mirror_backend(tmp_path, monkeypatch):
     assert built["api_base"] == "http://gitea.local:3000"
     assert built["owner_repo"] == "Org/thing"
     assert built["created"] == [1]
+
+
+def test_no_pr_flag_disables_pull_request(tmp_path):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    args = build_parser().parse_args(["1", "--dir", str(repo), "--no-pr"])
+    assert args.no_pr is True
+
+
+def test_open_pr_defaults_true_and_reads_config(tmp_path):
+    from issue_runner.config import RunnerConfig, load_config
+
+    assert RunnerConfig(repo_dir=tmp_path).open_pr is True
+    (tmp_path / "runner.toml").write_text("open_pr = false\n")
+    assert load_config(tmp_path).open_pr is False
