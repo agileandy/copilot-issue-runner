@@ -93,7 +93,14 @@ def test_stream_finished_event_carries_usage(tmp_path):
     client, events = make_client(tmp_path, FakeProc(SCRIPT))
     client.run("q", role="builder.tester")
     finished = [e for e in events if e.kind == "agent_call_finished"][-1]
-    assert finished.payload["usage"] == {"input_tokens": 100, "output_tokens": 20}
+    assert finished.payload["usage"] == {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "model_calls": 1,
+        # copilot sent no copilotUsage block, so the charge is unknown, not zero
+        "costed_model_calls": 0,
+    }
+    assert "nano_aiu" not in finished.payload["usage"]
 
 
 def test_stream_nonzero_exit_raises(tmp_path):
@@ -179,8 +186,10 @@ def test_anthropic_style_token_names_are_still_accepted():
     assert (usage["input_tokens"], usage["output_tokens"]) == (7, 3)
 
 
-def test_call_success_without_usage_reports_nothing():
-    assert parse("model.model_call_success", responseChunk={})[3] is None
+def test_call_success_without_usage_reports_a_call_of_unknown_cost():
+    """The event proves a model call happened; absent tokens are unknown, not zero."""
+    usage = parse("model.model_call_success", responseChunk={})[3]
+    assert usage == {"model_calls": 1, "costed_model_calls": 0}
 
 
 def test_streamed_run_records_real_tokens_and_credits(tmp_path):
