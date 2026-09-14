@@ -71,6 +71,9 @@ if mode == "multi":
     send("assistant.message_delta", messageId="m1", deltaContent="answer")
     send("assistant.message", messageId="m1", content="the answer")
     call_success(3000, 30, nano_aiu=500_000_000)
+elif mode == "one_aiu":
+    send("assistant.message", messageId="m1", content="one credit reply")
+    call_success(10, 1, nano_aiu=1_000_000_000)
 elif mode == "zero":
     send("assistant.message", messageId="m1", content="free reply")
     call_success(5, 5, nano_aiu=0)
@@ -294,6 +297,51 @@ def test_measured_overspend_stops_the_next_call(tmp_path, fake_copilot):
     with pytest.raises(BudgetExhausted):
         client.run("p", role="planner")
     assert client.budget.calls == 3, "the fourth call never reached the binary"
+
+
+def test_one_aiu_per_call_without_max_ai_credits_allows_exactly_two(tmp_path, fake_copilot):
+    """The parent's checkpoint/resume contract: --max-run-credits 2, no per-call cap.
+
+    Reservations are 1 credit each, but each reservation is released and
+    replaced by the 1 AIU copilot actually reported. Two invocations fit; the
+    third is refused before the binary is reached, so a run stops cleanly at a
+    phase boundary instead of overshooting.
+    """
+    client = client_for(tmp_path, fake_copilot, "one_aiu", max_run_credits=2)
+    assert client.config.max_ai_credits is None
+    assert client.budget.per_call == 1
+
+    assert client.run("p", role="planner") == "one credit reply"
+    assert client.budget.spent == 1 and client.budget.remaining == 1
+    assert client.run("p", role="builder.tester") == "one credit reply"
+    assert client.budget.spent == 2 and client.budget.remaining == 0
+
+    with pytest.raises(BudgetExhausted):
+        client.run("p", role="builder.coder")
+    assert client.budget.calls == 2, "the coder call never reached the binary"
+    assert client.budget.measured_nano_aiu == 2_000_000_000
+    assert client.budget.reserved == 0, "every cost was reconciled, none left as an estimate"
+    assert client.budget.unknown_calls == 0
+    assert client.usage.totals()["calls"] == 2
+
+
+def test_a_no_per_call_cap_run_mixes_measured_and_reserved_without_overclaiming(
+    tmp_path, fake_copilot
+):
+    """Known costs reconcile; unknown ones stay visible reservations, not zeros."""
+    client = client_for(tmp_path, fake_copilot, "one_aiu", max_run_credits=2)
+    client.run("p", role="planner")
+    os.environ["FAKE_MODE"] = "unknown"
+    client.run("p", role="builder.tester")
+
+    status = client.budget.status()
+    assert status["measured_aiu"] == 1.0
+    assert status["reserved_aiu"] == 1, "the uncosted call is still held as an estimate"
+    assert status["unknown_cost_calls"] == 1
+    assert status["spent"] == 2
+    assert "unknown cost: 1 calls" in client.budget.describe()
+    with pytest.raises(BudgetExhausted, match="not a guarantee"):
+        client.run("p", role="builder.coder")
 
 
 def test_unknown_cost_calls_still_consume_the_reservation(tmp_path, fake_copilot):
