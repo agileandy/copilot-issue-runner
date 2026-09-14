@@ -26,9 +26,14 @@ import pytest
 
 from issue_runner.budget import BudgetExhausted, RunBudget
 from issue_runner.config import RunnerConfig
-from issue_runner.copilot import CopilotClient, CopilotError, measured_nano_aiu
+from issue_runner.copilot import (
+    CopilotClient,
+    CopilotError,
+    cost_report,
+    measured_nano_aiu,
+)
 from issue_runner.events import EventBus
-from issue_runner.usage import merge_usage
+from issue_runner.usage import mark_incomplete, merge_usage
 
 # --- a deterministic stand-in that speaks copilot's event dialect -------------
 
@@ -97,6 +102,21 @@ elif mode == "fail":
     call_success(1, 0, nano_aiu=6_000_000_000)
     sys.stderr.write("fatal: nope\n")
     raise SystemExit(2)
+elif mode == "charge_then_hang":
+    send("assistant.message", messageId="m1", content="partial reply")
+    call_success(100, 10, nano_aiu=2_000_000_000)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    with open(os.environ["FAKE_PIDFILE"], "w") as fh:
+        fh.write("%d %d\n" % (os.getpid(), child.pid))
+    time.sleep(600)
+elif mode == "orphan_pipe":
+    # a child inherits stdout and outlives us, so the pipe never reaches EOF
+    send("assistant.message", messageId="m1", content="orphan reply")
+    call_success(1, 1, nano_aiu=1_000_000_000)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    with open(os.environ["FAKE_PIDFILE"], "w") as fh:
+        fh.write("%d\n" % child.pid)
+    raise SystemExit(0)
 elif mode == "hang":
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
     with open(os.environ["FAKE_PIDFILE"], "w") as fh:
@@ -253,19 +273,59 @@ def test_an_unreported_charge_stays_unknown_never_zero(tmp_path, fake_copilot):
     assert client.budget.measured_calls == 0
 
 
-def test_partly_costed_invocations_are_not_treated_as_measured(tmp_path, fake_copilot):
-    """One of two model calls reported a charge: that total is not a measurement."""
+def test_a_partly_costed_invocation_banks_the_known_charge_and_keeps_the_remainder(
+    tmp_path, fake_copilot
+):
+    """One of two model calls reported 7 AIU: real spend, but only a lower bound."""
     client = client_for(tmp_path, fake_copilot, "partial", max_ai_credits=3)
     client.run("p", role="planner")
-    usage = client.usage.calls[0]
-    assert usage.nano_aiu == 7_000_000_000, "the partial figure is still recorded"
-    assert client.budget.unknown_calls == 1
-    assert client.budget.measured_calls == 0
-    assert client.budget.reserved == 3, "the estimate stands while the cost is incomplete"
+
+    record = client.usage.calls[0]
+    assert record.nano_aiu == 7_000_000_000, "the known charge is kept, not discarded"
+    assert record.model_calls == 2
+    assert record.costed_model_calls == 1
+    assert record.cost_complete is False
+
+    budget = client.budget
+    assert budget.measured_nano_aiu == 7_000_000_000, "known spend counts towards the limit"
+    assert budget.partial_calls == 1
+    assert budget.measured_calls == 0 and budget.unknown_calls == 0
+    assert budget.reserved == 3, "the reservation still stands for the uncosted turn"
+    assert budget.spent == 10  # 7 AIU known + 3 credits reserved for the remainder
+    assert budget.cost_is_complete is False
 
 
-def test_measured_nano_aiu_rejects_partial_totals():
-    assert measured_nano_aiu(None) is None
+def test_a_partial_total_is_labelled_incomplete_in_the_summary(tmp_path, fake_copilot):
+    client = client_for(tmp_path, fake_copilot, "partial")
+    client.run("p", role="planner")
+    line = client.usage.summary_line()
+    assert "credits: at least 7.00 AIU" in line
+    assert "incomplete: 1 of 2 model calls reported a charge" in line
+    assert "credits: 7.00 AIU" not in line, "a lower bound must not read as the final cost"
+
+
+def test_partial_charges_count_towards_the_stop_rule(tmp_path, fake_copilot):
+    """7 known AIU plus a 1-credit remainder reservation reaches an 8-credit limit."""
+    client = client_for(tmp_path, fake_copilot, "partial", max_run_credits=8)
+    client.run("p", role="planner")
+    assert client.budget.spent == 8
+    with pytest.raises(BudgetExhausted):
+        client.run("p", role="planner")
+    assert client.budget.calls == 1
+
+
+def test_cost_report_separates_the_known_charge_from_its_completeness():
+    assert cost_report(None) == (None, False)
+    assert cost_report({"model_calls": 2, "costed_model_calls": 1, "nano_aiu": 5}) == (5, False)
+    assert cost_report({"model_calls": 2, "costed_model_calls": 2, "nano_aiu": 5}) == (5, True)
+    assert cost_report({"model_calls": 1, "costed_model_calls": 1, "nano_aiu": 0}) == (0, True)
+    assert (
+        cost_report(mark_incomplete({"model_calls": 1, "costed_model_calls": 1, "nano_aiu": 5}))[1]
+        is False
+    )
+
+
+def test_measured_nano_aiu_only_reports_a_complete_figure():
     assert measured_nano_aiu({"model_calls": 2, "costed_model_calls": 1, "nano_aiu": 5}) is None
     assert measured_nano_aiu({"model_calls": 2, "costed_model_calls": 2, "nano_aiu": 5}) == 5
     assert measured_nano_aiu({"model_calls": 1, "costed_model_calls": 1, "nano_aiu": 0}) == 0
@@ -339,7 +399,7 @@ def test_a_no_per_call_cap_run_mixes_measured_and_reserved_without_overclaiming(
     assert status["reserved_aiu"] == 1, "the uncosted call is still held as an estimate"
     assert status["unknown_cost_calls"] == 1
     assert status["spent"] == 2
-    assert "unknown cost: 1 calls" in client.budget.describe()
+    assert "incomplete cost: 0 partial, 1 unknown" in client.budget.describe()
     with pytest.raises(BudgetExhausted, match="not a guarantee"):
         client.run("p", role="builder.coder")
 
@@ -377,7 +437,9 @@ def test_budget_status_separates_reserved_from_measured():
     assert status["unknown_cost_calls"] == 1
     assert status["measured_calls"] == 1
     assert status["spent"] == 3.5
-    assert "measured: 1.50 AIU" in budget.describe()
+    assert status["partial_cost_calls"] == 0
+    assert status["cost_is_complete"] is False
+    assert "at least 1.50 AIU" in budget.describe()
 
 
 # --- failure, empty and timeout ----------------------------------------------
@@ -419,6 +481,105 @@ def test_a_timeout_raises_accounts_and_leaves_no_child_running(tmp_path, fake_co
     assert len(pids) == 2
     for pid in pids:
         assert _wait_for_exit(pid), f"process {pid} survived the timeout"
+
+
+def test_usage_reported_before_a_timeout_is_not_thrown_away(tmp_path, fake_copilot):
+    """copilot billed 2 AIU, then hung. That charge is real and must survive."""
+    pidfile = tmp_path / "pids"
+    os.environ["FAKE_PIDFILE"] = str(pidfile)
+    client = client_for(
+        tmp_path, fake_copilot, "charge_then_hang", timeout=3, empty_reply_retries=0
+    )
+    with pytest.raises(CopilotError, match="timed out"):
+        client.run("p", role="planner")
+
+    record = client.usage.calls[0]
+    assert record.ok is False
+    assert record.nano_aiu == 2_000_000_000, "an interrupted call is not a free call"
+    assert record.input_tokens == 100
+    assert record.output_tokens == 10
+    assert record.model_calls == 1
+    assert record.cost_complete is False, "more may have been billed after the transport died"
+
+    budget = client.budget
+    assert budget.measured_nano_aiu == 2_000_000_000
+    assert budget.partial_calls == 1
+    assert budget.measured_calls == 0
+    assert budget.reserved == 1, "the reservation stands for whatever went unreported"
+    assert "at least 2.00 AIU" in client.usage.summary_line()
+
+    for pid in (int(x) for x in pidfile.read_text().split()):
+        assert _wait_for_exit(pid), f"process {pid} survived the timeout"
+
+
+def test_a_child_holding_the_pipe_after_the_parent_exits_is_timed_out_and_reaped(
+    tmp_path, fake_copilot
+):
+    """The leader exits but a grandchild keeps stdout open, so EOF never arrives.
+
+    This is the case `os.getpgid()` cannot handle: by the time cleanup runs the
+    group leader is gone, so the id must be the pid we spawned.
+    """
+    pidfile = tmp_path / "pids"
+    os.environ["FAKE_PIDFILE"] = str(pidfile)
+    client = client_for(tmp_path, fake_copilot, "orphan_pipe", timeout=3, empty_reply_retries=0)
+    with pytest.raises(CopilotError, match="timed out"):
+        client.run("p", role="planner")
+
+    orphan = int(pidfile.read_text().strip())
+    assert _wait_for_exit(orphan), "the orphaned grandchild survived cleanup"
+    # the events that did arrive before the stall are still accounted
+    assert client.usage.calls[0].nano_aiu == 1_000_000_000
+    assert client.budget.partial_calls == 1
+
+
+def test_a_timeout_does_not_terminate_the_child_twice(tmp_path, fake_copilot, monkeypatch):
+    pidfile = tmp_path / "pids"
+    os.environ["FAKE_PIDFILE"] = str(pidfile)
+    client = client_for(tmp_path, fake_copilot, "hang", timeout=2, empty_reply_retries=0)
+    terminations = []
+    original = CopilotClient._terminate
+    monkeypatch.setattr(
+        CopilotClient,
+        "_terminate",
+        lambda self, proc: (terminations.append(proc), original(self, proc))[1],
+    )
+    with pytest.raises(CopilotError, match="timed out"):
+        client.run("p", role="planner")
+    assert len(terminations) == 1, "cleanup must own the kill, and run once"
+
+
+def test_a_clean_exit_is_never_force_killed(tmp_path, fake_copilot, monkeypatch):
+    client = client_for(tmp_path, fake_copilot, "multi")
+    terminations = []
+    monkeypatch.setattr(CopilotClient, "_terminate", lambda self, proc: terminations.append(proc))
+    assert client.run("p", role="planner") == "the answer"
+    assert terminations == [], "a process that exited on its own has nothing to signal"
+
+
+def test_an_unexpected_reader_failure_is_surfaced_not_swallowed(tmp_path, fake_copilot):
+    """A pipe that breaks mid-run must fail the call, not silently truncate it."""
+
+    class BrokenStdout:
+        def __iter__(self):
+            raise OSError("pipe went away")
+
+        def close(self):
+            pass
+
+    real_popen = subprocess.Popen
+
+    def popen(argv, **kwargs):
+        proc = real_popen(argv, **kwargs)
+        proc.stdout.close()
+        proc.stdout = BrokenStdout()
+        return proc
+
+    os.environ["FAKE_MODE"] = "multi"
+    cfg = RunnerConfig(repo_dir=tmp_path, copilot_cmd=str(fake_copilot), timeout=20)
+    client = CopilotClient(cfg, popen=popen)
+    with pytest.raises(CopilotError, match="could not be read"):
+        client.run("p", role="planner")
 
 
 def _wait_for_exit(pid: int, timeout: float = 10.0) -> bool:

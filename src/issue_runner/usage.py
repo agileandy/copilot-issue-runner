@@ -39,6 +39,33 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+def _all_complete(calls) -> bool | None:
+    """True only if every call proved it was costed in full; None if none did."""
+    flags = [c.cost_complete for c in calls]
+    if any(flag is False for flag in flags):
+        return False
+    if all(flag is None for flag in flags):
+        return None
+    return True
+
+
+def _credit_line(totals: dict) -> str:
+    """Say what is known about spend without dressing a partial figure as final."""
+    nano_aiu = totals["nano_aiu"]
+    if nano_aiu is None:
+        return "credits: unknown (copilot reported none)"
+    if totals.get("cost_complete"):
+        return f"credits: {format_aiu(nano_aiu)}"
+    costed = totals.get("costed_model_calls")
+    model_calls = totals.get("model_calls")
+    detail = (
+        f"{costed} of {model_calls} model calls reported a charge"
+        if costed is not None and model_calls
+        else "some calls reported no charge"
+    )
+    return f"credits: at least {format_aiu(nano_aiu)} (incomplete: {detail})"
+
+
 def format_aiu(nano_aiu: int) -> str:
     """Copilot bills in nano-AIU; show the AIU figure a user can compare."""
     return f"{nano_aiu / 1_000_000_000:.2f} AIU"
@@ -50,6 +77,31 @@ def _ticket_id(session: str | None) -> int | None:
 
 
 _SUMMED = ("input_tokens", "output_tokens", "cached_tokens", "nano_aiu")
+
+
+def cost_is_complete(usage: dict | None) -> bool | None:
+    """Did copilot report a charge for every model call in this invocation?
+
+    None means there is no evidence either way (nothing was reported at all).
+    An explicit `cost_complete` key wins: the transport sets it False when an
+    invocation was cut short, where the events that did arrive are real but more
+    may have been billed afterwards.
+    """
+    if not usage:
+        return None
+    if "cost_complete" in usage:
+        return bool(usage["cost_complete"])
+    model_calls = usage.get("model_calls")
+    if not model_calls:
+        return None
+    return usage.get("costed_model_calls") == model_calls
+
+
+def mark_incomplete(usage: dict | None) -> dict | None:
+    """Flag a usage total as a lower bound, not the whole cost."""
+    if not usage:
+        return usage
+    return {**usage, "cost_complete": False}
 
 
 def merge_usage(total: dict | None, new: dict | None) -> dict | None:
@@ -95,6 +147,8 @@ class CallRecord:
     cached_tokens: int | None
     nano_aiu: int | None
     model_calls: int | None = None  # model calls inside this one CLI invocation
+    costed_model_calls: int | None = None  # of those, how many reported a charge
+    cost_complete: bool | None = None  # False => nano_aiu is a lower bound
 
 
 class UsageLedger:
@@ -127,6 +181,8 @@ class UsageLedger:
                 cached_tokens=usage.get("cached_tokens"),
                 nano_aiu=usage.get("nano_aiu"),
                 model_calls=usage.get("model_calls"),
+                costed_model_calls=usage.get("costed_model_calls"),
+                cost_complete=cost_is_complete(usage),
             )
         )
 
@@ -140,6 +196,8 @@ class UsageLedger:
             "cached_tokens": None,
             "nano_aiu": None,
             "model_calls": None,
+            "costed_model_calls": None,
+            "cost_complete": _all_complete(calls),
         }
         for call in calls:
             bucket["input_tokens"] = _add(bucket["input_tokens"], call.input_tokens)
@@ -147,6 +205,9 @@ class UsageLedger:
             bucket["cached_tokens"] = _add(bucket["cached_tokens"], call.cached_tokens)
             bucket["nano_aiu"] = _add(bucket["nano_aiu"], call.nano_aiu)
             bucket["model_calls"] = _add(bucket["model_calls"], call.model_calls)
+            bucket["costed_model_calls"] = _add(
+                bucket["costed_model_calls"], call.costed_model_calls
+            )
         return bucket
 
     def totals(self) -> dict:
@@ -179,10 +240,7 @@ class UsageLedger:
             if totals["cached_tokens"]:
                 tokens += f" ({totals['cached_tokens']:,} cached)"
             parts.append(tokens)
-        if totals["nano_aiu"] is not None:
-            parts.append(f"credits: {format_aiu(totals['nano_aiu'])}")
-        else:
-            parts.append("credits: unknown (copilot reported none)")
+        parts.append(_credit_line(totals))
         if totals["model_calls"] and totals["model_calls"] != totals["calls"]:
             parts.append(f"model calls: {totals['model_calls']}")
         roles = ", ".join(
@@ -244,8 +302,20 @@ def _combine(buckets: list[dict]) -> dict:
         "cached_tokens": None,
         "nano_aiu": None,
         "model_calls": None,
+        "costed_model_calls": None,
+        "cost_complete": _combine_complete(buckets),
     }
     for bucket in buckets:
-        for key in (*_SUMMED, "model_calls"):
+        for key in (*_SUMMED, "model_calls", "costed_model_calls"):
             combined[key] = _add(combined[key], bucket.get(key))
     return combined
+
+
+def _combine_complete(buckets: list[dict]) -> bool | None:
+    """False if any run was incomplete; None if no run ever recorded the evidence."""
+    flags = [b.get("cost_complete") for b in buckets]
+    if any(flag is False for flag in flags):
+        return False
+    if all(flag is None for flag in flags):
+        return None
+    return True
