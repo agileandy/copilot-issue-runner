@@ -90,9 +90,13 @@ def _only_the_file_itself(output: str, test_path: str | None) -> bool:
 
     Exit 0 plus "# pass 1" would otherwise certify an empty file as green, so
     when every reported point is named after the file under test — and nothing
-    is nested inside it — there is no real test case.
+    is nested inside it — there is no real test case. Restricted to node's own
+    reporters, so a runner that legitimately reports one point per file is not
+    second-guessed.
     """
     if not test_path:
+        return False
+    if "# Subtest:" not in output and not _SPEC_POINT.search(output):
         return False
     names = [n for n in _TAP_POINT.findall(output) if n] or [
         n for n in _SPEC_POINT.findall(output) if n

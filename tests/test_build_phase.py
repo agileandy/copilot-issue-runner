@@ -59,6 +59,31 @@ def test_run_test_command_takes_a_complete_command(repo, cfg):
     assert "ok 1" in output
 
 
+def test_the_fixture_checker_runs_the_whole_tree_for_a_regression_gate(repo, cfg):
+    """What the parent's regression gate will drive through run_test_command."""
+    from issue_runner.phases.build import run_test_command
+
+    whole_suite = f"{sys.executable} {repo / 'checker.py'} ."
+    (repo / "test_a.py").write_text("assert PASS")
+    (repo / "test_b.py").write_text("assert PASS")
+    (repo / "notes.py").write_text("# no marker, not a test\n")
+    passed, output = run_test_command(cfg, whole_suite)
+    assert passed is True
+    assert "# pass 2" in output and "# fail 0" in output
+
+    (repo / "test_c.py").write_text("assert RED")
+    passed, output = run_test_command(cfg, whole_suite)
+    assert passed is False
+    assert "# fail 1" in output
+
+
+def test_the_fixture_checker_reports_an_empty_tree_as_no_tests(repo, cfg):
+    from issue_runner.phases.build import run_test_command
+
+    with pytest.raises(BuildError, match="no usable test result"):
+        run_test_command(cfg, f"{sys.executable} {repo / 'checker.py'} .")
+
+
 def test_run_tests_rejects_a_path_outside_the_repo(repo, cfg):
     with pytest.raises(BuildError):
         resolve_test_path(cfg, "../escape.py")
