@@ -9,7 +9,14 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .storage import write_json
+
 STATUSES = ("pending", "in_progress", "done", "blocked")
+PHASES = ("tester", "refine_test", "coder", "verifier", "regression", "commit")
+
+
+class StateError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -25,6 +32,24 @@ class Ticket:
     test_path: str | None = None
     github_issue: int | None = None
     blocked_reason: str | None = None
+    phase: str = "tester"
+    test_snapshot: str | None = None
+    test_hash: str | None = None
+    code_feedback: str = ""
+    test_feedback: str = ""
+    already_satisfied: bool = False
+    base_commit: str | None = None
+    commit_token: str | None = None
+    commit_sha: str | None = None
+    changed_files: list[str] = field(default_factory=list)
+    approved_digest: str | None = None
+    approved_tree: str | None = None
+    approved_index: str | None = None
+
+    def __post_init__(self) -> None:
+        self.status = self._status
+        if self.phase not in PHASES:
+            raise ValueError(f"invalid ticket phase {self.phase!r}")
 
     @property
     def status(self) -> str:
@@ -55,6 +80,12 @@ class TicketStore:
         self.tickets: list[Ticket] = []
         self.branch: str | None = None
         self.plan_summary: str | None = None
+        self.worktree: str | None = None
+        self.source_repo: str | None = None
+        self.pr_url: str = ""
+        self.initial_head: str | None = None
+        self.last_commit: str | None = None
+        self.workspace_ready: bool = False
 
     @property
     def state_file(self) -> Path:
@@ -99,20 +130,47 @@ class TicketStore:
         )
 
     def save(self) -> None:
-        self.state_dir.mkdir(parents=True, exist_ok=True)
         payload = {
+            "version": 2,
             "issue_ref": self.issue_ref,
             "branch": self.branch,
             "plan_summary": self.plan_summary,
+            "worktree": self.worktree,
+            "source_repo": self.source_repo,
+            "pr_url": self.pr_url,
+            "initial_head": self.initial_head,
+            "last_commit": self.last_commit,
+            "workspace_ready": self.workspace_ready,
             "tickets": [t.to_dict() for t in self.tickets],
         }
-        self.state_file.write_text(json.dumps(payload, indent=2))
+        try:
+            write_json(self.state_file, payload)
+        except OSError as e:
+            raise StateError(f"could not save state {self.state_file}: {e}") from e
 
     def load(self) -> bool:
         if not self.state_file.exists():
             return False
-        payload = json.loads(self.state_file.read_text())
+        try:
+            payload = json.loads(self.state_file.read_text())
+            if not isinstance(payload, dict) or payload.get("version", 1) not in (1, 2):
+                raise ValueError("unsupported state format")
+            if str(payload.get("issue_ref")) != self.issue_ref:
+                raise ValueError("state belongs to a different issue")
+            tickets = [Ticket.from_dict(d) for d in payload["tickets"]]
+            if len({t.id for t in tickets}) != len(tickets):
+                raise ValueError("duplicate ticket IDs")
+        except (OSError, ValueError, TypeError, KeyError) as e:
+            raise StateError(
+                f"cannot resume from {self.state_file}: {e}; the state file was not changed"
+            ) from e
         self.branch = payload.get("branch")
         self.plan_summary = payload.get("plan_summary")
-        self.tickets = [Ticket.from_dict(d) for d in payload.get("tickets", [])]
+        self.worktree = payload.get("worktree")
+        self.source_repo = payload.get("source_repo")
+        self.pr_url = payload.get("pr_url", "")
+        self.initial_head = payload.get("initial_head")
+        self.last_commit = payload.get("last_commit")
+        self.workspace_ready = payload.get("workspace_ready", False)
+        self.tickets = tickets
         return True

@@ -19,6 +19,10 @@ ROLES = ("planner", "builder.tester", "builder.coder", "verifier")
 log = logging.getLogger("issue_runner")
 
 
+class ConfigError(ValueError):
+    pass
+
+
 @dataclass
 class RoleConfig:
     model: str | None = None
@@ -30,6 +34,8 @@ class RunnerConfig:
     repo_dir: Path
     repo: str | None = None  # owner/name for gh; None = infer from repo_dir remote
     test_cmd: str = DEFAULT_TEST_CMD
+    regression_cmd: str | None = None
+    isolate_worktree: bool = True
     max_rounds: int = 3
     tester_retries: int = 2
     coder_retries: int = 2
@@ -69,13 +75,20 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
     cfg = RunnerConfig(repo_dir=repo_dir)
     path = config_path or repo_dir / "runner.toml"
     if not path.exists():
+        if config_path is not None:
+            raise ConfigError(f"configuration file does not exist: {path}")
         _apply_detected_test_cmd(cfg)
         return cfg
-    data = tomllib.loads(path.read_text())
+    try:
+        data = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise ConfigError(f"cannot load configuration {path}: {e}") from e
     if "test_cmd" not in data:
         _apply_detected_test_cmd(cfg)
     for key in (
         "test_cmd",
+        "regression_cmd",
+        "isolate_worktree",
         "max_rounds",
         "tester_retries",
         "coder_retries",
@@ -96,3 +109,22 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
             model=role_data.get("model"), effort=role_data.get("effort")
         )
     return cfg
+
+
+def validate_config(cfg: RunnerConfig) -> None:
+    for name in ("max_rounds", "tester_retries", "coder_retries", "empty_reply_retries"):
+        value = getattr(cfg, name)
+        if type(value) is not int or value < 0:
+            raise ConfigError(f"{name} must be a non-negative integer")
+    for name in ("timeout", "max_ai_credits", "max_run_credits"):
+        value = getattr(cfg, name)
+        if value is not None and (type(value) is not int or value <= 0):
+            raise ConfigError(f"{name} must be a positive integer")
+    if not isinstance(cfg.test_cmd, str) or not cfg.test_cmd.strip():
+        raise ConfigError("test_cmd must be a non-empty command")
+    if cfg.regression_cmd is not None and (
+        not isinstance(cfg.regression_cmd, str) or not cfg.regression_cmd.strip()
+    ):
+        raise ConfigError("regression_cmd must be a non-empty command")
+    if type(cfg.isolate_worktree) is not bool:
+        raise ConfigError("isolate_worktree must be true or false")

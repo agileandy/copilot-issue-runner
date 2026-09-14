@@ -50,7 +50,7 @@ class RunBudget:
     @property
     def cost_is_complete(self) -> bool:
         """True only when every call so far was costed in full by copilot."""
-        return self.partial_calls == 0 and self.unknown_calls == 0
+        return self.measured_calls == self.calls
 
     @property
     def measured_aiu(self) -> float:
@@ -60,7 +60,7 @@ class RunBudget:
     def spent(self) -> float:
         """Reserved estimate plus measured charge — the figure `check` gates on."""
         total = self.reserved + self.measured_aiu
-        return int(total) if float(total).is_integer() else round(total, 6)
+        return int(total) if float(total).is_integer() else total
 
     @property
     def remaining(self) -> float | None:
@@ -69,7 +69,8 @@ class RunBudget:
     def check(self) -> None:
         if self.limit is None:
             return
-        if self.spent + self.per_call > self.limit:
+        reserved_nano = (self.reserved + self.per_call) * NANO_PER_AIU
+        if self.measured_nano_aiu + reserved_nano > self.limit * NANO_PER_AIU:
             raise BudgetExhausted(self._exhausted_message())
 
     def charge(self) -> None:

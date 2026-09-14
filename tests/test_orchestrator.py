@@ -162,13 +162,15 @@ def test_max_rounds_blocks_ticket(git_repo, cfg):
 
 
 def test_resume_skips_planning(git_repo, cfg):
-    store = TicketStore(git_repo / ".state", issue_ref="17")
-    from issue_runner.tickets import Ticket
-
-    done = Ticket(id=1, title="t", description="d", test_assertion="a")
-    done.status = "done"
-    store.set_tickets([done])
-    store.save()
+    first = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    assert run_issue(cfg, first, ISSUE, state_dir=git_repo / ".state").done == 1
 
     client = FakeClient([])  # no calls expected: plan skipped, no pending tickets
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
@@ -242,7 +244,7 @@ def test_backend_backfills_on_resume(git_repo, cfg):
 
     backend = RecordingBackend()
     cfg.tickets_backend = backend
-    report = run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state")
+    report = run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state", plan_only=True)
     assert report.done == 2
     # only the unmirrored ticket gets a new Gitea issue
     assert backend.created == [(17, 2)]
@@ -457,12 +459,15 @@ def test_budget_exhaustion_stops_the_run_and_saves_resumable_state(git_repo, cfg
 
     assert report.budget_exhausted is True
     assert report.done == 0
-    # only the ticket in flight is blocked; the second is untouched and resumable
+    # the active phase and the untouched second ticket are both resumable
     assert len(client.calls) == 2
     store = TicketStore(git_repo / ".state", issue_ref="17")
     assert store.load()
-    assert store.tickets[0].status == "blocked"
-    assert "budget" in store.tickets[0].blocked_reason
+    assert report.blocked == 0
+    assert store.tickets[0].status == "pending"
+    assert store.tickets[0].phase == "coder"
+    assert store.tickets[0].test_path == "test_sub.py"
+    assert store.tickets[0].blocked_reason is None
     assert store.tickets[1].status == "pending"
 
 
@@ -478,13 +483,13 @@ def test_budget_exhaustion_does_not_start_later_tickets(git_repo, cfg):
     client = ImmediatelyBrokeClient([(two_ticket_plan(), None)])
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
     assert report.budget_exhausted is True
-    assert report.blocked == 1, "the second ticket must stay pending, not be blocked"
+    assert report.blocked == 0, "a budget pause must not block either ticket"
     # the raising override never records, so only the plan call is logged: the
     # second ticket's tester was never even attempted
     assert [c["role"] for c in client.calls] == ["planner"]
     store = TicketStore(git_repo / ".state", issue_ref="17")
     store.load()
-    assert [t.status for t in store.tickets] == ["blocked", "pending"]
+    assert [t.status for t in store.tickets] == ["pending", "pending"]
 
 
 def test_budget_exhaustion_skips_the_pull_request(git_repo, cfg, pull_requests):

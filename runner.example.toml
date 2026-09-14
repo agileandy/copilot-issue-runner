@@ -4,13 +4,16 @@
 # (pyproject/setup.py -> pytest, package.json -> npm test, go.mod -> go test,
 #  Cargo.toml -> cargo test; pytest is the fallback).
 test_cmd = "pytest {test_path} -q"
+# Full suite gate, without {test_path}. Auto-detected separately when omitted.
+# regression_cmd = "pytest -q"
+isolate_worktree = true # keep the source checkout untouched; --in-place opts out
 max_rounds = 3        # verifier hand-backs per ticket before it is blocked
 tester_retries = 2    # harness bounces (stub/green test) before giving up
 coder_retries = 2
 github_tickets = true # mirror tickets as gh sub-issues (needs --repo + write access)
 open_pr = true        # open a PR when a run finishes with no blocked tickets
 # max_ai_credits = 30 # per-call soft cap (copilot minimum is 30)
-# max_run_credits = 300 # whole-run budget; the run stops cleanly (exit 4) before exceeding it
+# max_run_credits = 300 # soft whole-run budget, checked between invocations (exit 4)
 empty_reply_retries = 2 # retries when copilot exits 0 with no output (a transport failure)
 timeout = 1800        # seconds per model call
 

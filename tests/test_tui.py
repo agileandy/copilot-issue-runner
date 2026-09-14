@@ -58,6 +58,14 @@ def test_stats_line_formats_tokens_and_current_call():
     assert "builder.coder" in out and "61s" in out
 
 
+def test_stats_distinguishes_zero_unknown_and_partial_costs():
+    assert "0.00 AIU" in format_stats({"calls": 1, "nano_aiu": 0})
+    assert "unknown" in format_stats({"calls": 1})
+    assert "at least 7.00 AIU" in format_stats(
+        {"calls": 1, "nano_aiu": 7_000_000_000, "unknown_cost_calls": 1}
+    )
+
+
 # -- app smoke (headless pilot) -------------------------------------------
 
 
@@ -154,6 +162,12 @@ def test_summary_reports_a_budget_stop():
 
 def test_summary_reports_a_clean_run():
     assert "all tickets done" in format_summary({"done": 3, "blocked": 0, "branch": "b"})
+
+
+def test_plan_only_summary_does_not_claim_tickets_were_executed():
+    result = format_summary({"done": 0, "blocked": 0, "plan_only": True})
+    assert "plan ready" in result
+    assert "all tickets done" not in result
 
 
 async def test_bus_events_reach_app_through_queue():

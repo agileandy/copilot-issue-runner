@@ -13,18 +13,30 @@ import shutil
 import sys
 from pathlib import Path
 
-from .config import ROLES, RoleConfig, load_config
+from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .copilot import CopilotClient, CopilotError
 from .demo import DemoError, demo_banner, setup_demo
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
+from .phases.build import BuildError
 from .phases.devops import DevopsError
 from .phases.plan import PLAN_PROMPT, PlanError
+from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
+from .tickets import StateError
 from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 # failures that abort a whole run: report them, never traceback at the user
-PipelineError = (PlanError, CopilotError, DevopsError)
+PipelineError = (
+    PlanError,
+    CopilotError,
+    DevopsError,
+    BuildError,
+    VerifyError,
+    StateError,
+    GithubError,
+    TrackerError,
+)
 
 
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
@@ -39,6 +51,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--dir", type=Path, default=Path.cwd(), help="target repository directory")
     p.add_argument("--config", type=Path, help="runner.toml path (default: <dir>/runner.toml)")
     p.add_argument("--test-cmd", help="test command template, e.g. 'pytest {test_path} -q'")
+    p.add_argument("--regression-cmd", help="full regression suite command, with no file selector")
+    p.add_argument(
+        "--in-place",
+        action="store_true",
+        help="use the supplied clean checkout instead of a separate managed run worktree",
+    )
     p.add_argument("--max-rounds", type=int, help="max verifier hand-backs per ticket")
     p.add_argument(
         "--no-github-tickets",
@@ -85,7 +103,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument(
         "--max-run-credits",
         type=int,
-        help="whole-run AI credit budget; the run stops cleanly (exit 4) before exceeding it",
+        help="soft whole-run credit budget, checked between Copilot invocations (exit 4)",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
@@ -155,7 +173,11 @@ def main(argv=None) -> int:
         args.copilot_cmd = str(demo_env.copilot_cmd)
 
     repo_dir = args.dir.resolve()
-    cfg = load_config(repo_dir, args.config)
+    try:
+        cfg = load_config(repo_dir, args.config)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if demo_env and not args.test_cmd:
         cfg.test_cmd = demo_env.test_cmd
     if demo_env:
@@ -165,6 +187,12 @@ def main(argv=None) -> int:
         cfg.repo = args.repo
     if args.test_cmd:
         cfg.test_cmd = args.test_cmd
+    if args.regression_cmd:
+        cfg.regression_cmd = args.regression_cmd
+    if args.in_place or demo_env:
+        cfg.isolate_worktree = False
+    if demo_env and cfg.regression_cmd is None:
+        cfg.regression_cmd = cfg.test_cmd.format(test_path="tests")
     if args.max_rounds is not None:
         cfg.max_rounds = args.max_rounds
     if args.no_github_tickets:
@@ -178,9 +206,9 @@ def main(argv=None) -> int:
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
     cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
-    if args.max_ai_credits:
+    if args.max_ai_credits is not None:
         cfg.max_ai_credits = args.max_ai_credits
-    if args.max_run_credits:
+    if args.max_run_credits is not None:
         cfg.max_run_credits = args.max_run_credits
     if args.model or args.effort:
         for role in ROLES:
@@ -189,6 +217,12 @@ def main(argv=None) -> int:
                 model=existing.model or args.model,
                 effort=existing.effort or args.effort,
             )
+
+    try:
+        validate_config(cfg)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     try:
         issue = _load_issue(args, cfg, repo_dir)
@@ -220,6 +254,7 @@ def main(argv=None) -> int:
             report, error, _detached = run_visual(cfg, client, issue, plan_only=args.plan_only)
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
+                _print_abort_usage(client)
                 return 1
             _print_summary(report)
             _print_demo_footer(demo_env)
@@ -229,6 +264,7 @@ def main(argv=None) -> int:
         report = run_issue(cfg, client, issue, plan_only=args.plan_only)
     except PipelineError as e:
         print(f"error: {e}", file=sys.stderr)
+        _print_abort_usage(client)
         return 1
 
     _print_summary(report)
@@ -253,15 +289,26 @@ def _exit_code(report) -> int:
 
 def _print_summary(report) -> None:
     print(f"\nbranch: {report.branch or '(plan only)'}")
+    if report.worktree:
+        print(f"worktree: {report.worktree}")
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
     if report.budget_exhausted:
         print("run stopped: AI credit budget exhausted — re-run to resume")
     if report.usage_summary:
         print(report.usage_summary)
+    if report.budget_summary:
+        print(report.budget_summary)
     if report.pr_url:
         print(f"pull request: {report.pr_url}")
     for line in report.details:
         print(f"  - {line}")
+
+
+def _print_abort_usage(client: CopilotClient) -> None:
+    if client.usage.calls:
+        print(client.usage.summary_line())
+        if client.budget.limit is not None or not client.budget.cost_is_complete:
+            print(client.budget.describe())
 
 
 def gh_main(argv=None) -> int:

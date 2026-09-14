@@ -4,31 +4,43 @@ A generic, programmatic runner that drives the **GitHub Copilot CLI** through a
 strict three-phase TDD pipeline to implement a GitHub issue:
 
 ```
-plan  ->  branch  ->  per ticket: [ builder.tester -> builder.coder -> verifier ] -> devops commit
+clean workspace -> plan -> per ticket: [ tester -> coder -> verifier -> regression gate -> commit ]
 ```
 
 ## The pipeline
 
-1. **Plan** — one read-only Copilot call reads the issue and explores the
+1. **Workspace** — before build-mode model calls, the runner refuses staged,
+   unstaged or untracked user changes, records the issue branch, and creates a
+   dedicated Git worktree under `.issue-runner/worktrees/`. The source checkout
+   and its current branch stay untouched. `--in-place` explicitly opts into using
+   the supplied clean checkout instead. A repository lock prevents competing
+   runs from changing the same branch or state.
+2. **Plan** — one read-only Copilot call reads the issue and explores the
    codebase, producing an ordered list of atomic sub-task tickets, each with a
    **single logical test assertion**. Tickets are stored locally
    (`.issue-runner/issue-<n>.json`, the source of truth) and optionally
    mirrored as GitHub sub-issues via `gh`.
-2. **Branch** — `issue-<n>-<slug>` is created in the target repo. All work and
-   commits happen there; `git push` is denied to the agent unconditionally.
+   The branch is `issue-<n>-<slug>`. All build work and commits stay in the run
+   workspace; `git push` is denied to the agent unconditionally.
 3. **Build/verify loop** per ticket:
    - `builder.tester` writes the test first. The harness — not the model —
-     enforces the non-stub rule: the test must contain a real assertion and
-     must **fail** before implementation exists, or it is bounced back.
+     requires evidence of actual test execution and a genuine failing result
+     before implementation. Empty, skipped-only, collection-error and invalid
+     command results are not accepted as red or green.
    - `builder.coder` makes the test pass. It may not touch the test file
-     (detected by content hash and restored from git if violated).
+     (detected by content hash and restored from the tester's snapshot if violated).
    - `verifier` (read-only) judges robustness and routes:
      `refine_test` → back to the tester · `rework_code` → back to the coder ·
-     `pass` → `devops` commits the ticket.
+     `pass` → the harness runs the full regression command, then `devops` stages
+     only the approved ticket changes and commits. A model verdict alone cannot
+     bypass the regression gate.
    - Hand-backs are capped by `max_rounds` (default 3); a non-converging
-     ticket is marked **blocked** and the run continues. State is saved after
-     every transition, so a crashed or credit-capped run resumes with no
-     repeated model calls.
+     ticket is marked **blocked**. If it left edits, the run stops and retains
+     them in its worktree instead of mixing them into another ticket.
+   - Accepted phase, test snapshot, base commit and approved change set are saved
+     atomically. Resume skips accepted phases, and a commit completed just before
+     an interruption is recovered by its recorded operation identity. An
+     interrupted model call with no accepted checkpoint may need repeating.
 
 ## Install
 
@@ -59,6 +71,10 @@ gh-runner --demo --demo-dir ~/tmp/demo    # keep the sandbox somewhere
 gh-runner --demo --demo-dir ~/tmp/demo --demo-reset --visual
 ```
 
+Reset is allowed only for a runner-owned demo with a valid ownership marker.
+Unowned directories, dangerous paths and symlink destinations are refused.
+Legacy demos without a marker must be left intact or removed manually.
+
 It creates a small git repo (a `demo_pkg.stats` module and an `issue.md` asking
 for `mean` and `median`), then drives the real orchestrator against a scripted
 stand-in for Copilot. Nothing is faked inside the pipeline: the tests really
@@ -70,7 +86,8 @@ committed. The script is written so the demo shows the interesting paths —
 - the verifier then returns `refine_test` (even-length median is untested),
   sending the loop back to the tester and on to the coder before it passes.
 
-The sandbox path is printed at the end; inspect the result with
+The demo uses its disposable sandbox directly rather than creating another
+worktree inside it. The sandbox path is printed at the end; inspect the result with
 `git -C <sandbox> log --oneline`. Add `--visual` for the TUI, `--plan-only` to
 stop after planning. `ISSUE_RUNNER_DEMO_DELAY` (seconds, default `0.15`) paces
 the streamed output in visual mode.
@@ -91,8 +108,9 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
-`--max-run-credits 300` · `--parallel N` · `--issue-file PATH` ·
+`--max-run-credits 300` · `--issue-file PATH` ·
 `--retry-blocked` · `--visual` · `--demo` ·
+`--regression-cmd 'pytest -q'` · `--in-place` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
 
@@ -118,6 +136,21 @@ and `cargo test` deliberately run unfiltered: their selector flags take a test
 the harness would misread as a passing test.
 
 `test_cmd` in `runner.toml` and `--test-cmd` always override detection.
+
+The independent full-suite gate is detected from the same project markers.
+Override it with `regression_cmd` or `--regression-cmd`; it must not contain
+`{test_path}`. Unknown projects need an explicit regression command. Both commands
+must report actual test execution, not just exit successfully.
+
+Dependencies must be usable from the printed run worktree. Point commands at an
+existing environment, prepare dependencies in that worktree before resuming, or
+use `--in-place` with your own clean, prepared worktree. The runner does not
+silently install dependencies or delete worktrees and branches.
+
+For new runs, state records every accepted phase and its artifacts. Older state
+without worktree metadata can resume only from its original clean issue branch.
+Ambiguous dirty legacy state is refused rather than adopted into a new commit.
+`--retry-blocked` resets the retry allowance and continues from the saved phase.
 
 ### Pull requests
 
@@ -152,23 +185,28 @@ left pending, with the cause named: `depends on ticket N which is blocked`,
 first, so a dependent points at the prerequisite that actually failed.
 
 ### Credit budgets
-`--max-ai-credits N` caps a single Copilot call. `--max-run-credits N` (or
-`max_run_credits` in `runner.toml`) caps the whole run: planner plus every
-tester/coder/verifier round. The check runs *before* each call, so the budget is
-never exceeded — the ticket in flight is marked blocked with a budget reason,
-remaining tickets stay `pending`, state is saved, and the run exits `4`. Re-run
-the same command to resume, or add `--retry-blocked` to retry the stopped ticket.
+`--max-ai-credits N` requests Copilot's per-invocation **soft** cap.
+`--max-run-credits N` (or `max_run_credits` in `runner.toml`) sets a soft budget
+across the planner and all tester/coder/verifier invocations. The runner checks
+the allowance between invocations and stops with exit `4` when another call
+cannot be admitted. A running invocation can exceed a soft limit; neither flag
+is a hard billing guarantee.
 
-The Copilot CLI does not report how much credit a call actually consumed, so the
-budget is enforced on a worst case: a call is assumed to cost `--max-ai-credits`
-when set, and 1 otherwise. It is a floor on what the runner will attempt, not an
-exact meter. Unset by default — no run-level cap.
+Reported nano-AIU charges are measured spend. When usage is unavailable, the
+runner keeps an explicitly estimated reservation rather than pretending the call
+was free. Unknown usage and genuine zero-cost calls are different. The budget is
+unset by default.
+
+A budget stop retains the accepted phase and leaves the active and remaining
+tickets `pending`. Re-run with an adequate allowance to resume without
+`--retry-blocked` or repeating already accepted phases.
 
 ### Usage accounting
 
-Every model call is recorded with its role, model, effort, wall-clock duration,
-outcome and — when copilot reports it — token counts. At the end of a run the
-summary prints in both the plain and `--visual` paths:
+Every Copilot invocation is recorded with its role, model, effort, duration and
+outcome. Token counts and charges are aggregated across every reported model
+turn within that invocation. The `calls` total counts CLI invocations, not
+internal model turns. The summary prints in both plain and `--visual` modes:
 
 ```
 usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5, builder.tester=6, planner=1, verifier=2
@@ -179,9 +217,9 @@ per-ticket breakdowns. A resumed run **appends** to `runs` and updates the
 cumulative `totals`, so the file is the whole history of an issue, not just the
 last attempt. Each run also appends one JSON line to `.issue-runner/usage.log`.
 
-Token counts only exist on the streaming path (i.e. with `--visual`); on the
-plain path copilot reports none, so token totals stay absent rather than being
-shown as a misleading zero.
+Plain and visual modes consume the same JSON event stream and collect the same
+usage evidence. Missing usage stays unknown rather than being shown as a
+misleading zero.
 
 ### Blank replies
 
@@ -240,5 +278,4 @@ invocations fall back to plain text automatically.
 A crash also settles into that finished state, showing the error, rather than
 leaving a live-looking display.
 
-Visual mode is also the only path that yields token counts, since it is the one
-that runs copilot with `--output-format json`.
+Visual mode changes rendering, not the transport or accounting.

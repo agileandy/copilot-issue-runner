@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .storage import write_json
+
 _TICKET_RE = re.compile(r"-t(\d+)$")
 
 USAGE_LOG = "usage.log"
@@ -41,10 +43,13 @@ def format_duration(seconds: float) -> str:
 
 def _all_complete(calls) -> bool | None:
     """True only if every call proved it was costed in full; None if none did."""
-    flags = [c.cost_complete for c in calls]
+    return _complete_flags([c.cost_complete for c in calls])
+
+
+def _complete_flags(flags: list[bool | None]) -> bool | None:
     if any(flag is False for flag in flags):
         return False
-    if all(flag is None for flag in flags):
+    if not flags or any(flag is None for flag in flags):
         return None
     return True
 
@@ -60,8 +65,8 @@ def _credit_line(totals: dict) -> str:
     model_calls = totals.get("model_calls")
     detail = (
         f"{costed} of {model_calls} model calls reported a charge"
-        if costed is not None and model_calls
-        else "some calls reported no charge"
+        if costed is not None and model_calls and costed < model_calls
+        else "some costs were not reported"
     )
     return f"credits: at least {format_aiu(nano_aiu)} (incomplete: {detail})"
 
@@ -273,9 +278,14 @@ class UsageLedger:
         previous_runs = []
         if path.exists():
             try:
-                previous_runs = json.loads(path.read_text()).get("runs", [])
-            except (OSError, ValueError):
-                previous_runs = []  # a corrupt file must never fail a run
+                previous = json.loads(path.read_text())
+                if not isinstance(previous, dict) or not isinstance(previous.get("runs"), list):
+                    raise TypeError("missing run history")
+                previous_runs = previous["runs"]
+            except (OSError, ValueError, TypeError) as e:
+                raise OSError(
+                    f"cannot update corrupt or unreadable usage history {path}: {e}"
+                ) from e
 
         entry = self.run_entry()
         runs = [*previous_runs, entry]
@@ -284,7 +294,7 @@ class UsageLedger:
             "runs": runs,
             "totals": _combine([r.get("totals", {}) for r in runs]),
         }
-        path.write_text(json.dumps(payload, indent=2))
+        write_json(path, payload)
 
         line = json.dumps({"issue_ref": issue_ref, **entry, "calls": len(self.calls)})
         with (state_dir / USAGE_LOG).open("a") as log_file:
@@ -313,9 +323,4 @@ def _combine(buckets: list[dict]) -> dict:
 
 def _combine_complete(buckets: list[dict]) -> bool | None:
     """False if any run was incomplete; None if no run ever recorded the evidence."""
-    flags = [b.get("cost_complete") for b in buckets]
-    if any(flag is False for flag in flags):
-        return False
-    if all(flag is None for flag in flags):
-        return None
-    return True
+    return _complete_flags([b.get("cost_complete") for b in buckets])

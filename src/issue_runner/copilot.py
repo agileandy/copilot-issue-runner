@@ -122,7 +122,7 @@ class CopilotClient:
                 )
             else:
                 returncode, reply, detail, usage = self._plain_call(argv, role)
-        except Exception:
+        except (Exception, KeyboardInterrupt):
             # a timeout or crash still consumed wall-clock time and credit. Whatever
             # copilot already reported is real and is kept, but it can only ever be a
             # lower bound: the invocation died before it could say what else it billed.
@@ -130,7 +130,18 @@ class CopilotClient:
             known, _ = cost_report(partial)
             self.budget.settle(known, complete=False)
             self._record(role, role_cfg, session_name, started, ok=False, usage=partial)
+            emit(
+                self.config.events,
+                "agent_call_finished",
+                role=role,
+                session=session_name,
+                elapsed=round(time.monotonic() - started, 1),
+                ok=False,
+                usage=partial,
+            )
             raise
+        if returncode != 0:
+            usage = mark_incomplete(usage)
         known, complete = cost_report(usage)
         self.budget.settle(known, complete=complete)
         elapsed = round(time.monotonic() - started, 1)
@@ -179,6 +190,8 @@ class CopilotClient:
             raise CopilotError(
                 f"copilot timed out after {self.config.timeout}s for role {role}"
             ) from e
+        except OSError as e:
+            raise CopilotError(f"could not start copilot for role {role}: {e}") from e
         return (
             result.returncode,
             result.stdout.strip(),
@@ -194,15 +207,18 @@ class CopilotClient:
         already reported — an interrupted call is not a free one.
         """
         progress = progress if progress is not None else {}
-        proc = self.popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(self.config.repo_dir),
-            # own a process group so a timeout can reap the whole tool tree by id
-            start_new_session=True,
-        )
+        try:
+            proc = self.popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(self.config.repo_dir),
+                # own a process group so a timeout can reap the whole tool tree by id
+                start_new_session=True,
+            )
+        except OSError as e:
+            raise CopilotError(f"could not start copilot for role {role}: {e}") from e
         lines: queue.Queue = queue.Queue()
         stderr_tail: deque = deque(maxlen=STDERR_TAIL_CHARS)
         reader_errors: list = []
@@ -300,8 +316,15 @@ class CopilotClient:
             self._terminate(proc)
         for reader in readers:
             reader.join(timeout=READER_JOIN_SECONDS)
-            if reader.is_alive():
-                log.warning("a copilot output reader did not stop within %ss", READER_JOIN_SECONDS)
+        if any(reader.is_alive() for reader in readers):
+            # A reaped leader can leave a child holding only stderr. Kill the
+            # owned group before closing a pipe whose reader still holds its lock.
+            if not force:
+                self._terminate(proc)
+            for reader in readers:
+                reader.join(timeout=READER_JOIN_SECONDS)
+            if any(reader.is_alive() for reader in readers):
+                raise CopilotError("copilot output readers did not stop after process cleanup")
         for stream in (proc.stdout, proc.stderr):
             if stream is None:
                 continue

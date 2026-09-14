@@ -90,6 +90,15 @@ elif mode == "partial":
     send("assistant.message", messageId="m1", content="half costed")
     call_success(5, 5, nano_aiu=7_000_000_000)
     call_success(6, 6)
+elif mode == "orphan_stderr":
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(600)"],
+        stdout=subprocess.DEVNULL,
+    )
+    with open(os.environ["FAKE_PIDFILE"], "w") as fh:
+        fh.write(str(child.pid))
+    send("assistant.message", content="finished with a leaked stderr")
+    call_success(10, 2, nano_aiu=1_000_000_000)
 elif mode == "stderr_flood":
     sys.stderr.write("x" * 400_000)
     sys.stderr.flush()
@@ -187,6 +196,58 @@ def test_merge_usage_keeps_unknown_distinct_from_zero():
     assert merged["model_calls"] == 2
 
 
+def test_unreported_invocation_prevents_a_complete_usage_total():
+    from issue_runner.usage import UsageLedger
+    from tests.test_usage import a_call
+
+    ledger = UsageLedger()
+    ledger.record(
+        **a_call(
+            usage={
+                "nano_aiu": 1_000_000_000,
+                "model_calls": 1,
+                "costed_model_calls": 1,
+            }
+        )
+    )
+    ledger.record(**a_call(usage=None))
+    assert ledger.totals()["cost_complete"] is not True
+    assert "credits: at least 1.00 AIU" in ledger.summary_line()
+    assert "1 of 1" not in ledger.summary_line()
+
+
+def test_resumed_unreported_cost_does_not_become_a_complete_total(tmp_path):
+    from issue_runner.usage import UsageLedger
+    from tests.test_usage import a_call
+
+    first = UsageLedger()
+    first.record(
+        **a_call(
+            usage={
+                "nano_aiu": 1_000_000_000,
+                "model_calls": 1,
+                "costed_model_calls": 1,
+            }
+        )
+    )
+    first.save(tmp_path, "17")
+    second = UsageLedger()
+    second.record(**a_call(usage=None))
+    second.save(tmp_path, "17")
+    totals = json.loads((tmp_path / "usage-issue-17.json").read_text())["totals"]
+    assert totals["nano_aiu"] == 1_000_000_000
+    assert totals["cost_complete"] is not True
+
+
+def test_nano_aiu_spend_is_not_rounded_down_for_admission():
+    budget = RunBudget(limit=1, per_call=1)
+    budget.charge()
+    budget.settle(1)
+    assert budget.spent > 0
+    with pytest.raises(BudgetExhausted):
+        budget.check()
+
+
 # --- headless and visual use the same accounting -----------------------------
 
 
@@ -200,7 +261,9 @@ def test_headless_and_visual_record_identical_usage(tmp_path, fake_copilot):
     visual = client_for(tmp_path, fake_copilot, "multi", bus=bus)
     visual.run("p", role="planner")
 
-    assert headless.usage.totals() == visual.usage.totals()
+    assert {key: value for key, value in headless.usage.totals().items() if key != "seconds"} == {
+        key: value for key, value in visual.usage.totals().items() if key != "seconds"
+    }
     assert headless.usage.totals()["nano_aiu"] == 4_000_000_000
     assert headless.budget.measured_nano_aiu == visual.budget.measured_nano_aiu
 
@@ -510,6 +573,70 @@ def test_usage_reported_before_a_timeout_is_not_thrown_away(tmp_path, fake_copil
 
     for pid in (int(x) for x in pidfile.read_text().split()):
         assert _wait_for_exit(pid), f"process {pid} survived the timeout"
+
+
+def test_timeout_emits_failed_completion_with_partial_usage(tmp_path, fake_copilot):
+    pidfile = tmp_path / "pids"
+    os.environ["FAKE_PIDFILE"] = str(pidfile)
+    bus = EventBus()
+    events = []
+    bus.subscribe(events.append)
+    client = client_for(
+        tmp_path, fake_copilot, "charge_then_hang", bus=bus, timeout=2, empty_reply_retries=0
+    )
+    with pytest.raises(CopilotError, match="timed out"):
+        client.run("p", role="planner")
+    finished = [event for event in events if event.kind == "agent_call_finished"]
+    assert len(finished) == 1
+    assert finished[0].payload["ok"] is False
+    assert finished[0].payload["usage"]["nano_aiu"] == 2_000_000_000
+    assert finished[0].payload["usage"]["cost_complete"] is False
+
+
+def test_a_child_holding_only_stderr_cannot_block_cleanup(tmp_path, fake_copilot, monkeypatch):
+    from issue_runner import copilot
+
+    monkeypatch.setattr(copilot, "READER_JOIN_SECONDS", 0.1)
+    pidfile = tmp_path / "pid"
+    os.environ["FAKE_PIDFILE"] = str(pidfile)
+    client = client_for(tmp_path, fake_copilot, "orphan_stderr", timeout=2, empty_reply_retries=0)
+    started = time.monotonic()
+    assert client.run("p", role="planner") == "finished with a leaked stderr"
+    assert time.monotonic() - started < 5
+    assert _wait_for_exit(int(pidfile.read_text()))
+
+
+def test_keyboard_interrupt_still_records_the_attempt(tmp_path):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    client = CopilotClient(RunnerConfig(repo_dir=tmp_path), runner=interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        client.run("p", role="planner")
+    assert client.usage.totals()["failed"] == 1
+    assert client.budget.unknown_calls == 1
+
+
+def test_usage_replacement_failure_keeps_the_previous_history(tmp_path, monkeypatch):
+    from issue_runner import storage
+    from issue_runner.usage import UsageLedger
+    from tests.test_usage import a_call
+
+    first = UsageLedger()
+    first.record(**a_call())
+    path = first.save(tmp_path, "17")
+    previous = path.read_bytes()
+
+    def interrupted(*args):
+        raise OSError("interrupted replace")
+
+    monkeypatch.setattr(storage.os, "replace", interrupted)
+    second = UsageLedger()
+    second.record(**a_call())
+    with pytest.raises(OSError, match="interrupted replace"):
+        second.save(tmp_path, "17")
+    assert path.read_bytes() == previous
+    assert list(tmp_path.glob(".usage-issue-17.json.*")) == []
 
 
 def test_a_child_holding_the_pipe_after_the_parent_exits_is_timed_out_and_reaped(

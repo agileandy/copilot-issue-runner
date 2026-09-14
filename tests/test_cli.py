@@ -1,18 +1,35 @@
 import json
+import logging
 import os
 import stat
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from issue_runner.cli import build_parser, gh_main, main
 from issue_runner.visual import _visual_snapshot_for_non_tty, render_flow
 
 
+@pytest.fixture(autouse=True)
+def restore_logging_after_cli():
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    yield
+    for handler in root.handlers:
+        if handler not in handlers:
+            handler.close()
+    root.handlers[:] = handlers
+    root.setLevel(level)
+
+
 def make_fake_copilot(tmp_path, reply):
     """A stand-in copilot binary: ignores args, prints a canned reply."""
     fake = tmp_path / "fake-copilot"
-    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{reply}\nEOF\n")
+    event = json.dumps({"type": "assistant.message", "data": {"content": reply}})
+    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{event}\nEOF\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     return fake
 
@@ -117,41 +134,27 @@ def test_verbose_ticket_verdict_logging_in_build_verify_loop(tmp_path, capsys):
         "from app import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
     )
     (repo / "app.py").write_text("def add(a, b):\n    return a - b\n")
+    (repo / "pyproject.toml").write_text('[project]\nname = "add-example"\nversion = "0.1.0"\n')
+    for args in (["add", "-A"], ["commit", "-m", "test: seed failing add behavior"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
     fake = tmp_path / "fake-copilot"
     fake.write_text(
-        """#!/bin/sh
-prompt="${2:-}"
-case "$prompt" in
-  *'You are the planner'*)
-    cat <<'EOF'
-{"summary":"one ticket","tickets":[{"title":"add ints","description":"implement integer add","test_assertion":"add(2, 3) == 5","files_hint":["app.py","tests/test_ticket_flow.py"]}]}
-EOF
-    ;;
-  *'You are builder.tester'*)
-    cat <<'EOF'
-{"test_path":"tests/test_ticket_flow.py"}
-EOF
-    ;;
-  *'You are builder.coder'*)
-    cat > app.py <<'EOF'
-def add(a, b):
-    return a + b
-EOF
-    cat <<'EOF'
-{"changed_files":["app.py"],"notes":"fix add"}
-EOF
-    ;;
-  *'You are the verifier'*)
-    cat <<'EOF'
-{"verdict":"pass","reasons":["works"],"test_feedback":"","code_feedback":""}
-EOF
-    ;;
-  *)
-    echo '{}'
-    ;;
-esac
-"""
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "prompt = sys.argv[sys.argv.index('-p') + 1]\n"
+        "if 'You are the planner' in prompt:\n"
+        "    reply = {'summary': 'one ticket', 'tickets': [{'title': 'add ints',\n"
+        "        'description': 'implement add', 'test_assertion': 'add(2,3) == 5'}]}\n"
+        "elif 'You are builder.tester' in prompt:\n"
+        "    reply = {'test_path': 'tests/test_ticket_flow.py'}\n"
+        "elif 'You are builder.coder' in prompt:\n"
+        "    Path('app.py').write_text('def add(a,b):\\n    return a+b\\n')\n"
+        "    reply = {'changed_files': ['app.py']}\n"
+        "else:\n"
+        "    reply = {'verdict': 'pass', 'reasons': ['works']}\n"
+        "print(json.dumps({'type': 'assistant.message', 'data': {'content': json.dumps(reply)}}))\n"
     )
     fake.chmod(fake.stat().st_mode | 0o111)
 
@@ -456,3 +459,52 @@ def test_gh_main_passes_arguments_through(tmp_path, monkeypatch):
     assert rc == 0
     assert seen["dir"] == repo.resolve()
     assert seen["max_rounds"] == 9
+
+
+def test_regression_and_in_place_flags_reach_config(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    issue = tmp_path / "issue.md"
+    issue.write_text("# Example\n\nBody")
+    seen = {}
+
+    def capture(cfg, *args, **kwargs):
+        seen.update(regression=cfg.regression_cmd, isolated=cfg.isolate_worktree)
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    assert (
+        cli.main(
+            [
+                "--issue-file",
+                str(issue),
+                "--dir",
+                str(tmp_path),
+                "--regression-cmd",
+                "python -m pytest",
+                "--in-place",
+            ]
+        )
+        == 0
+    )
+    assert seen == {"regression": "python -m pytest", "isolated": False}
+
+
+def test_invalid_budget_is_a_friendly_invocation_error(tmp_path, capsys):
+    issue = tmp_path / "issue.md"
+    issue.write_text("# Example\n\nBody")
+    assert (
+        main(
+            [
+                "--issue-file",
+                str(issue),
+                "--dir",
+                str(tmp_path),
+                "--max-run-credits",
+                "0",
+            ]
+        )
+        == 2
+    )
+    assert "positive integer" in capsys.readouterr().err

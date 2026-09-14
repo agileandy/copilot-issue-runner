@@ -2,7 +2,13 @@ import subprocess
 
 import pytest
 
-from issue_runner.phases.devops import DevopsError, commit_ticket, create_branch, current_branch
+from issue_runner.phases.devops import (
+    DevopsError,
+    approve_changes,
+    commit_ticket,
+    create_branch,
+    current_branch,
+)
 from issue_runner.tickets import Ticket
 
 
@@ -41,7 +47,9 @@ def test_create_branch_reuses_existing(git_repo):
 def test_commit_ticket_commits_changes(git_repo):
     create_branch(git_repo, "17", "add-subtract")
     (git_repo / "new.py").write_text("x = 1")
-    sha = commit_ticket(git_repo, _ticket())
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
     assert sha
     log = subprocess.run(
         ["git", "log", "-1", "--pretty=%s"],
@@ -73,9 +81,18 @@ def test_commit_ticket_skips_default_junk(git_repo):
     (git_repo / "__pycache__").mkdir()
     (git_repo / "__pycache__" / "junk.pyc").write_text("x")
     (git_repo / "real.py").write_text("x = 1")
-    commit_ticket(git_repo, _ticket())
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    commit_ticket(git_repo, ticket)
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=git_repo, capture_output=True, text=True, check=False
     ).stdout
     assert "real.py" in tracked
     assert "junk.pyc" not in tracked
+
+
+def test_commit_ticket_requires_explicit_approval(git_repo):
+    create_branch(git_repo, "17", "approval")
+    (git_repo / "new.py").write_text("x = 1")
+    with pytest.raises(DevopsError, match="no approved change set"):
+        commit_ticket(git_repo, _ticket())

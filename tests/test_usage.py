@@ -137,11 +137,12 @@ def test_save_accumulates_across_resumed_runs(tmp_path):
     assert data["totals"]["seconds"] == 9
 
 
-def test_save_tolerates_a_corrupt_existing_file(tmp_path):
-    (tmp_path / "usage-issue-17.json").write_text("{not json")
-    ledger_with(a_call()).save(tmp_path, issue_ref="17")
-    data = json.loads((tmp_path / "usage-issue-17.json").read_text())
-    assert data["totals"]["calls"] == 1
+def test_save_preserves_and_reports_a_corrupt_existing_file(tmp_path):
+    path = tmp_path / "usage-issue-17.json"
+    path.write_text("{not json")
+    with pytest.raises(OSError, match="corrupt"):
+        ledger_with(a_call()).save(tmp_path, issue_ref="17")
+    assert path.read_text() == "{not json"
 
 
 def test_save_appends_one_jsonl_line_per_run(tmp_path):

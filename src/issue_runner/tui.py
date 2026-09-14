@@ -17,7 +17,7 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, RichLog, Static
 
 from .events import EventBus, RunEvent
-from .usage import format_aiu
+from .usage import cost_is_complete, format_aiu
 
 STATUS_GLYPHS = {
     "pending": "○",
@@ -75,8 +75,11 @@ def format_stats(stats: dict) -> str:
         f"calls [bold]{stats.get('calls', 0)}[/]"
         f"  ·  tokens in [bold]{tokens_in:,}[/] / out [bold]{tokens_out:,}[/]"
     )
-    if stats.get("nano_aiu"):
-        line += f"  ·  credits [bold]{format_aiu(stats['nano_aiu'])}[/]"
+    if stats.get("nano_aiu") is not None:
+        qualifier = "at least " if stats.get("unknown_cost_calls") else ""
+        line += f"  ·  credits [bold]{qualifier}{format_aiu(stats['nano_aiu'])}[/]"
+    elif stats.get("calls"):
+        line += "  ·  credits [bold]unknown[/]"
     line += (
         f"  ·  run [bold]{int(stats.get('run_elapsed', 0)) // 60}m"
         f"{int(stats.get('run_elapsed', 0)) % 60:02d}s[/]"
@@ -96,6 +99,8 @@ def format_summary(summary: dict) -> str:
         outcome = "[red]run aborted[/]"
     elif summary.get("budget_exhausted"):
         outcome = "[red]stopped: credit budget exhausted[/]"
+    elif summary.get("plan_only"):
+        outcome = "plan ready (no tickets executed)"
     elif blocked:
         outcome = f"[red]{blocked} blocked[/]"
     else:
@@ -108,10 +113,14 @@ def format_summary(summary: dict) -> str:
         lines.append(f"[red]{summary['error'][:300]}[/]")
     if summary.get("branch"):
         lines.append(f"branch [bold]{summary['branch']}[/]")
+    if summary.get("worktree"):
+        lines.append(f"worktree {summary['worktree']}")
     if summary.get("pr_url"):
         lines.append(f"pull request {summary['pr_url']}")
     if summary.get("usage"):
         lines.append(f"[dim]{summary['usage']}[/]")
+    if summary.get("budget"):
+        lines.append(f"[dim]{summary['budget']}[/]")
     lines.append("[dim]press q to close — the summary is also printed on exit[/]")
     return "\n".join(lines)
 
@@ -185,13 +194,18 @@ class RunnerApp(App):
             self.state["phase"] = "finished"
             self.state["branch"] = p.get("branch", self.state.get("branch", ""))
             self.finished = True
+            self.stats["current_role"] = None
+            self._call_started = None
             self.summary = {
                 "done": p.get("done", 0),
                 "blocked": p.get("blocked", 0),
                 "branch": self.state["branch"],
+                "worktree": p.get("worktree", ""),
                 "pr_url": p.get("pr_url", ""),
                 "usage": p.get("usage", ""),
+                "budget": p.get("budget", ""),
                 "budget_exhausted": p.get("budget_exhausted", False),
+                "plan_only": p.get("plan_only", False),
                 "error": p.get("error", ""),
             }
             self.query_one("#summary", Static).display = True
@@ -209,7 +223,11 @@ class RunnerApp(App):
             usage = p.get("usage") or {}
             self.stats["input_tokens"] += usage.get("input_tokens", 0)
             self.stats["output_tokens"] += usage.get("output_tokens", 0)
-            self.stats["nano_aiu"] = self.stats.get("nano_aiu", 0) + usage.get("nano_aiu", 0)
+            cost = usage.get("nano_aiu")
+            if cost is not None:
+                self.stats["nano_aiu"] = self.stats.get("nano_aiu", 0) + cost
+            if not cost_is_complete(usage):
+                self.stats["unknown_cost_calls"] = self.stats.get("unknown_cost_calls", 0) + 1
             self.query_one("#agent", RichLog).write(f"── done in {p.get('elapsed', '?')}s ──")
         elif kind == "ticket_blocked":
             self.query_one("#agent", RichLog).write(f"⚠ BLOCKED: {p.get('reason', '')[:300]}")
@@ -248,7 +266,17 @@ def run_visual(cfg, client, issue: dict, plan_only: bool = False):
         except BaseException as e:  # noqa: BLE001 — surfaced after teardown
             result["error"] = e
             # without this the TUI would sit on a live-looking display forever
-            bus.emit("run_finished", done=0, blocked=0, branch="", error=str(e))
+            ledger = getattr(client, "usage", None)
+            budget = getattr(client, "budget", None)
+            bus.emit(
+                "run_finished",
+                done=0,
+                blocked=0,
+                branch="",
+                error=str(e),
+                usage=ledger.summary_line() if ledger is not None else "",
+                budget=budget.describe() if budget is not None else "",
+            )
 
     thread = threading.Thread(target=target, name="issue-runner-pipeline")
     app = RunnerApp(bus, pipeline_thread=thread)
