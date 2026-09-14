@@ -50,6 +50,13 @@ def test_plan_step_rejects_ticket_missing_assertion(cfg):
         plan_step(client, cfg, ISSUE)
 
 
+def test_plan_step_rejects_non_object_reply(cfg):
+    client = FakeClient([("[]", None), ("null", None)])
+    with pytest.raises(PlanError, match="JSON object"):
+        plan_step(client, cfg, ISSUE)
+    assert len(client.calls) == 2
+
+
 def _ticket():
     return Ticket(id=1, title="t", description="d", test_assertion="a == 1")
 
