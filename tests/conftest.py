@@ -2,10 +2,16 @@
 
 FakeClient replays (reply, side_effect) pairs so orchestration tests exercise
 the real enforcement logic without any model call. The checker script stands in
-for the target repo's test suite: a test file containing PASS passes, anything
-else fails — letting tests control red/green deterministically.
+for the target repo's test suite: a test file containing PASS passes, one
+containing RED passes only once impl.py exists — letting tests control red and
+green deterministically.
+
+The checker reports in TAP, the protocol documented for custom test commands,
+because the harness now demands evidence that a test really ran: a file with
+neither marker is reported as `1..0` (no test case), not as a failure.
 """
 
+import sys
 import textwrap
 
 import pytest
@@ -29,24 +35,30 @@ class FakeClient:
         return reply
 
 
+CHECKER_SRC = textwrap.dedent("""\
+    import os
+    import sys
+
+    content = open(sys.argv[1]).read()
+    impl = os.path.join(os.path.dirname(sys.argv[0]), "impl.py")
+    print("checker ran")
+    print("TAP version 13")
+    if "PASS" in content:
+        green = True
+    elif "RED" in content:
+        green = os.path.exists(impl)
+    else:
+        print("1..0 # no test case found in " + sys.argv[1])
+        sys.exit(0)
+    print("1..1")
+    print(("ok" if green else "not ok") + " 1 - checker")
+    sys.exit(0 if green else 1)
+""")
+
+
 @pytest.fixture
 def repo(tmp_path):
-    checker = tmp_path / "checker.py"
-    # Green rules: a test containing PASS is trivially green (stub smell);
-    # a test containing RED goes green only once impl.py exists (real TDD flow).
-    checker.write_text(
-        textwrap.dedent("""\
-            import os
-            import sys
-            content = open(sys.argv[1]).read()
-            print("checker ran")
-            if "PASS" in content:
-                sys.exit(0)
-            if "RED" in content and os.path.exists(os.path.join(os.path.dirname(sys.argv[0]), "impl.py")):
-                sys.exit(0)
-            sys.exit(1)
-        """)
-    )
+    (tmp_path / "checker.py").write_text(CHECKER_SRC)
     return tmp_path
 
 
@@ -54,7 +66,7 @@ def repo(tmp_path):
 def cfg(repo):
     return RunnerConfig(
         repo_dir=repo,
-        test_cmd=f"python {repo / 'checker.py'} {{test_path}}",
+        test_cmd=f"{sys.executable} {repo / 'checker.py'} {{test_path}}",
         github_tickets=False,
         tester_retries=1,
         coder_retries=1,

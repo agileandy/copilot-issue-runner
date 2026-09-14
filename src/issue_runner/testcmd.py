@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_TEST_CMD = f"{sys.executable} -m pytest {{test_path}} -q"
+DEFAULT_REGRESSION_CMD = f"{sys.executable} -m pytest -q"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,10 @@ def _node_test_cmd(path: Path) -> str | None:
     return None
 
 
+def _node_regression_cmd(path: Path) -> str | None:
+    return "npm test" if _node_test_cmd(path) else None
+
+
 # ordered: the first marker that matches wins in a polyglot repo
 _MARKERS: tuple[tuple[str, object], ...] = (
     ("pyproject.toml", DEFAULT_TEST_CMD),
@@ -49,14 +54,40 @@ _MARKERS: tuple[tuple[str, object], ...] = (
     ("Cargo.toml", "cargo test"),
 )
 
+# the same markers, but the whole suite: no {test_path} placeholder. `go test`
+# and `cargo test` are already whole-suite commands.
+_REGRESSION_MARKERS: tuple[tuple[str, object], ...] = (
+    ("pyproject.toml", DEFAULT_REGRESSION_CMD),
+    ("setup.py", DEFAULT_REGRESSION_CMD),
+    ("setup.cfg", DEFAULT_REGRESSION_CMD),
+    ("package.json", _node_regression_cmd),
+    ("go.mod", "go test ./..."),
+    ("Cargo.toml", "cargo test"),
+)
 
-def detect_test_cmd(repo_dir: Path) -> Detection:
-    repo_dir = Path(repo_dir)
-    for name, recipe in _MARKERS:
-        path = repo_dir / name
+
+def _first_match(repo_dir: Path, markers) -> tuple[str, str] | None:
+    for name, recipe in markers:
+        path = Path(repo_dir) / name
         if not path.is_file():
             continue
-        test_cmd = recipe(path) if callable(recipe) else recipe
-        if test_cmd:
-            return Detection(test_cmd, name)
-    return Detection(DEFAULT_TEST_CMD, None)
+        cmd = recipe(path) if callable(recipe) else recipe
+        if cmd:
+            return cmd, name
+    return None
+
+
+def detect_test_cmd(repo_dir: Path) -> Detection:
+    found = _first_match(repo_dir, _MARKERS)
+    return Detection(*found) if found else Detection(DEFAULT_TEST_CMD, None)
+
+
+def detect_regression_cmd(repo_dir: Path) -> str | None:
+    """Full-suite command for the recognised project, or None if unrecognised.
+
+    Unlike `detect_test_cmd` there is no fallback: running pytest over an
+    unidentified repository would be a guess, and a regression gate that guesses
+    is worse than no gate.
+    """
+    found = _first_match(repo_dir, _REGRESSION_MARKERS)
+    return found[0] if found else None

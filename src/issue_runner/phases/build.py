@@ -1,26 +1,37 @@
 """Build phase: builder.tester and builder.coder steps.
 
 The non-stub rule is enforced by the harness, not by trusting the model:
-- the tester's test must contain a real assertion, and (on the first pass,
-  before any implementation exists) must FAIL when run — a stub or trivially
-  green test is bounced back with concrete feedback, costing no verifier call;
+- the tester's test must be *proved to have executed*: the runner's own report
+  must show at least one test case running, and (on the first pass, before any
+  implementation exists) failing — a stub, an empty file or a suite that
+  collected nothing is bounced back with concrete feedback, costing no
+  verifier call;
 - the coder must turn that exact test green WITHOUT modifying the test file
   (detected by content hash) — weakening the test to pass is rejected.
+
+Execution evidence comes from `testreport.interpret`, which reads the
+framework's own summary. An exit code is never trusted on its own: pytest exits
+0 having collected nothing, `go test` exits 0 with no test files, and a missing
+binary or an import error exits non-zero without a single test having run.
+Those outcomes raise BuildError so the caller can feed them back as a fault to
+fix, instead of being mistaken for a red test.
 """
 
 import hashlib
 import os
-import re
 import shlex
 import subprocess
 from pathlib import Path
 
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json
+from ..testreport import Status, interpret
 from ..tickets import Ticket
 
-# a "real" test asserts something: bare assert, unittest-style, or pytest.raises
-_ASSERTION_RE = re.compile(r"\bassert\b|\bself\.assert\w+\(|pytest\.raises\(")
+_TEST_TIMEOUT = 600
+# language-agnostic emptiness check: cheap pre-filter only — execution evidence
+# is the real gate, so this never has to know what an assertion looks like.
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", "*/", "--", ";", "%")
 
 
 class BuildError(RuntimeError):
@@ -39,22 +50,92 @@ class TestAlreadyPasses(BuildError):
         self.test_path = test_path
 
 
-def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
-    cmd = shlex.split(cfg.test_cmd.format(test_path=shlex.quote(test_path)))
+def resolve_test_path(cfg: RunnerConfig, test_path: str) -> Path:
+    """Absolute path of a declared test file, proven to live inside repo_dir.
+
+    The path comes from a model reply, so it is untrusted input: an absolute
+    path, a `..` escape or a symlink pointing outside the workspace must never
+    be read, hashed or (worse) restored over.
+    """
+    raw = str(test_path).strip()
+    if not raw:
+        raise BuildError("no test path was given")
+    candidate = Path(raw)
+    if candidate.is_absolute() or (len(raw) > 1 and raw[1] == ":"):
+        raise BuildError(f"test path {raw!r} must be relative to the repository root")
+    if ".." in candidate.parts:
+        raise BuildError(f"test path {raw!r} must not traverse outside the repository")
+
+    repo = Path(cfg.repo_dir).resolve()
+    full = (repo / candidate).resolve()
+    if full != repo and repo not in full.parents:
+        raise BuildError(f"test path {raw!r} resolves outside the repository at {repo}")
+    return full
+
+
+def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple[bool, str]:
+    """Run one complete test command and turn its report into a verdict."""
+    try:
+        argv = shlex.split(command)
+    except ValueError as e:
+        raise BuildError(f"test command {command!r} could not be parsed: {e}") from e
+    if not argv:
+        raise BuildError("the test command is empty")
+
     # No bytecode: the coder may rewrite a same-sized file within the same second
     # as the red check, and stale .pyc reuse would report a phantom failure.
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    result = subprocess.run(
-        cmd,
-        cwd=str(cfg.repo_dir),
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-        env=env,
-    )
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=str(cfg.repo_dir),
+            capture_output=True,
+            text=True,
+            timeout=_TEST_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as e:
+        tail = _tail(e.stdout) + _tail(e.stderr)
+        raise BuildError(
+            f"the test command timed out after {_TEST_TIMEOUT}s: {command}\n{tail}"
+        ) from e
+    except (OSError, ValueError) as e:
+        raise BuildError(f"the test command could not be run: {command}: {e}") from e
+
     output = (result.stdout + result.stderr).strip()
-    return result.returncode == 0, output
+    report = interpret(command, output, result.returncode, test_path)
+    if report.status is Status.PASSED:
+        return True, output
+    if report.status is Status.FAILED:
+        return False, output
+    raise BuildError(
+        f"no usable test result from `{command}`: {report.detail}\n"
+        f"(exit {result.returncode})\n{output[-2000:]}"
+    )
+
+
+def _tail(data) -> str:
+    if not data:
+        return ""
+    text = data.decode(errors="replace") if isinstance(data, bytes) else str(data)
+    return text[-1000:]
+
+
+def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
+    """Run the configured test command against one test file.
+
+    True only when at least one test really executed and all passed; False when
+    an executed test failed; BuildError when nothing ran or the runner could not
+    produce a result.
+    """
+    command = cfg.test_cmd.format(test_path=shlex.quote(test_path))
+    return _run(cfg, command, test_path)
+
+
+def run_test_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
+    """Run an already-formatted command (e.g. the full-suite regression gate)."""
+    return _run(cfg, command)
 
 
 TESTER_PROMPT = """\
@@ -71,6 +152,9 @@ and conventions (look at existing tests first).
 HARD RULES:
 - The test MUST NOT be a stub: it must exercise real behaviour and contain a
   real assertion. No `pass`, no `assert True`, no TODO placeholders.
+- The harness runs your test and requires the runner's own report to show at
+  least one test case actually executing. A file the runner skips, cannot
+  collect or reports as "no tests" is rejected.
 - One logical assertion only (setup/guard code is fine).
 - Do NOT write any implementation code — the test is EXPECTED to fail right
   now. That is the point.
@@ -102,8 +186,13 @@ When done, reply with ONLY this JSON (no prose):
 {feedback}"""
 
 
-def _has_assertion(content: str) -> bool:
-    return bool(_ASSERTION_RE.search(content))
+def _is_empty_test(content: str) -> bool:
+    """Nothing but blank lines and comments — no runner could execute it."""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith(_COMMENT_PREFIXES):
+            return False
+    return True
 
 
 def _hash_file(path: Path) -> str:
@@ -156,15 +245,31 @@ def tester_step(
             extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
             continue
 
-        full = Path(cfg.repo_dir) / test_path
+        try:
+            full = resolve_test_path(cfg, test_path)
+        except BuildError as e:
+            already_green_path = None
+            last_error = str(e)
+            extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+            continue
+
         if not full.is_file():
             already_green_path = None
             last_error = f"declared test file {test_path} does not exist"
-        elif not _has_assertion(full.read_text()):
+        elif _is_empty_test(full.read_text(errors="replace")):
             already_green_path = None
-            last_error = f"test {test_path} contains no real assertion — it is a stub"
+            last_error = (
+                f"test {test_path} contains only comments or blank lines — it is a stub; "
+                "write a real test case that exercises the behaviour"
+            )
         else:
-            passed, output = run_tests(cfg, test_path)
+            try:
+                passed, output = run_tests(cfg, test_path)
+            except BuildError as e:
+                already_green_path = None
+                last_error = f"test {test_path} did not actually run, so it proves nothing: {e}"
+                extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+                continue
             if require_red and passed:
                 already_green_path = test_path
                 last_error = (
@@ -191,7 +296,9 @@ def coder_step(
     test_path: str,
     feedback: str | None = None,
 ) -> None:
-    full = Path(cfg.repo_dir) / test_path
+    full = resolve_test_path(cfg, test_path)
+    if not full.is_file():
+        raise BuildError(f"test file {test_path} is missing before builder.coder ran")
     # snapshot the spec in memory: it was written by the tester during THIS run
     # and is not committed until the verifier passes, so git cannot restore it
     original = full.read_bytes()
@@ -213,7 +320,14 @@ def coder_step(
             last_error = "you modified the test file — that is forbidden; the test is the spec"
             _restore(full, original, test_path)
         else:
-            passed, output = run_tests(cfg, test_path)
+            try:
+                passed, output = run_tests(cfg, test_path)
+            except BuildError as e:
+                # e.g. the implementation broke collection: a fault to fix, not a
+                # failing assertion, so say so rather than reporting a red test
+                last_error = f"the test could not be executed after your change: {e}"
+                extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+                continue
             if passed:
                 return
             last_error = f"test still fails. Output:\n{output[-2000:]}"
