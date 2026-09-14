@@ -9,9 +9,12 @@ model choices can be compared without re-reading terminal scrollback.
 The `usage-` prefix matters: the ticket state files are `issue-<n>.json`, and
 consumers glob `issue-*.json` for them, so a usage file must not match.
 
-Token counts only exist on the streaming path (`--output-format json`, i.e. when
-an event bus is attached). On the plain path copilot reports nothing, so token
-totals stay None rather than being reported as a misleading zero.
+Production always uses copilot's JSON event stream, so tokens and the real
+nano-AIU charge are recorded whether or not a display is attached. One CLI
+invocation can make several model calls; `model_calls` counts them and the token
+and credit figures are summed across all of them. Only the test-only plain
+transport reports nothing, and then the totals stay None rather than being
+reported as a misleading zero.
 """
 
 import json
@@ -46,6 +49,29 @@ def _ticket_id(session: str | None) -> int | None:
     return int(match.group(1)) if match else None
 
 
+_SUMMED = ("input_tokens", "output_tokens", "cached_tokens", "nano_aiu")
+
+
+def merge_usage(total: dict | None, new: dict | None) -> dict | None:
+    """Fold one model_call_success payload into the invocation running total.
+
+    Unknown stays unknown: a key nobody reported remains absent, so the ledger
+    records None rather than a success-shaped zero. `model_calls` counts every
+    model call seen, `costed_model_calls` only those that carried a real charge.
+    """
+    if new is None:
+        return total
+    merged = dict(total or {})
+    for key in _SUMMED:
+        if key in merged or key in new:
+            merged[key] = _add(merged.get(key), new.get(key))
+    merged["model_calls"] = merged.get("model_calls", 0) + (new.get("model_calls") or 0)
+    merged["costed_model_calls"] = merged.get("costed_model_calls", 0) + (
+        new.get("costed_model_calls") or 0
+    )
+    return merged
+
+
 def _add(left: int | None, right: int | None) -> int | None:
     """Sum that keeps None when nothing was ever reported."""
     if left is None:
@@ -68,6 +94,7 @@ class CallRecord:
     output_tokens: int | None
     cached_tokens: int | None
     nano_aiu: int | None
+    model_calls: int | None = None  # model calls inside this one CLI invocation
 
 
 class UsageLedger:
@@ -99,6 +126,7 @@ class UsageLedger:
                 output_tokens=usage.get("output_tokens"),
                 cached_tokens=usage.get("cached_tokens"),
                 nano_aiu=usage.get("nano_aiu"),
+                model_calls=usage.get("model_calls"),
             )
         )
 
@@ -111,12 +139,14 @@ class UsageLedger:
             "output_tokens": None,
             "cached_tokens": None,
             "nano_aiu": None,
+            "model_calls": None,
         }
         for call in calls:
             bucket["input_tokens"] = _add(bucket["input_tokens"], call.input_tokens)
             bucket["output_tokens"] = _add(bucket["output_tokens"], call.output_tokens)
             bucket["cached_tokens"] = _add(bucket["cached_tokens"], call.cached_tokens)
             bucket["nano_aiu"] = _add(bucket["nano_aiu"], call.nano_aiu)
+            bucket["model_calls"] = _add(bucket["model_calls"], call.model_calls)
         return bucket
 
     def totals(self) -> dict:
@@ -151,6 +181,10 @@ class UsageLedger:
             parts.append(tokens)
         if totals["nano_aiu"] is not None:
             parts.append(f"credits: {format_aiu(totals['nano_aiu'])}")
+        else:
+            parts.append("credits: unknown (copilot reported none)")
+        if totals["model_calls"] and totals["model_calls"] != totals["calls"]:
+            parts.append(f"model calls: {totals['model_calls']}")
         roles = ", ".join(
             f"{role}={data['calls']}" for role, data in sorted(self.by_role().items())
         )
@@ -209,8 +243,9 @@ def _combine(buckets: list[dict]) -> dict:
         "output_tokens": None,
         "cached_tokens": None,
         "nano_aiu": None,
+        "model_calls": None,
     }
     for bucket in buckets:
-        for key in ("input_tokens", "output_tokens", "cached_tokens", "nano_aiu"):
+        for key in (*_SUMMED, "model_calls"):
             combined[key] = _add(combined[key], bucket.get(key))
     return combined
