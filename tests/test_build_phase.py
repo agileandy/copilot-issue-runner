@@ -1,8 +1,15 @@
 import json
+import sys
 
 import pytest
 
-from issue_runner.phases.build import BuildError, coder_step, run_tests, tester_step
+from issue_runner.phases.build import (
+    BuildError,
+    coder_step,
+    resolve_test_path,
+    run_tests,
+    tester_step,
+)
 from issue_runner.tickets import Ticket
 from tests.conftest import FakeClient
 
@@ -37,16 +44,36 @@ def test_run_tests_green_and_red(repo, cfg):
     assert "checker ran" in output
 
 
+def test_run_tests_rejects_a_run_with_no_executed_test(repo, cfg):
+    (repo / "t.py").write_text("# no marker, so the checker reports 1..0\n")
+    with pytest.raises(BuildError, match="no usable test result"):
+        run_tests(cfg, "t.py")
+
+
+def test_run_test_command_takes_a_complete_command(repo, cfg):
+    from issue_runner.phases.build import run_test_command
+
+    (repo / "t.py").write_text("assert PASS")
+    passed, output = run_test_command(cfg, f"{sys.executable} {repo / 'checker.py'} t.py")
+    assert passed is True
+    assert "ok 1" in output
+
+
+def test_run_tests_rejects_a_path_outside_the_repo(repo, cfg):
+    with pytest.raises(BuildError):
+        resolve_test_path(cfg, "../escape.py")
+
+
 def test_tester_accepts_failing_real_test(repo, cfg):
     client = FakeClient([(reply(), write_test_file(repo, "assert RED  # real failing test"))])
     path = tester_step(client, cfg, ticket())
     assert path == "test_subtract.py"
 
 
-def test_tester_rejects_test_with_no_assertion(repo, cfg):
+def test_tester_rejects_a_test_that_never_executes(repo, cfg):
     client = FakeClient(
         [
-            (reply(), write_test_file(repo, "x = 1  # stub, no assertion")),
+            (reply(), write_test_file(repo, "x = 1  # no test case here")),
             (reply(), write_test_file(repo, "assert RED  # fixed")),
         ]
     )
@@ -54,7 +81,29 @@ def test_tester_rejects_test_with_no_assertion(repo, cfg):
     assert path == "test_subtract.py"
     assert len(client.calls) == 2
     # the retry prompt must tell the tester what was wrong
-    assert "assertion" in client.calls[1]["prompt"].lower()
+    assert "did not actually run" in client.calls[1]["prompt"]
+
+
+def test_tester_rejects_a_comment_only_test_without_running_it(repo, cfg):
+    client = FakeClient(
+        [
+            (reply(), write_test_file(repo, "# TODO: assert subtract(5, 3) == 2\n")),
+            (reply(), write_test_file(repo, "assert RED  # fixed")),
+        ]
+    )
+    assert tester_step(client, cfg, ticket()) == "test_subtract.py"
+    assert "only comments" in client.calls[1]["prompt"]
+
+
+def test_tester_rejects_a_test_path_outside_the_repo(repo, cfg):
+    client = FakeClient(
+        [
+            (reply("../escape.py"), None),
+            (reply(), write_test_file(repo, "assert RED")),
+        ]
+    )
+    assert tester_step(client, cfg, ticket()) == "test_subtract.py"
+    assert "traverse outside" in client.calls[1]["prompt"]
 
 
 def test_tester_rejects_trivially_green_test(repo, cfg):

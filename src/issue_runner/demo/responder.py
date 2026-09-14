@@ -42,26 +42,26 @@ PLAN = {
 }
 
 TEST_MEAN = """\
-from demo_pkg.stats import mean
-
-
 def test_mean_of_three_ints():
+    # imported inside the test so the runner really executes a case: a
+    # module-level import of code that does not exist yet is a collection
+    # error, and a collection error is not a red test
+    from demo_pkg.stats import mean
+
     assert mean([1, 2, 3]) == 2
 """
 
 TEST_MEDIAN_FIRST = """\
-from demo_pkg.stats import median
-
-
 def test_median_of_odd_length():
+    from demo_pkg.stats import median
+
     assert median([3, 1, 2]) == 2
 """
 
 TEST_MEDIAN_REFINED = """\
-from demo_pkg.stats import median
-
-
 def test_median_of_even_length_averages_the_middle_pair():
+    from demo_pkg.stats import median
+
     assert median([1, 2, 3, 4]) == 2.5
 """
 
