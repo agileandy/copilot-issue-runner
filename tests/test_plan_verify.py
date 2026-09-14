@@ -85,3 +85,10 @@ def test_verify_step_rejects_non_object_reply(cfg):
     client = FakeClient([("[1,2]", None), ("null", None)])
     with pytest.raises(VerifyError, match="JSON object"):
         verify_step(client, cfg, _ticket(), "test_x.py")
+
+
+def test_plan_step_rejects_non_dict_ticket(cfg):
+    bad = json.dumps({"summary": "s", "tickets": ["just a string"]})
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="ticket 1 must be a JSON object"):
+        plan_step(client, cfg, ISSUE)

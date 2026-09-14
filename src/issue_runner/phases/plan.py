@@ -75,6 +75,8 @@ def _validate(data: dict) -> list[Ticket]:
         raise PlanError("plan contains no tickets")
     tickets = []
     for i, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise PlanError(f"ticket {i} must be a JSON object")
         for field in REQUIRED_FIELDS:
             if not item.get(field):
                 raise PlanError(f"ticket {i} is missing required field {field!r}")
