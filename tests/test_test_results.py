@@ -24,8 +24,8 @@ from issue_runner.phases.build import (
     run_test_command,
     run_tests,
 )
-from issue_runner.testcmd import detect_regression_cmd
-from issue_runner.testreport import Status, command_family, interpret
+from issue_runner.testcmd import GO_TEST_CMD, detect_regression_cmd
+from issue_runner.testreport import Status, command_family, interpret, strip_ansi
 
 # --------------------------------------------------------------------------
 # helpers
@@ -260,7 +260,15 @@ VITEST_FAIL = (
 )
 VITEST_NO_FILES = " RUN  v1.6.0 /repo\n\n No test files found, exiting with code 1\n"
 
+# what the detected `go test -v -count=1 ./...` prints
 GO_PASS = "=== RUN   TestAdd\n--- PASS: TestAdd (0.00s)\nPASS\nok  \texample.com/x\t0.003s\n"
+# what plain `go test ./...` prints: a package verdict and no case at all
+GO_QUIET_OK = "ok  \texample.com/x\t0.003s\n"
+GO_CACHED = "ok  \texample.com/x\t(cached)\n"
+GO_SKIPPED = (
+    "=== RUN   TestAdd\n    add_test.go:5: not ready\n--- SKIP: TestAdd (0.00s)\n"
+    "PASS\nok  \texample.com/x\t0.002s\n"
+)
 GO_FAIL = (
     "=== RUN   TestAdd\n    add_test.go:9: got 4 want 3\n--- FAIL: TestAdd (0.00s)\n"
     "FAIL\nexit status 1\nFAIL\texample.com/x\t0.004s\n"
@@ -315,10 +323,13 @@ NODE_SPEC_PASS = "✔ adds (0.5ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ f
         ("npx vitest run", VITEST_PASS, 0, Status.PASSED, 2),
         ("npx vitest run", VITEST_FAIL, 1, Status.FAILED, 2),
         ("npx vitest run", VITEST_NO_FILES, 1, Status.NO_TESTS, 0),
-        ("go test ./...", GO_PASS, 0, Status.PASSED, 1),
-        ("go test ./...", GO_FAIL, 1, Status.FAILED, 1),
-        ("go test ./...", GO_NO_TEST_FILES, 0, Status.NO_TESTS, 0),
-        ("go test ./...", GO_BUILD_FAILED, 2, Status.ERROR, 0),
+        (GO_TEST_CMD, GO_PASS, 0, Status.PASSED, 1),
+        (GO_TEST_CMD, GO_FAIL, 1, Status.FAILED, 1),
+        (GO_TEST_CMD, GO_NO_TEST_FILES, 0, Status.NO_TESTS, 0),
+        (GO_TEST_CMD, GO_BUILD_FAILED, 2, Status.ERROR, 0),
+        (GO_TEST_CMD, GO_QUIET_OK, 0, Status.NO_TESTS, 0),
+        (GO_TEST_CMD, GO_CACHED, 0, Status.NO_TESTS, 0),
+        (GO_TEST_CMD, GO_SKIPPED, 0, Status.NO_TESTS, 0),
         ("cargo test", CARGO_PASS, 0, Status.PASSED, 2),
         ("cargo test", CARGO_FAIL, 101, Status.FAILED, 2),
         ("cargo test", CARGO_EMPTY, 0, Status.NO_TESTS, 0),
@@ -340,7 +351,7 @@ def test_normal_js_assertions_are_not_rejected_for_their_syntax(tmp_path):
 
 
 def test_go_and_rust_assertions_are_not_rejected_for_their_syntax():
-    assert interpret("go test ./...", GO_FAIL, 1).status is Status.FAILED
+    assert interpret(GO_TEST_CMD, GO_FAIL, 1).status is Status.FAILED
     assert interpret("cargo test", CARGO_FAIL, 101).status is Status.FAILED
 
 
@@ -367,12 +378,128 @@ def test_node_reporting_only_the_file_itself_is_not_green():
         "TAP version 13\n# Subtest: empty.test.js\nok 1 - empty.test.js\n  ---\n  ...\n"
         "1..1\n# tests 1\n# pass 1\n# fail 0\n"
     )
-    # knowing which file was under test is what makes the wrapper detectable;
-    # run_tests always supplies it
     assert interpret("node --test empty.test.js", output, 0, "empty.test.js").status is (
         Status.NO_TESTS
     )
-    assert interpret("node --test x.test.js", output, 0, "x.test.js").status is Status.PASSED
+    # the whole-suite gate has no test_path, and must still refuse it
+    assert interpret("node --test", output, 0).status is Status.NO_TESTS
+
+
+def test_node_suite_mixing_an_empty_file_with_real_tests_counts_only_the_tests():
+    output = (
+        "TAP version 13\n# Subtest: empty.test.js\nok 1 - empty.test.js\n  ---\n  ...\n"
+        "# Subtest: adds\nok 2 - adds\n  ---\n  ...\n"
+        "# Subtest: subtracts\nnot ok 3 - subtracts\n  ---\n  ...\n"
+        "1..3\n# tests 3\n# pass 2\n# fail 1\n"
+    )
+    report = interpret("node --test", output, 1)
+    assert (report.status, report.executed, report.failed) == (Status.FAILED, 2, 1)
+
+
+def test_node_file_that_fails_to_load_is_an_error_not_a_red_test():
+    output = (
+        "TAP version 13\n# Subtest: broken.test.js\nnot ok 1 - broken.test.js\n"
+        "  ---\n  failureType: 'testCodeFailure'\n  ...\n1..1\n# tests 1\n# pass 0\n# fail 1\n"
+    )
+    report = interpret("node --test", output, 1)
+    assert report.status is Status.ERROR
+    assert "failed to load" in report.detail
+
+
+def test_custom_tap_runner_may_still_name_its_points_after_files():
+    """Only node's own reporters get the file-wrapper treatment."""
+    output = "TAP version 13\n1..2\nok 1 - tests/test_a.py\nok 2 - tests/test_b.py\n"
+    report = interpret("./my-tap-runner", output, 0)
+    assert (report.status, report.executed) == (Status.PASSED, 2)
+
+
+def test_a_green_summary_cannot_hide_a_failed_command():
+    """pytest said 1 passed, the process exited 2: never resolve that as green."""
+    report = interpret("pytest t.py -q", PYTEST_QUIET_PASS, 2)
+    assert report.status is Status.ERROR
+    assert "exited 2" in report.detail
+
+
+@pytest.mark.parametrize(
+    "command,output",
+    [
+        ("npm test", JEST_PASS),
+        ("npx vitest run", VITEST_PASS),
+        (GO_TEST_CMD, GO_PASS),
+        ("cargo test", CARGO_PASS),
+        ("node --test", NODE_SPEC_PASS),
+        ("./run-tests", "TAP version 13\n1..1\nok 1 - a\n"),
+    ],
+)
+def test_no_framework_reports_green_on_a_failing_exit(command, output):
+    assert interpret(command, output, 0).status is Status.PASSED
+    assert interpret(command, output, 3).status is Status.ERROR
+
+
+def test_a_red_test_with_exit_zero_is_still_red():
+    """Being pessimistic only ever turns green into an error, never red into green."""
+    assert interpret("pytest t.py -q", PYTEST_QUIET_FAIL, 0).status is Status.FAILED
+
+
+def test_tap_skip_and_todo_points_are_not_executed_tests():
+    output = "TAP version 13\n1..2\nok 1 - a # SKIP not ready\nok 2 - b # TODO later\n"
+    report = interpret("./run-tests", output, 0)
+    assert report.status is Status.NO_TESTS
+    assert "skip" in report.detail
+
+
+def test_tap_skips_do_not_hide_a_real_result():
+    output = "TAP version 13\n1..2\nok 1 - a # SKIP not ready\nnot ok 2 - b\n"
+    report = interpret("./run-tests", output, 1)
+    assert (report.status, report.executed, report.failed) == (Status.FAILED, 1, 1)
+
+
+def test_truncated_tap_plan_is_an_incomplete_report():
+    output = "TAP version 13\n1..3\nok 1 - a\n"
+    report = interpret("./run-tests", output, 0)
+    assert report.status is Status.ERROR
+    assert "incomplete" in report.detail
+
+
+def test_tap_totals_without_any_result_are_an_error():
+    """Regression: this used to dereference a missing plan line."""
+    report = interpret("./run-tests", "# tests 1\n", 0)
+    assert report.status is Status.ERROR
+    assert "incomplete" in report.detail
+
+
+def test_node_nested_subtests_remain_valid():
+    output = (
+        "TAP version 13\n# Subtest: group\n    # Subtest: adds\n    ok 1 - adds\n"
+        "    # Subtest: subtracts\n    ok 2 - subtracts\n    1..2\nok 1 - group\n"
+        "1..1\n# tests 3\n# pass 3\n# fail 0\n"
+    )
+    report = interpret("node --test suite.test.js", output, 0, "suite.test.js")
+    assert report.status is Status.PASSED
+
+
+def test_pytest_xfail_without_running_is_not_evidence():
+    """`@pytest.mark.xfail(run=False)` reports xfailed without calling the test."""
+    report = interpret("pytest t.py -q", "1 xfailed in 0.01s\n", 0)
+    assert report.status is Status.NO_TESTS
+    assert "xfailed" in report.detail
+
+
+def test_pytest_xpass_did_run():
+    report = interpret("pytest t.py -q", "1 xpassed in 0.01s\n", 0)
+    assert (report.status, report.executed) == (Status.PASSED, 1)
+
+
+def test_ansi_colour_does_not_hide_a_summary():
+    coloured = "\x1b[32m.\x1b[0m\n\x1b[1m\x1b[32m1 passed\x1b[0m in 0.01s\n"
+    assert interpret("pytest t.py -q", coloured, 0).status is Status.PASSED
+    coloured_fail = "\x1b[31m1 failed\x1b[0m in 0.01s\n"
+    assert interpret("pytest t.py -q", coloured_fail, 1).status is Status.FAILED
+
+
+def test_strip_ansi_leaves_plain_text_alone():
+    assert strip_ansi("1 passed in 0.01s") == "1 passed in 0.01s"
+    assert strip_ansi("\x1b[31mred\x1b[0m") == "red"
 
 
 def test_unrecognised_output_is_an_error_not_a_guess():
@@ -437,6 +564,90 @@ def test_node_empty_test_file_is_not_green(tmp_path):
     )
     with pytest.raises(BuildError):
         run_tests(cfg, "empty.test.js")
+
+
+NODE_SUITE_CMD = "node --test --test-reporter=tap"
+
+
+def node_cfg(repo: Path, command: str) -> RunnerConfig:
+    return RunnerConfig(repo_dir=repo, test_cmd=command, github_tickets=False)
+
+
+REAL_NODE_TEST = (
+    "const test = require('node:test');\n"
+    "const assert = require('node:assert');\n"
+    "test('adds', () => {{ assert.strictEqual(1 + 1, {expected}); }});\n"
+)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_real_node_suite_of_empty_files_is_not_green(tmp_path):
+    """The whole-suite gate has no test_path, and node calls each file a pass."""
+    (tmp_path / "empty.test.js").write_text("// nothing here yet\n")
+    (tmp_path / "also-empty.test.js").write_text("/* still nothing */\n")
+    cfg = node_cfg(tmp_path, NODE_SUITE_CMD)
+    with pytest.raises(BuildError) as exc:
+        run_test_command(cfg, NODE_SUITE_CMD)
+    assert "no test case" in str(exc.value)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_real_node_suite_with_registered_tests_is_green(tmp_path):
+    (tmp_path / "sum.test.js").write_text(REAL_NODE_TEST.format(expected=2))
+    passed, output = run_test_command(node_cfg(tmp_path, NODE_SUITE_CMD), NODE_SUITE_CMD)
+    assert passed is True
+    assert "ok 1 - adds" in output
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_real_node_suite_mixing_empty_and_real_files_reports_the_real_ones(tmp_path):
+    (tmp_path / "empty.test.js").write_text("// nothing here yet\n")
+    (tmp_path / "sum.test.js").write_text(REAL_NODE_TEST.format(expected=3))
+    passed, output = run_test_command(node_cfg(tmp_path, NODE_SUITE_CMD), NODE_SUITE_CMD)
+    assert passed is False, "the real test fails, and the empty file cannot mask it"
+    assert "not ok" in output
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_node_default_reporter_suite_of_empty_files_is_not_green(tmp_path):
+    (tmp_path / "empty.test.js").write_text("// nothing here yet\n")
+    with pytest.raises(BuildError):
+        run_test_command(node_cfg(tmp_path, "node --test"), "node --test")
+
+
+def test_runs_are_non_interactive_and_colour_free(tmp_path):
+    """A watch-mode runner would hang; colour codes would hide the summary."""
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import os, sys\n"
+        "print('TAP version 13')\n"
+        "print('1..1')\n"
+        "ok = os.environ.get('CI') == '1' and os.environ.get('NO_COLOR') == '1'\n"
+        "ok = ok and sys.stdin.read() == ''\n"
+        "print(('ok' if ok else 'not ok') + ' 1 - non-interactive, colour-free')\n"
+    )
+    cfg = RunnerConfig(
+        repo_dir=tmp_path,
+        test_cmd=f"{sys.executable} {probe} {{test_path}}",
+        github_tickets=False,
+    )
+    passed, _ = run_tests(cfg, "probe.py")
+    assert passed is True
+
+
+def test_colour_in_real_output_is_stripped_before_the_model_sees_it(tmp_path):
+    emitter = tmp_path / "emit.py"
+    emitter.write_text(
+        "print('TAP version 13')\nprint('1..1')\nprint('\\x1b[31mnot ok 1 - red\\x1b[0m')\n"
+    )
+    cfg = RunnerConfig(
+        repo_dir=tmp_path,
+        test_cmd=f"{sys.executable} {emitter} {{test_path}}",
+        github_tickets=False,
+    )
+    passed, output = run_tests(cfg, "emit.py")
+    assert passed is False
+    assert "\x1b[" not in output
 
 
 def _cargo_works(tmp_path: Path) -> bool:
@@ -532,7 +743,7 @@ def test_regression_cmd_has_no_test_path_placeholder(tmp_path):
 @pytest.mark.parametrize(
     "marker,content,expected",
     [
-        ("go.mod", "module x\n", "go test ./..."),
+        ("go.mod", "module x\n", GO_TEST_CMD),
         ("Cargo.toml", "[package]\n", "cargo test"),
         ("package.json", '{"scripts": {"test": "vitest run"}}', "npm test"),
     ],

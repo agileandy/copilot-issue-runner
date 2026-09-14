@@ -28,7 +28,7 @@ import shlex
 from dataclasses import dataclass
 from enum import Enum
 
-__all__ = ["Status", "TestResult", "command_family", "interpret"]
+__all__ = ["Status", "TestResult", "command_family", "interpret", "strip_ansi"]
 
 
 class Status(str, Enum):
@@ -75,36 +75,107 @@ def _verdict(framework: str, executed: int, failed: int, detail: str = "") -> Te
 # `node --test` emits natively.
 # --------------------------------------------------------------------------
 
-_TAP_PLAN = re.compile(r"^\s*1\.\.(\d+)", re.MULTILINE)
-_TAP_OK = re.compile(r"^\s*ok\s+\d+", re.MULTILINE)
-_TAP_NOT_OK = re.compile(r"^\s*not ok\s+\d+", re.MULTILINE)
+_TAP_PLAN = re.compile(r"^(?P<indent>[ ]*)1\.\.(?P<count>\d+)")
+_TAP_POINT_LINE = re.compile(
+    r"^(?P<indent>[ ]*)(?P<ok>not ok|ok)\s+\d+\s*(?:-\s*)?(?P<name>.*?)\s*$"
+)
 # `#` is TAP proper, `ℹ` is node's default "spec" reporter, same counters
 _TAP_COUNT = re.compile(r"^\s*[#ℹ]\s*(tests|pass|fail|skipped|todo)\s+(\d+)", re.MULTILINE)
 _TAP_BAILOUT = re.compile(r"^\s*Bail out!(.*)$", re.MULTILINE)
-_TAP_POINT = re.compile(r"^\s*(?:not ok|ok)\s+\d+\s*-?\s*(.*?)\s*$", re.MULTILINE)
+_TAP_DIRECTIVE = re.compile(r"#\s*(skip|todo)\b", re.IGNORECASE)
 _SPEC_POINT = re.compile(r"^\s*[✔✖]\s+(.*?)(?:\s+\([\d.]+ms\))?\s*$", re.MULTILINE)
+_SPEC_LINE = re.compile(r"^(?P<indent>[ ]*)(?P<mark>[✔✖])\s+(?P<name>.*?)(?:\s+\([\d.]+ms\))?\s*$")
+# node reports a *file* as one passing point when the file declares no test
+_TEST_FILE_NAME = re.compile(r"\.(js|cjs|mjs|jsx|ts|cts|mts|tsx)$", re.IGNORECASE)
 
 
-def _only_the_file_itself(output: str, test_path: str | None) -> bool:
-    """`node --test` reports a file with no test() calls as one passing test.
+@dataclass(frozen=True)
+class _Point:
+    indent: int
+    ok: bool
+    name: str
+    directive: str | None  # "skip", "todo" or None — neither is an executed result
 
-    Exit 0 plus "# pass 1" would otherwise certify an empty file as green, so
-    when every reported point is named after the file under test — and nothing
-    is nested inside it — there is no real test case. Restricted to node's own
-    reporters, so a runner that legitimately reports one point per file is not
-    second-guessed.
+
+def _tap_points(output: str) -> list[_Point]:
+    points = []
+    for line in output.splitlines():
+        match = _TAP_POINT_LINE.match(line)
+        if not match:
+            continue
+        name = match.group("name")
+        directive = None
+        found = _TAP_DIRECTIVE.search(name)
+        if found:
+            directive = found.group(1).lower()
+            name = name[: found.start()].strip()
+        points.append(
+            _Point(len(match.group("indent")), match.group("ok") == "ok", name, directive)
+        )
+    return points
+
+
+def _tap_plan(output: str) -> int | None:
+    """The last top-level plan line, if any: nested subtests plan themselves."""
+    plan = None
+    for line in output.splitlines():
+        match = _TAP_PLAN.match(line)
+        if match and len(match.group("indent")) == 0:
+            plan = int(match.group("count"))
+    return plan
+
+
+def _is_node(output: str) -> bool:
+    return "# Subtest:" in output or bool(_SPEC_POINT.search(output))
+
+
+def _spec_points(output: str) -> list[_Point]:
+    """Points from node's default reporter, deduplicated by name.
+
+    The spec reporter repeats every failure in a trailing "failing tests:"
+    section, so the same name must not be counted twice.
     """
-    if not test_path:
-        return False
-    if "# Subtest:" not in output and not _SPEC_POINT.search(output):
-        return False
-    names = [n for n in _TAP_POINT.findall(output) if n] or [
-        n for n in _SPEC_POINT.findall(output) if n
-    ]
-    if not names:
-        return False
-    aliases = {test_path, test_path.rsplit("/", 1)[-1]}
-    return all(name in aliases for name in names)
+    seen: dict[str, _Point] = {}
+    for line in output.splitlines():
+        match = _SPEC_LINE.match(line)
+        if not match:
+            continue
+        name = match.group("name").strip()
+        if name and name not in seen:
+            seen[name] = _Point(len(match.group("indent")), match.group("mark") == "✔", name, None)
+    return list(seen.values())
+
+
+def _no_real_cases(wrappers: list[_Point]) -> TestResult:
+    """Only whole-file points were reported: nothing inside them ran."""
+    broken = [p for p in wrappers if not p.ok]
+    if broken:
+        return TestResult(
+            Status.ERROR,
+            0,
+            0,
+            "tap",
+            f"{len(broken)} test file(s) failed to load without running a test case: "
+            + ", ".join(p.name for p in broken),
+        )
+    named = ", ".join(p.name for p in wrappers)
+    return TestResult(
+        Status.NO_TESTS,
+        0,
+        0,
+        "tap",
+        f"the runner reported only the test file(s) themselves ({named}), so no test "
+        "case is defined",
+    )
+
+
+def _is_file_wrapper(point: _Point, test_path: str | None) -> bool:
+    """A point standing for a whole file rather than a test case inside it."""
+    if _TEST_FILE_NAME.search(point.name):
+        return True
+    if test_path:
+        return point.name in {test_path, test_path.rsplit("/", 1)[-1]}
+    return False
 
 
 def _parse_tap(output: str, returncode: int, test_path: str | None = None) -> TestResult | None:
@@ -113,39 +184,84 @@ def _parse_tap(output: str, returncode: int, test_path: str | None = None) -> Te
         return TestResult(
             Status.ERROR, 0, 0, "tap", f"the runner bailed out:{bail.group(1).rstrip()}"
         )
-    plan = _TAP_PLAN.search(output)
+    plan = _tap_plan(output)
     counts = {name: int(value) for name, value in _TAP_COUNT.findall(output)}
-    ok = len(_TAP_OK.findall(output))
-    not_ok = len(_TAP_NOT_OK.findall(output))
-    if plan is None and not counts and not (ok or not_ok):
+    points = _tap_points(output)
+    if plan is None and not counts and not points:
         return None
 
-    if _only_the_file_itself(output, test_path):
-        return TestResult(
-            Status.NO_TESTS,
-            0,
-            0,
-            "tap",
-            f"the runner reported only {test_path} itself, so the file defines no test case",
-        )
+    top = [p for p in points if p.indent == 0] or points
 
-    # `# pass`/`# fail` are node --test's summary and outrank counted lines,
-    # which include nested subtest points.
+    # node --test flattens a file with no test() call into one passing point
+    # named after the file. Those points prove nothing, whether the run covers
+    # one file or a whole suite, so they are removed before counting.
+    if _is_node(output):
+        if points:
+            wrappers = [p for p in top if _is_file_wrapper(p, test_path)]
+            real = [p for p in top if p not in wrappers]
+            if wrappers and real:
+                return _tap_verdict(real, plan=None)
+            if wrappers:
+                return _no_real_cases(wrappers)
+        else:
+            # the default "spec" reporter prints no TAP points, and repeats
+            # failures in a trailing summary, so file wrappers are discounted
+            # from its totals rather than recounted
+            spec = _spec_points(output)
+            wrappers = [p for p in spec if _is_file_wrapper(p, test_path)]
+            if wrappers and ("pass" in counts or "fail" in counts):
+                broken = [p for p in wrappers if not p.ok]
+                executed = counts.get("pass", 0) + counts.get("fail", 0) - len(wrappers)
+                failed = counts.get("fail", 0) - len(broken)
+                if executed <= 0:
+                    return _no_real_cases(wrappers)
+                return _verdict("tap", executed, max(failed, 0))
+
+        # totals are node's own summary and outrank counted points, which
+        # include nested subtests
+        if "pass" in counts or "fail" in counts:
+            passed, failed = counts.get("pass", 0), counts.get("fail", 0)
+            return _verdict("tap", passed + failed, failed)
+
+    if plan == 0 and not points:
+        return TestResult(Status.NO_TESTS, 0, 0, "tap", "the TAP plan declared 0 tests")
+    if points:
+        return _tap_verdict(top, plan)
     if "pass" in counts or "fail" in counts:
         passed, failed = counts.get("pass", 0), counts.get("fail", 0)
         return _verdict("tap", passed + failed, failed)
-
-    if plan is not None and int(plan.group(1)) == 0 and not (ok or not_ok):
-        return TestResult(Status.NO_TESTS, 0, 0, "tap", "the TAP plan declared 0 tests")
-    if ok or not_ok:
-        return _verdict("tap", ok + not_ok, not_ok)
     return TestResult(
         Status.ERROR,
         0,
         0,
         "tap",
-        f"TAP plan announced {plan.group(1)} tests but reported no results (exit {returncode})",
+        f"the TAP report announced totals but no test result (exit {returncode}); "
+        "the run is incomplete",
     )
+
+
+def _tap_verdict(points: list[_Point], plan: int | None) -> TestResult:
+    if plan is not None and plan != len(points):
+        return TestResult(
+            Status.ERROR,
+            0,
+            0,
+            "tap",
+            f"the TAP plan announced {plan} tests but {len(points)} were reported — "
+            "the run is incomplete",
+        )
+    ran = [p for p in points if p.directive is None]
+    if not ran:
+        directives = ", ".join(sorted({p.directive for p in points if p.directive})) or "none"
+        return TestResult(
+            Status.NO_TESTS,
+            0,
+            0,
+            "tap",
+            f"every TAP point was marked {directives}, so no test actually executed",
+        )
+    failed = sum(1 for p in ran if not p.ok)
+    return _verdict("tap", len(ran), failed)
 
 
 # --------------------------------------------------------------------------
@@ -166,7 +282,11 @@ _PYTEST_SUMMARY_LINE = re.compile(r"^.*\b\d+ \w+.*\bin \d+[\d.,]*s.*$", re.MULTI
 _PYTEST_COUNT = re.compile(
     r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected|warnings?)"
 )
-_PYTEST_EXECUTED = ("passed", "failed", "xfailed", "xpassed")
+# xfailed is deliberately NOT evidence of execution: `xfail(run=False)` reports
+# an xfailed test that was never called, so counting it would let a test that
+# does nothing satisfy the loop. xpassed always ran.
+_PYTEST_EXECUTED = ("passed", "failed", "xpassed")
+_PYTEST_INCONCLUSIVE = ("skipped", "xfailed", "deselected")
 
 
 def _parse_pytest(output: str, returncode: int, test_path: str | None = None) -> TestResult | None:
@@ -202,14 +322,18 @@ def _parse_pytest(output: str, returncode: int, test_path: str | None = None) ->
 
     executed = sum(counts.get(name, 0) for name in _PYTEST_EXECUTED)
     failed = counts.get("failed", 0)
-    if executed == 0 and counts.get("skipped"):
-        return TestResult(
-            Status.NO_TESTS,
-            0,
-            0,
-            "pytest",
-            f"every test was skipped ({counts['skipped']} skipped)",
+    if executed == 0:
+        reported = ", ".join(
+            f"{counts[name]} {name}" for name in _PYTEST_INCONCLUSIVE if counts.get(name)
         )
+        if reported:
+            return TestResult(
+                Status.NO_TESTS,
+                0,
+                0,
+                "pytest",
+                f"no test produced a result that proves it ran ({reported})",
+            )
     return _verdict("pytest", executed, failed)
 
 
@@ -296,11 +420,19 @@ def _parse_go(output: str, returncode: int, test_path: str | None = None) -> Tes
     passed = len(_GO_PASS.findall(output))
     failed = len(_GO_FAIL.findall(output))
     if passed + failed == 0:
-        why = "the package contains no test files"
+        # `ok  pkg  0.01s` alone is not evidence: it is also printed for a
+        # cached result and says nothing about which cases ran.
         if _GO_SKIP.search(output):
             why = "every go test was skipped"
-        elif not _GO_NO_FILES.search(output) and "no tests to run" not in output:
-            why = f"go test exited {returncode} without reporting a single test"
+        elif _GO_NO_FILES.search(output) or "no tests to run" in output:
+            why = "the package contains no test files"
+        elif "(cached)" in output:
+            why = "go reused a cached result, so nothing ran — add -count=1 to the test command"
+        else:
+            why = (
+                f"go test exited {returncode} without naming a single test case — run it "
+                "with -v -count=1 so each case is reported"
+            )
         return TestResult(Status.NO_TESTS, 0, 0, "go", why)
     return _verdict("go", passed + failed, failed)
 
@@ -378,19 +510,42 @@ def command_family(command: str) -> str:
 
 
 _NO_BINARY = re.compile(r"(command not found|No such file or directory|is not recognized)")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def strip_ansi(text: str) -> str:
+    """Colour codes must never hide a summary line from a parser."""
+    return _ANSI.sub("", text)
 
 
 def interpret(
     command: str, output: str, returncode: int, test_path: str | None = None
 ) -> TestResult:
     """Classify one finished test command. Never raises."""
+    output = strip_ansi(output)
     family = command_family(command)
     order = list(_FAMILY_ORDER.get(family, ()))
     order += [name for name in _PARSERS if name not in order]
+    report = None
     for name in order:
-        result = _PARSERS[name](output, returncode, test_path)
-        if result is not None:
-            return result
+        report = _PARSERS[name](output, returncode, test_path)
+        if report is not None:
+            break
+
+    if report is not None:
+        # A green report and a failed command contradict each other: the run may
+        # have crashed after its summary, or a wrapper script failed around it.
+        # Never resolve that in favour of green.
+        if report.status is Status.PASSED and returncode != 0:
+            return TestResult(
+                Status.ERROR,
+                report.executed,
+                report.failed,
+                report.framework,
+                f"{report.framework} reported {report.executed} passing test(s) but the "
+                f"command exited {returncode} — the run did not complete cleanly",
+            )
+        return report
 
     if returncode == 127 or (returncode != 0 and _NO_BINARY.search(output)):
         return TestResult(
