@@ -137,6 +137,12 @@ the harness would misread as a passing test.
 
 `test_cmd` in `runner.toml` and `--test-cmd` always override detection.
 
+Python detection uses the target project's environment for both focused tests and
+the regression suite: `uv run --no-sync python` when `uv.lock` exists, otherwise
+the project's `.venv` Python when present, then `python` from the caller's PATH.
+It never selects the globally installed runner's private interpreter. Prepare the
+project dependencies before running; detection does not install them.
+
 Test commands run non-interactively with colour disabled. Go reports each case
 and does not reuse cached results. Pytest keeps its result summary visible even
 when the project already sets quiet options. Custom commands must emit a
