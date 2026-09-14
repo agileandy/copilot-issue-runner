@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import ROLES, RoleConfig, load_config
 from .copilot import CopilotClient, CopilotError
+from .demo import DemoError, demo_banner, setup_demo
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.devops import DevopsError
@@ -59,6 +60,22 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="print the planner invocation and exit without any model call",
+    )
+    p.add_argument(
+        "--demo",
+        action="store_true",
+        help="run the whole pipeline offline in a throwaway sandbox repo: "
+        "no model calls, no credits, no GitHub",
+    )
+    p.add_argument(
+        "--demo-dir",
+        type=Path,
+        help="where to create the demo sandbox (default: a temporary directory)",
+    )
+    p.add_argument(
+        "--demo-reset",
+        action="store_true",
+        help="recreate --demo-dir from scratch if it already exists",
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
     p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
@@ -118,12 +135,32 @@ def main(argv=None) -> int:
         force=True,
     )
 
-    if not args.issue and not args.issue_file:
+    if not args.issue and not args.issue_file and not args.demo:
         print("error: provide an issue number or --issue-file", file=sys.stderr)
         return 2
 
+    demo_env = None
+    if args.demo:
+        try:
+            demo_env = setup_demo(args.demo_dir, force=args.demo_reset)
+        except DemoError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        args.issue = None
+        args.issue_file = demo_env.issue_file
+        args.dir = demo_env.repo_dir
+        args.repo = None
+        args.no_github_tickets = True
+        args.no_pr = True
+        args.copilot_cmd = str(demo_env.copilot_cmd)
+
     repo_dir = args.dir.resolve()
     cfg = load_config(repo_dir, args.config)
+    if demo_env and not args.test_cmd:
+        cfg.test_cmd = demo_env.test_cmd
+    if demo_env:
+        # printed after load_config so the banner's test command is the one in force
+        print(demo_banner(demo_env) + "\n", flush=True)
     if args.repo:
         cfg.repo = args.repo
     if args.test_cmd:
@@ -185,6 +222,7 @@ def main(argv=None) -> int:
                 print(f"error: {error}", file=sys.stderr)
                 return 1
             _print_summary(report)
+            _print_demo_footer(demo_env)
             return _exit_code(report)
 
     try:
@@ -194,7 +232,16 @@ def main(argv=None) -> int:
         return 1
 
     _print_summary(report)
+    _print_demo_footer(demo_env)
     return _exit_code(report)
+
+
+def _print_demo_footer(demo_env) -> None:
+    if demo_env is None:
+        return
+    print(f"\ndemo sandbox: {demo_env.repo_dir}")
+    print(f"  git -C {demo_env.repo_dir} log --oneline")
+    print(f"  git -C {demo_env.repo_dir} show --stat HEAD")
 
 
 def _exit_code(report) -> int:

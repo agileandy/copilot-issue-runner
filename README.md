@@ -48,6 +48,38 @@ gh-runner 7                 # implement issue 7 of the repo you are standing in
 gh-runner 7 --plan-only -v
 ```
 
+## Demo mode
+
+`--demo` runs the entire pipeline offline, with **no model call, no credits and
+no GitHub access** — for showing people what the runner does:
+
+```bash
+gh-runner --demo                          # throwaway sandbox in a temp directory
+gh-runner --demo --demo-dir ~/tmp/demo    # keep the sandbox somewhere
+gh-runner --demo --demo-dir ~/tmp/demo --demo-reset --visual
+```
+
+It creates a small git repo (a `demo_pkg.stats` module and an `issue.md` asking
+for `mean` and `median`), then drives the real orchestrator against a scripted
+stand-in for Copilot. Nothing is faked inside the pipeline: the tests really
+run, the harness really enforces red-then-green, and each ticket is really
+committed. The script is written so the demo shows the interesting paths —
+
+- ticket 1 goes straight through: red test → implementation → `pass` → commit;
+- ticket 2's first implementation is wrong, so the harness bounces it back;
+- the verifier then returns `refine_test` (even-length median is untested),
+  sending the loop back to the tester and on to the coder before it passes.
+
+The sandbox path is printed at the end; inspect the result with
+`git -C <sandbox> log --oneline`. Add `--visual` for the TUI, `--plan-only` to
+stop after planning. `ISSUE_RUNNER_DEMO_DELAY` (seconds, default `0.15`) paces
+the streamed output in visual mode.
+
+The sandbox runs its tests with whichever interpreter the runner is installed
+under. That interpreter has pytest in a dev checkout but not in a
+`uv tool install` venv, so the demo falls back to a bundled dependency-free test
+runner — the banner prints the command actually in force.
+
 ## Usage
 
 ```bash
@@ -60,7 +92,7 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--parallel N` · `--issue-file PATH` ·
-`--retry-blocked` · `--visual` ·
+`--retry-blocked` · `--visual` · `--demo` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
 
