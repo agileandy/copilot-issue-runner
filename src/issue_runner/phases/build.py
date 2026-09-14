@@ -99,6 +99,8 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
     # No bytecode: the coder may rewrite a same-sized file within the same second
     # as the red check, and stale .pyc reuse would report a phantom failure.
     env = dict(os.environ, **_RUN_ENV)
+    # Project-level -q plus the command's -q otherwise hides pytest's result counts.
+    env["PYTEST_ADDOPTS"] = f"{env.get('PYTEST_ADDOPTS', '')} --verbosity=0".strip()
     try:
         result = subprocess.run(
             argv,

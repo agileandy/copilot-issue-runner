@@ -126,7 +126,7 @@ a non-Python repo works without configuration:
 |---|---|
 | `pyproject.toml`, `setup.py`, `setup.cfg` | `python -m pytest {test_path} -q` |
 | `package.json` with a `test` script | `npm test -- {test_path}` |
-| `go.mod` | `go test ./...` |
+| `go.mod` | `go test -v -count=1 ./...` |
 | `Cargo.toml` | `cargo test` |
 
 The first marker in that order wins in a polyglot repo, and the choice is logged
@@ -136,6 +136,12 @@ and `cargo test` deliberately run unfiltered: their selector flags take a test
 the harness would misread as a passing test.
 
 `test_cmd` in `runner.toml` and `--test-cmd` always override detection.
+
+Test commands run non-interactively with colour disabled. Go reports each case
+and does not reuse cached results. Pytest keeps its result summary visible even
+when the project already sets quiet options. Custom commands must emit a
+supported pytest/Jest/Vitest/Go/Cargo report or TAP with a plan and result points;
+skipped, TODO and non-executed cases do not satisfy the execution requirement.
 
 The independent full-suite gate is detected from the same project markers.
 Override it with `regression_cmd` or `--regression-cmd`; it must not contain

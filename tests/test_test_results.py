@@ -760,3 +760,16 @@ def test_regression_cmd_is_none_for_an_unrecognised_repo(tmp_path):
 def test_regression_cmd_ignores_package_json_without_a_test_script(tmp_path):
     (tmp_path / "package.json").write_text('{"scripts": {"build": "tsc"}}')
     assert detect_regression_cmd(tmp_path) is None
+
+
+def test_pytest_project_quiet_options_keep_execution_evidence(tmp_path):
+    import sys
+
+    from issue_runner.config import RunnerConfig
+    from issue_runner.phases.build import run_tests
+
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\naddopts = "-q"\n')
+    (tmp_path / "test_behavior.py").write_text("def test_behavior():\n    assert 2 + 2 == 4\n")
+    cfg = RunnerConfig(repo_dir=tmp_path, test_cmd=f"{sys.executable} -m pytest {{test_path}} -q")
+    passed, output = run_tests(cfg, "test_behavior.py")
+    assert passed, output
