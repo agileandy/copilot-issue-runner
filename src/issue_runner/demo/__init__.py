@@ -162,9 +162,27 @@ def demo_test_cmd() -> str:
     )
 
 
+def _resolve_or_refuse(label: str, produce) -> Path:
+    """Resolve a path the guards depend on, or refuse to continue.
+
+    Fail closed: if we cannot work out where home, the cwd, the project checkout
+    or the destination actually is, we cannot prove a reset is safe, so nothing
+    is deleted.
+    """
+    try:
+        return Path(produce()).resolve(strict=False)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise DemoError(
+            f"cannot resolve {label} ({exc.__class__.__name__}: {exc}), so the demo "
+            "cannot prove the sandbox path is safe to touch. Run from a directory "
+            "that exists and is readable, or pass --demo-dir with an absolute "
+            "throwaway path."
+        ) from exc
+
+
 def _project_root() -> Path:
     """The checkout (or install tree) this package lives in — never a demo sandbox."""
-    here = Path(__file__).resolve()
+    here = _resolve_or_refuse("the issue-runner install directory", lambda: Path(__file__))
     for parent in here.parents:
         if (parent / "pyproject.toml").is_file() or (parent / ".git").exists():
             return parent
@@ -173,11 +191,9 @@ def _project_root() -> Path:
 
 def _protected_dirs() -> list[Path]:
     dirs = [Path(path) for path in DANGEROUS_DIRS]
-    for candidate in (Path.home(), Path.cwd(), _project_root()):
-        try:
-            dirs.append(candidate.resolve())
-        except OSError:  # pragma: no cover - unreadable cwd/home
-            continue
+    dirs.append(_resolve_or_refuse("the home directory", Path.home))
+    dirs.append(_resolve_or_refuse("the current working directory", Path.cwd))
+    dirs.append(_resolve_or_refuse("the project root", _project_root))
     return dirs
 
 
@@ -187,7 +203,11 @@ def _reject_dangerous_dest(raw: Path, repo_dir: Path) -> None:
     Runs before any ownership check and before any deletion, so a forged marker
     on `/` or `$HOME` still cannot reach `shutil.rmtree`.
     """
-    if raw.is_symlink():
+    try:
+        is_link = raw.is_symlink()
+    except OSError as exc:
+        raise DemoError(f"cannot inspect {raw} ({exc}) — refusing to use it as the demo") from exc
+    if is_link:
         raise DemoError(f"{raw} is a symlink — refusing to use it as the demo sandbox")
     if repo_dir.parent == repo_dir:
         raise DemoError(f"{repo_dir} is a filesystem root — refusing to use it as the demo sandbox")
@@ -258,7 +278,7 @@ def setup_demo(dest: Path | None = None, force: bool = False) -> DemoEnv:
         repo_dir = Path(tempfile.mkdtemp(prefix="issue-runner-demo-"))
     else:
         raw = Path(dest)
-        repo_dir = raw.resolve()
+        repo_dir = _resolve_or_refuse(f"the demo destination {raw}", lambda: raw)
         _reject_dangerous_dest(raw, repo_dir)
         if repo_dir.exists():
             if not repo_dir.is_dir():

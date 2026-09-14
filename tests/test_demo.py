@@ -268,3 +268,62 @@ def test_marker_survives_an_ordinary_demo_run(tmp_path, monkeypatch):
     assert json.loads(marker.read_text())["marker"] == demo_module.MARKER_MAGIC
     # and the sandbox is still resettable afterwards
     assert setup_demo(dest, force=True).repo_dir == dest
+
+
+@pytest.mark.parametrize(
+    ("attr", "boom", "needle"),
+    [
+        ("home", RuntimeError("cannot determine home directory"), "home directory"),
+        ("cwd", OSError("cwd has been deleted"), "current working directory"),
+    ],
+)
+def test_reset_fails_closed_when_a_protection_path_cannot_be_resolved(
+    tmp_path, monkeypatch, no_rmtree, attr, boom, needle
+):
+    """An unresolvable home/cwd means the guards cannot clear the path, so we stop."""
+    dest = tmp_path / "sandbox"
+    setup_demo(dest)  # genuinely owned: only the resolution failure may block it
+    (dest / "scratch.txt").write_text("stale\n")
+
+    def _explode(*args, **kwargs):
+        raise boom
+
+    monkeypatch.setattr(demo_module.Path, attr, staticmethod(_explode))
+
+    with pytest.raises(DemoError, match=needle):
+        setup_demo(dest, force=True)
+    assert (dest / "scratch.txt").is_file()
+
+
+def test_reset_fails_closed_when_the_destination_cannot_be_resolved(
+    tmp_path, monkeypatch, no_rmtree
+):
+    dest = tmp_path / "sandbox"
+    setup_demo(dest)
+    (dest / "scratch.txt").write_text("stale\n")
+
+    def _explode(self, *args, **kwargs):
+        raise OSError("too many levels of symbolic links")
+
+    monkeypatch.setattr(demo_module.Path, "resolve", _explode)
+
+    with pytest.raises(DemoError, match="demo destination"):
+        setup_demo(dest, force=True)
+    assert (dest / "scratch.txt").is_file()
+
+
+def test_reset_fails_closed_when_the_project_root_cannot_be_resolved(
+    tmp_path, monkeypatch, no_rmtree
+):
+    dest = tmp_path / "sandbox"
+    setup_demo(dest)
+    (dest / "scratch.txt").write_text("stale\n")
+
+    def _explode():
+        raise OSError("install tree is gone")
+
+    monkeypatch.setattr(demo_module, "_project_root", _explode)
+
+    with pytest.raises(DemoError, match="project root"):
+        setup_demo(dest, force=True)
+    assert (dest / "scratch.txt").is_file()
