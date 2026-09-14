@@ -70,6 +70,10 @@ def verify_step(client, cfg: RunnerConfig, ticket: Ticket, test_path: str) -> Ve
         )
         try:
             data = extract_json(reply)
+            if not isinstance(data, dict):
+                raise VerifyError(
+                    f"verifier reply must be a JSON object, got {type(data).__name__}"
+                )
             verdict = data.get("verdict")
             if verdict not in VERDICTS:
                 raise VerifyError(f"invalid verdict {verdict!r}; must be one of {VERDICTS}")

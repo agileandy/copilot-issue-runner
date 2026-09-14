@@ -79,3 +79,9 @@ def test_verify_step_rejects_unknown_verdict(cfg):
     client = FakeClient([(reply, None), (reply, None)])
     with pytest.raises(VerifyError):
         verify_step(client, cfg, _ticket(), "test_x.py")
+
+
+def test_verify_step_rejects_non_object_reply(cfg):
+    client = FakeClient([("[1,2]", None), ("null", None)])
+    with pytest.raises(VerifyError, match="JSON object"):
+        verify_step(client, cfg, _ticket(), "test_x.py")
