@@ -25,10 +25,24 @@ from pathlib import Path
 
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json
-from ..testreport import Status, interpret
+from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
 _TEST_TIMEOUT = 600
+# Every automatic run must be non-interactive and colour-free: a watch-mode
+# runner (vitest, jest --watch) would hang until the timeout, and ANSI codes can
+# split the very summary lines the report parser reads. CI=1 is what the JS
+# ecosystem checks for "batch run, do not prompt"; stdin is closed so anything
+# that still asks a question fails instead of blocking.
+_RUN_ENV = {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "CI": "1",
+    "NO_COLOR": "1",
+    "FORCE_COLOR": "0",
+    "NPM_CONFIG_COLOR": "false",
+    "PY_COLORS": "0",
+    "TERM": "dumb",
+}
 # language-agnostic emptiness check: cheap pre-filter only — execution evidence
 # is the real gate, so this never has to know what an assertion looks like.
 _COMMENT_PREFIXES = ("#", "//", "/*", "*", "*/", "--", ";", "%")
@@ -84,7 +98,7 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
 
     # No bytecode: the coder may rewrite a same-sized file within the same second
     # as the red check, and stale .pyc reuse would report a phantom failure.
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, **_RUN_ENV)
     try:
         result = subprocess.run(
             argv,
@@ -94,16 +108,19 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
             timeout=_TEST_TIMEOUT,
             check=False,
             env=env,
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as e:
         tail = _tail(e.stdout) + _tail(e.stderr)
         raise BuildError(
-            f"the test command timed out after {_TEST_TIMEOUT}s: {command}\n{tail}"
+            f"the test command timed out after {_TEST_TIMEOUT}s: {command}\n"
+            "(a watch-mode or interactive runner never finishes — use its single-run "
+            f"form)\n{tail}"
         ) from e
     except (OSError, ValueError) as e:
         raise BuildError(f"the test command could not be run: {command}: {e}") from e
 
-    output = (result.stdout + result.stderr).strip()
+    output = strip_ansi(result.stdout + result.stderr).strip()
     report = interpret(command, output, result.returncode, test_path)
     if report.status is Status.PASSED:
         return True, output

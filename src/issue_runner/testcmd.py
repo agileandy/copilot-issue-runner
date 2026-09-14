@@ -5,10 +5,11 @@ Go or Rust repo every tester attempt produced a test the harness could never
 turn green, so every ticket blocked. Detection only supplies a *default* —
 `runner.toml`'s `test_cmd` and `--test-cmd` still win, unchanged.
 
-Commands are chosen so a failing test genuinely fails. Notably `go test` and
-`cargo test` are run without a path filter: their selector flags take a test
-NAME, not a file path, so filtering by path would match nothing and exit 0 —
-the harness would read that as a passing test and the TDD loop would break.
+Commands are chosen so a failing test genuinely fails, and so the runner prints
+evidence that individual cases ran. Notably `go test` and `cargo test` are run
+without a path filter: their selector flags take a test NAME, not a file path,
+so filtering by path would match nothing and exit 0 — the harness would read
+that as a passing test and the TDD loop would break.
 """
 
 import json
@@ -18,6 +19,10 @@ from pathlib import Path
 
 DEFAULT_TEST_CMD = f"{sys.executable} -m pytest {{test_path}} -q"
 DEFAULT_REGRESSION_CMD = f"{sys.executable} -m pytest -q"
+# -v names every case (the only per-test evidence go prints) and -count=1
+# defeats the result cache, which otherwise replays "ok pkg (cached)" without
+# running anything.
+GO_TEST_CMD = "go test -v -count=1 ./..."
 
 
 @dataclass(frozen=True)
@@ -50,7 +55,7 @@ _MARKERS: tuple[tuple[str, object], ...] = (
     ("setup.py", DEFAULT_TEST_CMD),
     ("setup.cfg", DEFAULT_TEST_CMD),
     ("package.json", _node_test_cmd),
-    ("go.mod", "go test ./..."),
+    ("go.mod", GO_TEST_CMD),
     ("Cargo.toml", "cargo test"),
 )
 
@@ -61,7 +66,7 @@ _REGRESSION_MARKERS: tuple[tuple[str, object], ...] = (
     ("setup.py", DEFAULT_REGRESSION_CMD),
     ("setup.cfg", DEFAULT_REGRESSION_CMD),
     ("package.json", _node_regression_cmd),
-    ("go.mod", "go test ./..."),
+    ("go.mod", GO_TEST_CMD),
     ("Cargo.toml", "cargo test"),
 )
 

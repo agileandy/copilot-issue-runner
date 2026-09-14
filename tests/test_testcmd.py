@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from issue_runner.config import load_config
-from issue_runner.testcmd import DEFAULT_TEST_CMD, detect_test_cmd
+from issue_runner.testcmd import DEFAULT_TEST_CMD, GO_TEST_CMD, detect_test_cmd
 
 
 def test_pyproject_detects_pytest(tmp_path):
@@ -41,7 +41,15 @@ def test_go_mod_detects_go_test(tmp_path):
     (tmp_path / "go.mod").write_text("module example.com/x\n")
     found = detect_test_cmd(tmp_path)
     assert found.marker == "go.mod"
-    assert found.test_cmd == "go test ./..."
+    assert found.test_cmd == GO_TEST_CMD
+
+
+def test_go_command_prints_per_case_evidence_and_skips_the_cache(tmp_path):
+    """Plain `go test ./...` prints only "ok pkg", which proves nothing ran."""
+    (tmp_path / "go.mod").write_text("module example.com/x\n")
+    cmd = detect_test_cmd(tmp_path).test_cmd
+    assert " -v" in cmd, "without -v go names no test case"
+    assert "-count=1" in cmd, "without -count=1 go replays a cached result"
 
 
 def test_cargo_toml_detects_cargo_test(tmp_path):
@@ -95,14 +103,14 @@ def test_runner_toml_without_test_cmd_still_detects(tmp_path):
     (tmp_path / "runner.toml").write_text("max_rounds = 5\n")
     cfg = load_config(tmp_path)
     assert cfg.max_rounds == 5
-    assert cfg.test_cmd == "go test ./..."
+    assert cfg.test_cmd == GO_TEST_CMD
 
 
 def test_detected_command_is_logged(tmp_path, caplog):
     (tmp_path / "go.mod").write_text("module x\n")
     with caplog.at_level("INFO", logger="issue_runner"):
         load_config(tmp_path)
-    assert any("go test ./..." in r.message for r in caplog.records)
+    assert any(GO_TEST_CMD in r.message for r in caplog.records)
 
 
 def test_this_repo_still_uses_pytest():
