@@ -11,12 +11,14 @@ the runner takes a single command string, not an argv list.
 """
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 ISSUE_MD = """\
@@ -63,6 +65,43 @@ PYTEST_CMD_TEMPLATE = "{python} -m pytest {{test_path}} -q"
 # fallback for an interpreter without pytest (e.g. a `uv tool install` venv)
 MINITEST_CMD_TEMPLATE = "{python} {minitest} {{test_path}}"
 
+STATE_DIR_NAME = ".issue-runner"
+MARKER_NAME = "demo-sandbox.json"
+# unambiguous: only setup_demo() ever writes this string
+MARKER_MAGIC = "issue-runner demo sandbox — safe to delete"
+
+# absolute directories a demo sandbox must never be, even with a forged marker
+DANGEROUS_DIRS = frozenset(
+    {
+        "/",
+        "/Applications",
+        "/Library",
+        "/System",
+        "/Users",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/home",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/media",
+        "/mnt",
+        "/opt",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/srv",
+        "/sys",
+        "/tmp",
+        "/usr",
+        "/var",
+        "/var/tmp",
+    }
+)
+
 
 @dataclass
 class DemoEnv:
@@ -90,6 +129,16 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text)
 
 
+def _exclude_state_dir(repo_dir: Path) -> None:
+    """Keep the ownership marker out of the index so clean-tree checks still hold."""
+    exclude = repo_dir / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text() if exclude.is_file() else ""
+    pattern = f"/{STATE_DIR_NAME}/"
+    if pattern not in existing.splitlines():
+        exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
+
+
 def _write_shim(state_dir: Path) -> Path:
     """A shell wrapper so the scripted responder can be used as `copilot_cmd`."""
     shim = state_dir / "demo-copilot"
@@ -113,23 +162,117 @@ def demo_test_cmd() -> str:
     )
 
 
+def _project_root() -> Path:
+    """The checkout (or install tree) this package lives in — never a demo sandbox."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").is_file() or (parent / ".git").exists():
+            return parent
+    return here.parents[2]
+
+
+def _protected_dirs() -> list[Path]:
+    dirs = [Path(path) for path in DANGEROUS_DIRS]
+    for candidate in (Path.home(), Path.cwd(), _project_root()):
+        try:
+            dirs.append(candidate.resolve())
+        except OSError:  # pragma: no cover - unreadable cwd/home
+            continue
+    return dirs
+
+
+def _reject_dangerous_dest(raw: Path, repo_dir: Path) -> None:
+    """Refuse anything that is not plausibly a throwaway directory.
+
+    Runs before any ownership check and before any deletion, so a forged marker
+    on `/` or `$HOME` still cannot reach `shutil.rmtree`.
+    """
+    if raw.is_symlink():
+        raise DemoError(f"{raw} is a symlink — refusing to use it as the demo sandbox")
+    if repo_dir.parent == repo_dir:
+        raise DemoError(f"{repo_dir} is a filesystem root — refusing to use it as the demo sandbox")
+    for protected in _protected_dirs():
+        if repo_dir == protected:
+            raise DemoError(
+                f"{repo_dir} is a protected directory — refusing to use it as the demo "
+                "sandbox; pass --demo-dir with a throwaway path"
+            )
+        if repo_dir in protected.parents:
+            raise DemoError(
+                f"{repo_dir} contains {protected} — refusing to use it as the demo "
+                "sandbox; pass --demo-dir with a throwaway path"
+            )
+
+
+def _marker_path(repo_dir: Path) -> Path:
+    return repo_dir / STATE_DIR_NAME / MARKER_NAME
+
+
+def _write_marker(repo_dir: Path) -> Path:
+    marker = _marker_path(repo_dir)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "marker": MARKER_MAGIC,
+                "created": datetime.now(UTC).isoformat(timespec="seconds"),
+                "created_by": "issue_runner.demo.setup_demo",
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return marker
+
+
+def _is_owned_demo_dir(repo_dir: Path) -> bool:
+    state_dir = repo_dir / STATE_DIR_NAME
+    marker = _marker_path(repo_dir)
+    if state_dir.is_symlink() or not state_dir.is_dir():
+        return False
+    if marker.is_symlink() or not marker.is_file():
+        return False
+    try:
+        payload = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("marker") == MARKER_MAGIC
+
+
+def _require_demo_ownership(repo_dir: Path) -> None:
+    if _is_owned_demo_dir(repo_dir):
+        return
+    raise DemoError(
+        f"{repo_dir} was not created by the demo (no {STATE_DIR_NAME}/{MARKER_NAME} "
+        "ownership marker), so --demo-reset refuses to delete it. Move or remove it "
+        "yourself, or pass --demo-dir with an empty or throwaway path."
+    )
+
+
 def setup_demo(dest: Path | None = None, force: bool = False) -> DemoEnv:
     """Create (or recreate) the demo sandbox and return everything the CLI needs."""
     if shutil.which("git") is None:
         raise DemoError("the demo needs git on PATH")
     temporary = dest is None
-    repo_dir = (
-        Path(tempfile.mkdtemp(prefix="issue-runner-demo-")) if temporary else Path(dest).resolve()
-    )
-    if not temporary and repo_dir.exists():
-        if not force and any(repo_dir.iterdir()):
-            raise DemoError(
-                f"{repo_dir} is not empty — pass --demo-reset to recreate it, or choose "
-                "another --demo-dir"
-            )
-        if force:
-            shutil.rmtree(repo_dir)
+    if temporary:
+        repo_dir = Path(tempfile.mkdtemp(prefix="issue-runner-demo-"))
+    else:
+        raw = Path(dest)
+        repo_dir = raw.resolve()
+        _reject_dangerous_dest(raw, repo_dir)
+        if repo_dir.exists():
+            if not repo_dir.is_dir():
+                raise DemoError(f"{repo_dir} is not a directory — choose another --demo-dir")
+            if any(repo_dir.iterdir()):
+                if not force:
+                    raise DemoError(
+                        f"{repo_dir} is not empty — pass --demo-reset to recreate it, or choose "
+                        "another --demo-dir"
+                    )
+                _require_demo_ownership(repo_dir)
+                shutil.rmtree(repo_dir)
     repo_dir.mkdir(parents=True, exist_ok=True)
+    _write_marker(repo_dir)
 
     _write(repo_dir / "issue.md", ISSUE_MD)
     _write(repo_dir / "README.md", README_MD)
@@ -140,12 +283,13 @@ def setup_demo(dest: Path | None = None, force: bool = False) -> DemoEnv:
     _write(repo_dir / "tests" / ".gitkeep", "")
 
     _git(repo_dir, "init", "-b", "main")
+    _exclude_state_dir(repo_dir)
     _git(repo_dir, "config", "user.email", "demo@issue-runner.local")
     _git(repo_dir, "config", "user.name", "issue-runner demo")
     _git(repo_dir, "add", "-A")
     _git(repo_dir, "commit", "-m", "chore: demo sandbox skeleton")
 
-    state_dir = repo_dir / ".issue-runner"
+    state_dir = repo_dir / STATE_DIR_NAME
     state_dir.mkdir(exist_ok=True)
     shim = _write_shim(state_dir)
 

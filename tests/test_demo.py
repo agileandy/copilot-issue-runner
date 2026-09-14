@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,20 @@ from issue_runner import demo as demo_module
 from issue_runner.cli import main
 from issue_runner.demo import DemoError, demo_test_cmd, minitest, setup_demo
 from issue_runner.demo.responder import respond
+
+
+class _RmtreeCalled(AssertionError):
+    """Raised by the interception below: a guard let a deletion through."""
+
+
+@pytest.fixture
+def no_rmtree(monkeypatch):
+    """Make any `shutil.rmtree` in setup_demo fail loudly instead of deleting."""
+
+    def _explode(path, *args, **kwargs):
+        raise _RmtreeCalled(f"setup_demo tried to delete {path}")
+
+    monkeypatch.setattr(demo_module.shutil, "rmtree", _explode)
 
 
 def test_setup_demo_creates_a_committed_git_repo(tmp_path):
@@ -119,3 +134,137 @@ def test_demo_runs_the_whole_pipeline_offline(tmp_path, capsys, monkeypatch):
         ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout
     assert dirty.strip() == ""
+
+
+def _forge_marker(directory: Path) -> None:
+    """Write a marker the runner would accept, to prove path guards run first."""
+    marker = directory / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"marker": demo_module.MARKER_MAGIC}))
+
+
+def test_reset_refuses_unowned_directory(tmp_path, no_rmtree):
+    """A directory the runner did not create must survive --demo-reset untouched."""
+    dest = tmp_path / "real-work"
+    (dest / "src").mkdir(parents=True)
+    (dest / "src" / "important.py").write_text("value = 42\n")
+
+    with pytest.raises(DemoError) as excinfo:
+        setup_demo(dest, force=True)
+
+    assert demo_module.MARKER_NAME in str(excinfo.value)
+    assert (dest / "src" / "important.py").read_text() == "value = 42\n"
+
+
+def test_reset_refuses_unowned_directory_with_a_corrupt_marker(tmp_path, no_rmtree):
+    dest = tmp_path / "half-owned"
+    (dest / demo_module.STATE_DIR_NAME).mkdir(parents=True)
+    (dest / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME).write_text("not json")
+    (dest / "keep.txt").write_text("keep me\n")
+
+    with pytest.raises(DemoError):
+        setup_demo(dest, force=True)
+    assert (dest / "keep.txt").is_file()
+
+
+def test_reset_refuses_dangerous_paths(tmp_path, monkeypatch, no_rmtree):
+    """Root, home, cwd, the project checkout and their ancestors are never sandboxes.
+
+    Each candidate carries a forged ownership marker, so this proves the path
+    guards run before ownership is consulted and before any deletion.
+    """
+    fake_home = tmp_path / "home" / "someone"
+    fake_home.mkdir(parents=True)
+    _forge_marker(fake_home)
+    monkeypatch.setattr(demo_module.Path, "home", classmethod(lambda cls: fake_home))
+
+    work = tmp_path / "work"
+    (work / "nested").mkdir(parents=True)
+    _forge_marker(work)
+    monkeypatch.chdir(work / "nested")
+
+    candidates = [
+        Path(tmp_path.anchor),  # filesystem root
+        fake_home,
+        fake_home.parent,  # ancestor of home
+        work / "nested",  # cwd
+        work,  # ancestor of cwd
+        Path(demo_module.__file__).resolve().parents[3],  # project root
+        Path("/tmp"),
+        Path("/usr"),
+        Path("/etc"),
+    ]
+    for candidate in candidates:
+        with pytest.raises(DemoError, match="refusing to use it as the demo sandbox"):
+            setup_demo(candidate, force=True)
+
+    assert (fake_home / demo_module.STATE_DIR_NAME).is_dir()
+    assert (work / "nested").is_dir()
+
+
+def test_setup_demo_refuses_a_symlinked_destination(tmp_path, no_rmtree):
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "data.txt").write_text("mine\n")
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(DemoError, match="symlink"):
+        setup_demo(link, force=True)
+    assert (real / "data.txt").is_file()
+
+
+def test_setup_demo_refuses_a_symlinked_ownership_marker(tmp_path, no_rmtree):
+    dest = tmp_path / "sandbox"
+    (dest / demo_module.STATE_DIR_NAME).mkdir(parents=True)
+    genuine = tmp_path / "genuine.json"
+    genuine.write_text(json.dumps({"marker": demo_module.MARKER_MAGIC}))
+    (dest / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME).symlink_to(genuine)
+
+    with pytest.raises(DemoError):
+        setup_demo(dest, force=True)
+
+
+def test_reset_of_an_owned_sandbox_still_works(tmp_path):
+    dest = tmp_path / "sandbox"
+    setup_demo(dest)
+    (dest / "scratch.txt").write_text("stale\n")
+
+    env = setup_demo(dest, force=True)
+
+    assert env.repo_dir == dest
+    assert not (dest / "scratch.txt").exists()
+    assert (dest / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME).is_file()
+
+
+def test_setup_demo_accepts_an_empty_or_new_directory(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert setup_demo(empty).repo_dir == empty
+    assert setup_demo(tmp_path / "brand-new").repo_dir == tmp_path / "brand-new"
+
+
+def test_marker_is_written_and_kept_out_of_the_index(tmp_path):
+    env = setup_demo(tmp_path / "sandbox")
+    marker = env.repo_dir / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME
+
+    assert json.loads(marker.read_text())["marker"] == demo_module.MARKER_MAGIC
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=env.repo_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert dirty.strip() == ""
+
+
+def test_marker_survives_an_ordinary_demo_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("ISSUE_RUNNER_DEMO_DELAY", "0")
+    dest = tmp_path / "sandbox"
+    assert main(["--demo", "--demo-dir", str(dest)]) == 0
+
+    marker = dest / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME
+    assert json.loads(marker.read_text())["marker"] == demo_module.MARKER_MAGIC
+    # and the sandbox is still resettable afterwards
+    assert setup_demo(dest, force=True).repo_dir == dest
