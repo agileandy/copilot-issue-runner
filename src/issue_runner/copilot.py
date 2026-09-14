@@ -35,7 +35,7 @@ from pathlib import Path
 from .budget import RunBudget
 from .config import RunnerConfig
 from .events import emit
-from .usage import UsageLedger, merge_usage
+from .usage import UsageLedger, cost_is_complete, mark_incomplete, merge_usage
 
 log = logging.getLogger("issue_runner")
 
@@ -44,6 +44,7 @@ READ_ONLY_DENY = ("write", "shell(git:*)")
 
 EXIT_GRACE_SECONDS = 30
 KILL_GRACE_SECONDS = 5
+READER_JOIN_SECONDS = 5
 STDERR_TAIL_CHARS = 4000
 RAW_STDOUT_LINES = 2000
 
@@ -113,18 +114,25 @@ class CopilotClient:
         )
         started = time.monotonic()
         self.budget.charge()
+        progress: dict = {}
         try:
             if structured:
-                returncode, reply, detail, usage = self._structured_call(argv, role, session_name)
+                returncode, reply, detail, usage = self._structured_call(
+                    argv, role, session_name, progress
+                )
             else:
                 returncode, reply, detail, usage = self._plain_call(argv, role)
         except Exception:
-            # a timeout or crash still consumed wall-clock time and possibly credit;
-            # nothing was measured, so the reservation stands
-            self.budget.settle(None)
-            self._record(role, role_cfg, session_name, started, ok=False, usage=None)
+            # a timeout or crash still consumed wall-clock time and credit. Whatever
+            # copilot already reported is real and is kept, but it can only ever be a
+            # lower bound: the invocation died before it could say what else it billed.
+            partial = mark_incomplete(progress.get("usage"))
+            known, _ = cost_report(partial)
+            self.budget.settle(known, complete=False)
+            self._record(role, role_cfg, session_name, started, ok=False, usage=partial)
             raise
-        self.budget.settle(measured_nano_aiu(usage))
+        known, complete = cost_report(usage)
+        self.budget.settle(known, complete=complete)
         elapsed = round(time.monotonic() - started, 1)
         reply = (reply or "").strip()
         ok = returncode == 0 and bool(reply)
@@ -178,7 +186,14 @@ class CopilotClient:
             None,
         )
 
-    def _structured_call(self, argv, role, session_name):
+    def _structured_call(self, argv, role, session_name, progress=None):
+        """Run one invocation, reporting usage into `progress` as it arrives.
+
+        `progress["usage"]` is updated on every model call, so a caller that
+        sees this raise can still account the tokens and charges copilot had
+        already reported — an interrupted call is not a free one.
+        """
+        progress = progress if progress is not None else {}
         proc = self.popen(
             argv,
             stdout=subprocess.PIPE,
@@ -190,41 +205,43 @@ class CopilotClient:
         )
         lines: queue.Queue = queue.Queue()
         stderr_tail: deque = deque(maxlen=STDERR_TAIL_CHARS)
+        reader_errors: list = []
+        reaped = threading.Event()
+
+        def _drain(stream, consume):
+            try:
+                for piece in stream:
+                    consume(piece)
+            except (OSError, ValueError) as e:
+                # expected once we tear the pipes down ourselves; anything else is
+                # a real transport fault and must not be swallowed
+                if not reaped.is_set():
+                    reader_errors.append(e)
 
         def _read_stdout():
             try:
-                for line in proc.stdout:
-                    lines.put(line)
-            except (OSError, ValueError):  # pipe torn down by a kill
-                pass
+                _drain(proc.stdout, lines.put)
             finally:
-                lines.put(None)
-
-        def _read_stderr():
-            # drained concurrently: a chatty stderr must never block stdout
-            try:
-                for chunk in proc.stderr:
-                    stderr_tail.extend(chunk)
-            except (OSError, ValueError):
-                pass
+                lines.put(None)  # always unblock the consumer
 
         readers = [
             threading.Thread(target=_read_stdout, daemon=True),
-            threading.Thread(target=_read_stderr, daemon=True),
+            # stderr is drained concurrently: a chatty child must never block stdout
+            threading.Thread(target=_drain, args=(proc.stderr, stderr_tail.extend), daemon=True),
         ]
-        for reader in readers:
-            reader.start()
 
         deadline = time.monotonic() + self.config.timeout
         final_message = ""
         failure_detail = ""
         usage = None
         saw_event = False
+        exited = False
         raw: deque = deque(maxlen=RAW_STDOUT_LINES)
         try:
+            for reader in readers:
+                reader.start()
             while True:
                 if time.monotonic() > deadline:
-                    self._terminate(proc)
                     raise CopilotError(
                         f"copilot timed out after {self.config.timeout}s for role {role}"
                     )
@@ -251,17 +268,23 @@ class CopilotClient:
                     failure_detail = fail
                 if call_usage is not None:
                     usage = merge_usage(usage, call_usage)
-        except BaseException:
-            self._terminate(proc)
-            raise
+                    progress["usage"] = usage
 
-        try:
-            returncode = proc.wait(timeout=EXIT_GRACE_SECONDS)
-        except (subprocess.TimeoutExpired, TimeoutError) as e:
-            self._terminate(proc)
-            raise CopilotError(f"copilot did not exit after closing stdout for role {role}") from e
-        for reader in readers:
-            reader.join(timeout=1)
+            try:
+                returncode = proc.wait(timeout=EXIT_GRACE_SECONDS)
+            except (subprocess.TimeoutExpired, TimeoutError) as e:
+                raise CopilotError(
+                    f"copilot did not exit after closing stdout for role {role}"
+                ) from e
+            exited = True
+            if reader_errors:
+                raise CopilotError(
+                    f"copilot output could not be read for role {role}: {reader_errors[0]}"
+                ) from reader_errors[0]
+        finally:
+            # only force-kill when the child did not exit on its own; a clean exit
+            # has nothing left to signal
+            self._cleanup(proc, readers, reaped, force=not exited)
 
         if not saw_event and not final_message:
             # the command is not speaking copilot's event dialect (a shim, a wrapper,
@@ -270,18 +293,46 @@ class CopilotClient:
         detail = failure_detail or "".join(stderr_tail) or final_message
         return returncode, final_message.strip(), detail, usage
 
+    def _cleanup(self, proc, readers, reaped, force: bool) -> None:
+        """Bounded teardown: kill if needed, then join readers and close our pipes."""
+        reaped.set()
+        if force:
+            self._terminate(proc)
+        for reader in readers:
+            reader.join(timeout=READER_JOIN_SECONDS)
+            if reader.is_alive():
+                log.warning("a copilot output reader did not stop within %ss", READER_JOIN_SECONDS)
+        for stream in (proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except (OSError, ValueError) as e:
+                log.warning("could not close a copilot pipe: %s", e)
+
     def _terminate(self, proc) -> None:
-        """Reap a child by the id/group we created — never by process name."""
+        """Reap the process group we created — never by process name.
+
+        `start_new_session=True` made the child its own group leader, so the
+        group id *is* `proc.pid`. That is used directly rather than looking it
+        up with `os.getpgid()`, which fails with ESRCH once the leader has
+        exited — exactly the case where surviving grandchildren still need
+        killing.
+        """
         pid = getattr(proc, "pid", None)
         if pid:
             try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # the whole group is already gone
+            except OSError as e:
+                log.warning("could not signal copilot process group %s: %s", pid, e)
         try:
             proc.kill()
-        except (ProcessLookupError, OSError):
+        except ProcessLookupError:
             pass
+        except OSError as e:
+            log.warning("could not kill copilot process %s: %s", pid, e)
         try:
             proc.wait(timeout=KILL_GRACE_SECONDS)
         except (subprocess.TimeoutExpired, TimeoutError):
@@ -320,19 +371,22 @@ class CopilotClient:
         return argv
 
 
-def measured_nano_aiu(usage: dict | None) -> int | None:
-    """The invocation's real charge, or None when it is not fully known.
+def cost_report(usage: dict | None) -> tuple[int | None, bool]:
+    """(charge copilot reported in nano-AIU, whether that is the whole story).
 
-    A partial figure is not a measurement: if copilot billed three model calls
-    and reported a charge for one, settling the budget on that one would report
-    two calls as free.
+    A partial figure is still real spend and is returned, but flagged: if
+    copilot billed three model calls and costed one, banking that one as the
+    complete figure would report the other two as free.
     """
     if not usage:
-        return None
-    model_calls = usage.get("model_calls") or 0
-    if model_calls and usage.get("costed_model_calls") != model_calls:
-        return None
-    return usage.get("nano_aiu")
+        return None, False
+    return usage.get("nano_aiu"), bool(cost_is_complete(usage))
+
+
+def measured_nano_aiu(usage: dict | None) -> int | None:
+    """The invocation's charge when it is known in full, else None."""
+    nano_aiu, complete = cost_report(usage)
+    return nano_aiu if complete else None
 
 
 def _extract_usage(data: dict) -> dict:
