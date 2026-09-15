@@ -183,6 +183,7 @@ reported, not fatal — the commits are already on the branch.
 | `2` | bad invocation |
 | `3` | some tickets blocked |
 | `4` | stopped on the run credit budget |
+| `130` | stopped by the user; saved work is resumable |
 
 ### Ticket dependencies
 
@@ -280,7 +281,8 @@ invocations fall back to plain text automatically.
 `q` does one of two things depending on when you press it:
 
 - **during the run** — detaches the display; the run continues headless and
-  progress is printed as plain lines.
+  progress is printed as plain lines. Type `r` and press Enter in the same
+  terminal to reattach with the existing ticket board, output and statistics.
 - **after the run** — closes the review. When the pipeline finishes the TUI
   *stays open* on a finished state showing the outcome, tickets done/blocked,
   the branch, the pull request URL and the usage line, so you can read the
@@ -291,3 +293,15 @@ A crash also settles into that finished state, showing the error, rather than
 leaving a live-looking display.
 
 Visual mode changes rendering, not the transport or accounting.
+
+### Stopping a run
+
+Press **Ctrl+C** in the visual view, detached view or plain CLI. The runner
+immediately reports **"Stopping and cleaning up..."**, finishes the current
+operation, and stops before starting another model call.
+
+Press Ctrl+C again to interrupt an active Copilot invocation and clean up its
+owned subprocesses. On exit, the runner saves its accepted phase and usage,
+releases its locks, and returns `130`. It does not delete branches or worktrees.
+Re-run the same command to resume; `--retry-blocked` is not required for a user
+stop.

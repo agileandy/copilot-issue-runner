@@ -12,6 +12,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .control import RunControl
 from .testcmd import DEFAULT_TEST_CMD, detect_test_cmd
 
 ROLES = ("planner", "builder.tester", "builder.coder", "verifier")
@@ -51,6 +52,7 @@ class RunnerConfig:
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
     events: object | None = None  # EventBus, set by the CLI; never from runner.toml
     retry_blocked: bool = False
+    control: RunControl = field(default_factory=RunControl, repr=False)
 
     def role(self, name: str) -> RoleConfig:
         return self.roles.get(name, RoleConfig())

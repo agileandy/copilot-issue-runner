@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
+from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
 from .demo import DemoError, demo_banner, setup_demo
 from .github_io import GithubError, fetch_issue, issue_from_file
@@ -243,7 +244,12 @@ def main(argv=None) -> int:
         print(f"\n--- prompt ({len(prompt)} chars) ---\n{prompt}")
         return 0
 
-    if cfg.visual and sys.stdout.isatty():
+    with stop_signals(cfg):
+        return _execute(cfg, client, issue, args.plan_only, demo_env)
+
+
+def _execute(cfg, client, issue, plan_only, demo_env) -> int:
+    if cfg.visual and sys.stdout.isatty() and sys.stdin.isatty():
         try:
             from .tui import run_visual
         except ImportError:
@@ -251,7 +257,7 @@ def main(argv=None) -> int:
                 "textual is not installed — falling back to the text visual"
             )
         else:
-            report, error, _detached = run_visual(cfg, client, issue, plan_only=args.plan_only)
+            report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
                 _print_abort_usage(client)
@@ -261,7 +267,7 @@ def main(argv=None) -> int:
             return _exit_code(report)
 
     try:
-        report = run_issue(cfg, client, issue, plan_only=args.plan_only)
+        report = run_issue(cfg, client, issue, plan_only=plan_only)
     except PipelineError as e:
         print(f"error: {e}", file=sys.stderr)
         _print_abort_usage(client)
@@ -282,6 +288,8 @@ def _print_demo_footer(demo_env) -> None:
 
 def _exit_code(report) -> int:
     """4 (budget stop) is distinct from 3 (blocked) so queue callers can retry."""
+    if report.stopped:
+        return 130
     if report.budget_exhausted:
         return 4
     return 0 if report.blocked == 0 else 3
@@ -292,6 +300,8 @@ def _print_summary(report) -> None:
     if report.worktree:
         print(f"worktree: {report.worktree}")
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
+    if report.stopped:
+        print("Run stopped. State and worktree preserved; re-run the same command to resume.")
     if report.budget_exhausted:
         print("run stopped: AI credit budget exhausted — re-run to resume")
     if report.usage_summary:

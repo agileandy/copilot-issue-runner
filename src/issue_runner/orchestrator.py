@@ -19,6 +19,7 @@ from uuid import uuid4
 from . import github_io
 from .budget import BudgetExhausted, RunBudget
 from .config import RunnerConfig
+from .control import RunStopped
 from .copilot import CopilotError
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
@@ -53,6 +54,7 @@ class RunReport:
     budget_summary: str = ""
     worktree: str = ""
     plan_only: bool = False
+    stopped: bool = False
     details: list[str] = field(default_factory=list)
 
 
@@ -115,6 +117,18 @@ def run_issue(
                     report.branch = store.branch or ""
                     report.worktree = str(cfg.repo_dir)
                 return _run_issue(cfg, client, issue, store, report, plan_only)
+            except RunStopped:
+                for ticket in store.tickets:
+                    if ticket.status == "in_progress":
+                        ticket.status = "pending"
+                store.save()
+                report.stopped = True
+                report.done = sum(t.status == "done" for t in store.tickets)
+                report.blocked = sum(t.status == "blocked" for t in store.tickets)
+                report.details.append("run stopped by user; saved work can be resumed")
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                _emit_finished(cfg, client, report)
+                return report
             finally:
                 _record_usage(client, state_dir, issue_ref, report)
     finally:
@@ -210,6 +224,7 @@ def _run_issue(
         log.info("run workspace: %s", report.worktree)
     emit(cfg.events, "run_started", issue_ref=issue_ref, title=issue["title"])
     emit(cfg.events, "phase", name="plan")
+    cfg.control.check()
 
     if store.tickets:
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
@@ -233,10 +248,12 @@ def _run_issue(
         tickets=ticket_snapshot(store.tickets),
         summary=store.plan_summary,
     )
+    cfg.control.check()
 
     # mirror tickets to the tracker; also backfills runs planned without a backend
     if cfg.tickets_backend and issue["number"]:
         for ticket in store.tickets:
+            cfg.control.check()
             if ticket.github_issue is None:
                 ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
                 store.save()
@@ -270,6 +287,7 @@ def _run_issue(
 
     emit(cfg.events, "phase", name="build")
     while True:
+        cfg.control.check()
         ready = store.ready()
         if not ready:
             break
@@ -302,6 +320,7 @@ def _run_issue(
             )
         approved_head = devops.head_commit(cfg.repo_dir)
         _regression_gate(cfg)
+        cfg.control.check()
         devops.require_clean(cfg.repo_dir)
         if (
             devops.head_commit(cfg.repo_dir) != approved_head
@@ -339,7 +358,9 @@ def _open_pull_request(
         return
     title = f"Fixes #{issue['number']} — {issue['title']}"
     try:
+        cfg.control.check()
         devops.push_branch(cfg.repo_dir, report.branch)
+        cfg.control.check()
         report.pr_url = github_io.open_pull_request(
             cfg.repo, head=report.branch, title=title, body=_pr_body(issue, store, report)
         )
@@ -385,6 +406,7 @@ def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
         budget=report.budget_summary,
         budget_exhausted=report.budget_exhausted,
         plan_only=report.plan_only,
+        stopped=report.stopped,
     )
 
 
@@ -431,6 +453,7 @@ def _process_ticket(
     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     try:
         while True:
+            cfg.control.check()
             if devops.current_branch(cfg.repo_dir) != store.branch:
                 raise DevopsError("the agent changed the run branch")
             if ticket.phase == "commit":
@@ -520,6 +543,7 @@ def _process_ticket(
                 try:
                     _regression_gate(cfg)
                 except RegressionFailure as e:
+                    cfg.control.check()
                     ticket.code_feedback = str(e)
                     ticket.phase = "coder"
                     if not _hand_back(cfg, store, ticket, report, str(e)):
@@ -543,6 +567,7 @@ def _process_ticket(
         report.details.append(f"ticket {ticket.id} paused before {ticket.phase}: {e}")
         emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
+        cfg.control.check()
         _block(store, ticket, report, str(e), cfg)
 
 
@@ -575,6 +600,7 @@ def _require_accepted_test(cfg: RunnerConfig, ticket: Ticket) -> str:
 
 
 def _regression_gate(cfg: RunnerConfig) -> None:
+    cfg.control.check()
     command = cfg.regression_cmd or detect_regression_cmd(cfg.repo_dir)
     if not command:
         raise BuildError(
@@ -582,7 +608,12 @@ def _regression_gate(cfg: RunnerConfig) -> None:
         )
     if "{test_path}" in command:
         raise BuildError("regression_cmd must run the suite without a {test_path} selector")
-    passed, output = run_test_command(cfg, command)
+    try:
+        passed, output = run_test_command(cfg, command)
+    except BuildError:
+        cfg.control.check()
+        raise
+    cfg.control.check()
     if not passed:
         raise RegressionFailure(
             f"regression gate failed; repair existing behaviour:\n{output[-3000:]}"

@@ -15,8 +15,9 @@ Event kinds and payloads:
     verdict             ticket_id, verdict, reasons
     ticket_done         ticket_id, note
     ticket_blocked      ticket_id, reason
+    stop_requested     message
     run_finished      done, blocked, branch, worktree?, pr_url?, usage?, budget?,
-                      budget_exhausted?, plan_only?
+                      budget_exhausted?, plan_only?, stopped?
 """
 
 import logging

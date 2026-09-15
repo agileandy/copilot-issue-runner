@@ -3,19 +3,26 @@
 Four tiles on one contained alt-screen: pipeline banner, ticket board, live
 agent output, run stats. The pipeline runs in a plain (non-daemon) thread and
 publishes on the EventBus; the app drains a thread-safe queue on a timer, so
-Textual never blocks the run and `q` merely detaches the display — the run
-continues headless and the CLI prints the summary after the app exits.
+Textual never blocks the run. `q` suspends the same display so it can reattach
+without losing its board or output. Ctrl+C requests a checkpointed stop.
 """
 
+import asyncio
+import os
 import queue
+import select
+import sys
 import threading
 import time
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Footer, RichLog, Static
 
+from .config import RunnerConfig
+from .control import request_stop
 from .events import EventBus, RunEvent
 from .usage import cost_is_complete, format_aiu
 
@@ -97,6 +104,8 @@ def format_summary(summary: dict) -> str:
     blocked = summary.get("blocked", 0)
     if summary.get("error"):
         outcome = "[red]run aborted[/]"
+    elif summary.get("stopped"):
+        outcome = "stopped by user; work saved"
     elif summary.get("budget_exhausted"):
         outcome = "[red]stopped: credit budget exhausted[/]"
     elif summary.get("plan_only"):
@@ -127,7 +136,11 @@ def format_summary(summary: dict) -> str:
 
 class RunnerApp(App):
     TITLE = "issue-runner"
-    BINDINGS: ClassVar = [("q", "close", "detach / close")]
+    BINDINGS: ClassVar = [
+        ("q", "close", "detach / close"),
+        Binding("ctrl+c", "stop_run", "stop", priority=True),
+        Binding("ctrl+q", "stop_run", "stop", priority=True, show=False),
+    ]
     CSS = """
     #pipeline { height: 3; padding: 1 2 0 2; }
     #middle { height: 1fr; }
@@ -137,17 +150,25 @@ class RunnerApp(App):
     #summary { height: auto; border: round $success; padding: 0 1; }
     """
 
-    def __init__(self, bus: EventBus, pipeline_thread: threading.Thread | None = None):
+    def __init__(
+        self,
+        bus: EventBus,
+        pipeline_thread: threading.Thread | None = None,
+        config: RunnerConfig | None = None,
+    ):
         super().__init__()
         self._queue: queue.Queue = queue.Queue()
         bus.subscribe(self._queue.put)
         self._thread = pipeline_thread
+        self._runner_config = config
         self._started = time.monotonic()
         self._call_started: float | None = None
         self.state: dict = {"phase": "plan", "branch": "", "tickets": []}
         self.stats: dict = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
         self.summary: dict = {}
         self.finished = False
+        self.detached = False
+        self.stop_message = ""
 
     def compose(self) -> ComposeResult:
         yield Static(id="pipeline")
@@ -167,9 +188,41 @@ class RunnerApp(App):
         if self._thread is not None:
             self._thread.start()
 
-    def action_close(self) -> None:
+    async def action_close(self) -> None:
         """Before the run ends `q` detaches; afterwards it closes the review."""
-        self.exit("finished" if self.finished else "detached")
+        if self.finished:
+            self.exit("finished")
+            return
+        self.detached = True
+        try:
+            with self.suspend():
+                print(
+                    "\ndisplay detached - type r and Enter to reattach; Ctrl+C to stop.",
+                    flush=True,
+                )
+                while not self.finished:
+                    self._drain()
+                    key = _terminal_key()
+                    if key == "r":
+                        break
+                    if key in ("s", "\x03") or (
+                        key == ""
+                        and self._runner_config is not None
+                        and not self._runner_config.control.requested
+                    ):
+                        self.action_stop_run()
+                    await asyncio.sleep(0.05)
+        finally:
+            self.detached = False
+        self._render_all()
+        if self.finished:
+            self.exit("stopped" if self.summary.get("stopped") else "finished")
+
+    def action_stop_run(self) -> None:
+        if self.finished:
+            self.exit("finished")
+        elif self._runner_config is not None:
+            request_stop(self._runner_config)
 
     # -- event application -------------------------------------------------
 
@@ -180,11 +233,16 @@ class RunnerApp(App):
             except queue.Empty:
                 return
             self.apply_event(event)
+            if self.detached:
+                _print_event(event)
 
     def apply_event(self, event: RunEvent) -> None:
         kind, p = event.kind, event.payload
         if kind == "phase":
             self.state["phase"] = p["name"]
+        elif kind == "stop_requested":
+            self.stop_message = p["message"]
+            self._render_all()
         elif kind == "run_started":
             self.state["issue"] = p.get("title", "")
         elif kind == "tickets_updated":
@@ -206,6 +264,7 @@ class RunnerApp(App):
                 "budget": p.get("budget", ""),
                 "budget_exhausted": p.get("budget_exhausted", False),
                 "plan_only": p.get("plan_only", False),
+                "stopped": p.get("stopped", False),
                 "error": p.get("error", ""),
             }
             self.query_one("#summary", Static).display = True
@@ -233,11 +292,13 @@ class RunnerApp(App):
             self.query_one("#agent", RichLog).write(f"⚠ BLOCKED: {p.get('reason', '')[:300]}")
         if kind in ("phase", "run_started", "tickets_updated", "run_finished", "ticket_blocked"):
             self._render_all()
+        if kind == "run_finished" and p.get("stopped") and not self.detached:
+            self.exit("stopped")
 
     # -- rendering ---------------------------------------------------------
 
     def _render_all(self) -> None:
-        self.query_one("#pipeline", Static).update(format_pipeline(self.state))
+        self.query_one("#pipeline", Static).update(self.stop_message or format_pipeline(self.state))
         self.query_one("#board", Static).update(format_board(self.state["tickets"]))
         if self.finished:
             self.query_one("#summary", Static).update(format_summary(self.summary))
@@ -279,18 +340,29 @@ def run_visual(cfg, client, issue: dict, plan_only: bool = False):
             )
 
     thread = threading.Thread(target=target, name="issue-runner-pipeline")
-    app = RunnerApp(bus, pipeline_thread=thread)
+    app = RunnerApp(bus, pipeline_thread=thread, config=cfg)
     outcome = app.run()
 
-    detached = outcome == "detached" and thread.is_alive()
-    if detached:
-        print("display detached — run continues headless; progress below:")
-        bus.subscribe(lambda e: _print_event(e))
+    if not app.finished and thread.is_alive():
+        request_stop(cfg)
     thread.join()
-    return result.get("report"), result.get("error"), detached
+    return result.get("report"), result.get("error"), outcome == "detached"
+
+
+def _terminal_key() -> str | None:
+    if os.name == "nt":
+        import msvcrt
+
+        return msvcrt.getwch() if msvcrt.kbhit() else None
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return os.read(sys.stdin.fileno(), 1).decode(errors="replace")
+    return None
 
 
 def _print_event(event: RunEvent) -> None:
+    if event.kind == "stop_requested":
+        print(event.payload["message"], flush=True)
+        return
     if event.kind in (
         "phase",
         "ticket_started",

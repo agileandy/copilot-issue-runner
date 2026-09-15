@@ -102,6 +102,7 @@ class CopilotClient:
         session_name: str | None,
     ) -> str:
         structured = not self.plain_transport
+        self.config.control.check()
         self.budget.check()  # never start a call the run limit has already reached
         argv = self._build_argv(prompt, role, read_only, session_name, structured=structured)
         role_cfg = self.config.role(role)
@@ -181,6 +182,7 @@ class CopilotClient:
         try:
             result = self.runner(
                 argv,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=self.config.timeout,
@@ -210,6 +212,7 @@ class CopilotClient:
         try:
             proc = self.popen(
                 argv,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -257,6 +260,7 @@ class CopilotClient:
             for reader in readers:
                 reader.start()
             while True:
+                self.config.control.check(interrupt_only=True)
                 if time.monotonic() > deadline:
                     raise CopilotError(
                         f"copilot timed out after {self.config.timeout}s for role {role}"

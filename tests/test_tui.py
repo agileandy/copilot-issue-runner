@@ -128,14 +128,29 @@ async def test_app_holds_a_finished_state_for_review_instead_of_exiting():
     assert app.return_value == "finished"
 
 
-async def test_q_before_the_run_ends_still_detaches():
+async def test_q_suspends_and_reattaches_without_destroying_the_app(monkeypatch):
+    from contextlib import contextmanager
+
+    from issue_runner import tui
+
     bus = EventBus()
     app = RunnerApp(bus)
+    suspended = []
+
+    @contextmanager
+    def suspend():
+        suspended.append(app.detached)
+        yield
+
+    monkeypatch.setattr(app, "suspend", suspend)
+    monkeypatch.setattr(tui, "_terminal_key", lambda: "r")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.finished is False
         await pilot.press("q")
-    assert app.return_value == "detached"
+        await pilot.pause()
+        assert suspended == [True]
+        assert app.is_running and not app.detached and not app.finished
 
 
 async def test_summary_panel_is_hidden_until_the_run_finishes():
@@ -199,9 +214,10 @@ async def test_pipeline_crash_still_reaches_the_finished_state(monkeypatch):
     class StubApp:
         """Stands in for the Textual app: runs the pipeline, records the bus."""
 
-        def __init__(self, bus, pipeline_thread=None):
+        def __init__(self, bus, pipeline_thread=None, config=None):
             bus.subscribe(seen.append)
             self._thread = pipeline_thread
+            self.finished = True
 
         def run(self):
             self._thread.start()
