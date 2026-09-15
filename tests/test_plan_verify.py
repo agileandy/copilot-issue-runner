@@ -92,3 +92,15 @@ def test_plan_step_rejects_non_dict_ticket(cfg):
     client = FakeClient([(bad, None), (bad, None)])
     with pytest.raises(PlanError, match="ticket 1 must be a JSON object"):
         plan_step(client, cfg, ISSUE)
+
+
+def test_plan_step_rejects_non_string_title(cfg):
+    bad = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [{"title": 123, "description": "d", "test_assertion": "a"}],
+        }
+    )
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="'title' must be a nonempty string"):
+        plan_step(client, cfg, ISSUE)

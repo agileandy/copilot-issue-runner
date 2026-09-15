@@ -78,8 +78,11 @@ def _validate(data: dict) -> list[Ticket]:
         if not isinstance(item, dict):
             raise PlanError(f"ticket {i} must be a JSON object")
         for field in REQUIRED_FIELDS:
-            if not item.get(field):
+            if field not in item or item[field] is None:
                 raise PlanError(f"ticket {i} is missing required field {field!r}")
+            value = item[field]
+            if not isinstance(value, str) or not value.strip():
+                raise PlanError(f"ticket {i} field {field!r} must be a nonempty string")
         tickets.append(
             Ticket(
                 id=i,
