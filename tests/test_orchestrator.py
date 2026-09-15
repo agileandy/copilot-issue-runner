@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -280,9 +281,10 @@ def test_already_satisfied_ticket_arbitrated_done(git_repo, cfg):
     assert "already satisfied" in backend.closed[0][1]
 
 
-def test_already_satisfied_but_verifier_refuses_blocks_with_reason(git_repo, cfg):
+def test_already_satisfied_hand_back_respects_round_limit(git_repo, cfg):
     backend = RecordingBackend()
     cfg.tickets_backend = backend
+    cfg.max_rounds = 0
     client = FakeClient(
         [*already_green_script(git_repo), (verdict("refine_test", tf="test is a tautology"), None)]
     )
@@ -290,7 +292,98 @@ def test_already_satisfied_but_verifier_refuses_blocks_with_reason(git_repo, cfg
     assert report.blocked == 1
     assert backend.blocked, "backend.block must be called with the reason"
     assert backend.blocked[0][0] == 1
-    assert "tautology" in backend.blocked[0][1] or "verifier" in backend.blocked[0][1]
+    assert "max_rounds=0" in backend.blocked[0][1]
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets[0].test_feedback == "test is a tautology"
+
+
+def test_initially_green_test_can_be_refined_to_expose_and_fix_a_real_bug(git_repo, cfg):
+    from issue_runner.phases.build import run_tests
+    from tests.hardening_support import git
+
+    faulty = (
+        "def within_range(text, lower, upper):\n"
+        "    return [n for n in map(int, text.split(',')) if lower <= n < upper]\n"
+    )
+    (git_repo / "range_impl.py").write_text(faulty)
+    git(git_repo, "add", "range_impl.py")
+    git(git_repo, "commit", "-m", "test: seed incomplete inclusive range")
+    cfg.test_cmd = f"{sys.executable} -m pytest {{test_path}} -q"
+    cfg.regression_cmd = f"{sys.executable} -m pytest -q"
+    cfg.tester_retries = 0
+    weak = (
+        "from range_impl import within_range\n\n"
+        "def test_interior():\n"
+        "    assert within_range('1,3,5', 2, 4) == [3]\n"
+    )
+    strong = weak + (
+        "\ndef test_upper_endpoint():\n    assert within_range('1,3,4,5', 2, 4) == [3,4]\n"
+    )
+    plan = json.dumps(
+        {
+            "summary": "filter inclusive bounds",
+            "tickets": [
+                {
+                    "title": "Filter inclusive bounds",
+                    "description": "Both endpoints must be included",
+                    "test_assertion": "within_range('1,3,5', 2, 4) == [3]",
+                }
+            ],
+        }
+    )
+
+    def repair():
+        assert run_tests(cfg, "test_range.py")[0] is False
+        (git_repo / "range_impl.py").write_text(faulty.replace("n < upper", "n <= upper"))
+
+    client = FakeClient(
+        [
+            (plan, None),
+            (
+                '{"test_path":"test_range.py"}',
+                lambda: (git_repo / "test_range.py").write_text(weak),
+            ),
+            (verdict("refine_test", tf="include the upper bound"), None),
+            (
+                '{"test_path":"test_range.py"}',
+                lambda: (git_repo / "test_range.py").write_text(strong),
+            ),
+            ("fixed", repair),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
+    assert [c["role"] for c in client.calls] == [
+        "planner",
+        "builder.tester",
+        "verifier",
+        "builder.tester",
+        "builder.coder",
+        "verifier",
+    ]
+    assert "include the upper bound" in client.calls[3]["prompt"]
+    assert run_tests(cfg, "test_range.py")[0] is True
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets[0].rounds == 1
+    assert store.tickets[0].already_satisfied is False
+
+
+def test_initially_green_test_can_request_code_rework(git_repo, cfg):
+    client = FakeClient(
+        [
+            *already_green_script(git_repo),
+            (verdict("rework_code", cf="fix the missing behavior"), None),
+            ("fixed", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
+    assert client.calls[-2]["role"] == "builder.coder"
+    assert "fix the missing behavior" in client.calls[-2]["prompt"]
 
 
 def test_retry_blocked_resets_and_reruns(git_repo, cfg):

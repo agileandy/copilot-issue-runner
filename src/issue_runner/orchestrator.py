@@ -470,6 +470,7 @@ def _process_ticket(
 
             if ticket.phase in ("tester", "refine_test"):
                 refining = ticket.phase == "refine_test"
+                ticket.already_satisfied = False
                 try:
                     path = tester_step(
                         client,
@@ -524,16 +525,6 @@ def _process_ticket(
                     ticket.phase = "regression"
                     store.save()
                     continue
-                if ticket.already_satisfied:
-                    _block(
-                        store,
-                        ticket,
-                        report,
-                        f"pre-existing behaviour was not confirmed: {'; '.join(verdict.reasons)} "
-                        f"{verdict.test_feedback or verdict.code_feedback}",
-                        cfg,
-                    )
-                    return
                 ticket.test_feedback = verdict.test_feedback
                 ticket.code_feedback = verdict.code_feedback
                 ticket.phase = "refine_test" if verdict.verdict == "refine_test" else "coder"
