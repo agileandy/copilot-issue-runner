@@ -27,6 +27,7 @@ from .github_io import GithubError
 from .phases import devops
 from .phases.build import (
     BuildError,
+    CoderFailure,
     TestAlreadyPasses,
     coder_step,
     resolve_test_path,
@@ -493,9 +494,20 @@ def _process_ticket(
             if ticket.phase == "coder":
                 passed, _ = run_tests(cfg, test_path)
                 if ticket.code_feedback or not passed:
-                    coder_step(
-                        client, cfg, ticket, test_path, feedback=ticket.code_feedback or None
-                    )
+                    try:
+                        coder_step(
+                            client, cfg, ticket, test_path, feedback=ticket.code_feedback or None
+                        )
+                    except CoderFailure as e:
+                        # the spec may be the problem: let the tester repair it
+                        # rather than losing the ticket to an unsatisfiable test
+                        cfg.control.check()
+                        ticket.test_feedback = str(e)
+                        ticket.code_feedback = ""
+                        ticket.phase = "refine_test"
+                        if not _hand_back(cfg, store, ticket, report, str(e)):
+                            return
+                        continue
                 _require_accepted_test(cfg, ticket)
                 ticket.phase = "verifier"
                 ticket.code_feedback = ""

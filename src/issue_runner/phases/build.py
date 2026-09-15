@@ -52,6 +52,15 @@ class BuildError(RuntimeError):
     pass
 
 
+class CoderFailure(BuildError):
+    """The coder exhausted its retries against the accepted test.
+
+    Often the spec is at fault — an assertion no code can satisfy, or one the
+    coder keeps trying to rewrite — so the orchestrator hands this back to the
+    tester within the round limit instead of blocking the ticket outright.
+    """
+
+
 class TestAlreadyPasses(BuildError):
     """Every tester attempt produced a valid test that passes without new code.
 
@@ -351,4 +360,4 @@ def coder_step(
                 return
             last_error = f"test still fails. Output:\n{output[-2000:]}"
         extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
-    raise BuildError(f"builder.coder failed for ticket {ticket.id}: {last_error}")
+    raise CoderFailure(f"builder.coder failed for ticket {ticket.id}: {last_error}")
