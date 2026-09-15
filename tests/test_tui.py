@@ -5,6 +5,7 @@ from issue_runner.tui import (
     format_pipeline,
     format_stats,
     format_summary,
+    help_text,
 )
 
 # -- pure formatting -------------------------------------------------------
@@ -255,3 +256,56 @@ async def test_pipeline_crash_still_reaches_the_finished_state(monkeypatch):
     assert finished, "a crash must still emit run_finished so the TUI can settle"
     assert finished[0].payload["error"] == "kaboom"
     assert "run aborted" in format_summary(finished[0].payload)
+
+
+# -- help screen -----------------------------------------------------------
+
+
+def test_help_text_explains_the_workflow_controls_and_the_determinism_balance():
+    text = help_text()
+    for role in ("planner", "builder.tester", "builder.coder", "verifier"):
+        assert role in text
+    for control in ("regression", "worktree", "max_rounds", "budget"):
+        assert control in text.lower()
+    assert "probabilistic" in text.lower() and "deterministic" in text.lower()
+    assert "red" in text.lower() and "green" in text.lower()
+    for key in ("h", "q", "Ctrl+C"):
+        assert key in text
+
+
+async def test_h_toggles_the_help_overlay_without_stopping_the_run():
+    app = RunnerApp(EventBus())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#help").display is False
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.query_one("#help").display is True
+        assert app.is_running and not app.finished
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.query_one("#help").display is False
+
+
+async def test_escape_closes_the_help_overlay_and_q_still_detaches(monkeypatch):
+    from contextlib import contextmanager
+
+    from issue_runner import tui
+
+    app = RunnerApp(EventBus())
+
+    @contextmanager
+    def suspend():
+        yield
+
+    monkeypatch.setattr(app, "suspend", suspend)
+    monkeypatch.setattr(tui, "_terminal_key", lambda: "r")
+    async with app.run_test() as pilot:
+        await pilot.press("h")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.query_one("#help").display is False
+        await pilot.press("q")
+        await pilot.pause()
+        assert app.is_running

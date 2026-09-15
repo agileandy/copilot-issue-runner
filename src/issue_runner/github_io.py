@@ -78,6 +78,32 @@ def close_subissue(repo: str, number: int, comment: str, run=subprocess.run) -> 
     _run(["gh", "issue", "close", "-R", repo, str(number), "--comment", comment], run)
 
 
+def list_subissues(repo: str, parent_number: int, run=subprocess.run) -> list[int]:
+    """Numbers of the sub-issues this runner opened for `parent_number`."""
+    prefix = f"[#{parent_number}] "
+    argv = [
+        "gh",
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--search",
+        f"{prefix} in:title",
+        "--state",
+        "all",
+        "--limit",
+        "100",
+        "--json",
+        "number,title",
+    ]
+    found = json.loads(_run(argv, run) or "[]")
+    return [i["number"] for i in found if i["title"].startswith(prefix)]
+
+
+def delete_issue(repo: str, number: int, run=subprocess.run) -> None:
+    _run(["gh", "issue", "delete", "-R", repo, str(number), "--yes"], run)
+
+
 def open_pull_request(repo: str, head: str, title: str, body: str, run=subprocess.run) -> str:
     """Open a PR for `head` against the repo's default base branch; return its URL."""
     argv = [

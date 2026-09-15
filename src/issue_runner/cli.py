@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
-from .demo.seed import is_seed, load_demo_issue
+from .demo.seed import clean_demo_clone, is_seed, load_demo_issue
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.build import BuildError
@@ -85,6 +85,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="clone permanent seed #54 and run the clone with real Copilot calls and credits",
     )
+    p.add_argument(
+        "--demo-clean",
+        type=int,
+        metavar="NUMBER",
+        help="delete a demo clone and its sub-issues (never the seed)",
+    )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
     p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
@@ -144,6 +150,17 @@ def main(argv=None) -> int:
         format="%(levelname)s %(message)s",
         force=True,
     )
+
+    if args.demo_clean is not None:
+        if args.demo or args.issue or args.issue_file:
+            print("error: use --demo-clean on its own", file=sys.stderr)
+            return 2
+        try:
+            clean_demo_clone(args.dir.resolve(), args.demo_clean)
+        except (GithubError, DevopsError, TrackerError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        return 0
 
     if not args.issue and not args.issue_file and not args.demo:
         print("error: provide an issue number or --issue-file", file=sys.stderr)
@@ -265,7 +282,7 @@ def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
 def _demo_resume_command(cfg, issue, original_args: list[str]) -> str:
     args = ["gh-runner", str(issue["number"])]
     args.extend(arg for arg in original_args if arg not in ("--demo", "--plan-only"))
-    args += ["--dir", str(cfg.repo_dir), "--no-github-tickets", "--no-pr"]
+    args += ["--dir", str(cfg.repo_dir), "--no-pr"]
     if "--copilot-cmd" not in args:
         args += ["--copilot-cmd", cfg.copilot_cmd]
     return shlex.join(args)
