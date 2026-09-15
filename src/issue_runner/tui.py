@@ -34,6 +34,51 @@ STATUS_GLYPHS = {
 
 PHASES = ("plan", "branch", "build", "finished")
 
+HELP = """\
+[bold]issue-runner[/] — one GitHub issue becomes a chain of small, proven commits.
+
+[bold]Keys[/]
+  [bold]h[/] help on/off      [bold]escape[/] close this panel
+  [bold]q[/] detach the display — the run keeps going; type r + Enter to reattach
+  [bold]Ctrl+C[/] stop cleanly at the next model call, keeping state and the worktree
+
+[bold]Roles and what each prompt is given[/]
+  [bold]planner[/]        sees the issue title and body only. Splits it into small tickets, each
+                 with ONE test assertion and its dependencies. It writes no code.
+  [bold]builder.tester[/] sees one ticket. Writes a single failing test for that assertion, and
+                 nothing else. It may not touch source files.
+  [bold]builder.coder[/]  sees the ticket and the accepted test. Writes the least code that makes
+                 the test pass. The test file is frozen: it cannot edit the test to pass.
+  [bold]verifier[/]       sees the ticket, the test and the diff, read-only. Answers pass,
+                 refine_test or rework_code, with the reason fed back to the right role.
+
+[bold]Checks and controls[/]
+  red first        a new test must fail before any code is written; a test that passes on
+                   arrival is handed to the verifier to prove it is not a tautology
+  frozen test      the accepted test is hashed; if it changes outside the tester phase the
+                   ticket stops
+  clean worktree   every run works in its own git worktree and branch, never your checkout
+  bounded loops    max_rounds caps verifier hand-backs, then the ticket blocks rather than
+                   looping forever
+  regression gate  the whole suite must pass on the approved workspace before any commit
+  guarded commit   only the approved file set is staged, and a commit hook that alters the
+                   tree is rejected
+  budget           per-call and per-run AI credit caps pause the run instead of overspending
+  resumable        state is saved per ticket, so a stopped run resumes where it left off
+
+[bold]Probabilistic generation, deterministic proof[/]
+  The model is free to propose: how to split the work, how to phrase a test, how to implement.
+  None of that is trusted on its word. Every proposal has to survive something that cannot be
+  argued with — a test that must go red then green, a full suite that must stay green, a diff
+  that must match the approved file set, a git tree that must match what was verified.
+  The AI supplies the judgement, the shell supplies the verdict. When the two disagree, the
+  shell wins and the ticket blocks with the reason on the board.
+"""
+
+
+def help_text() -> str:
+    return HELP
+
 
 def format_pipeline(state: dict) -> str:
     current = state.get("phase", "plan")
@@ -136,6 +181,8 @@ def format_summary(summary: dict) -> str:
 class RunnerApp(App):
     TITLE = "issue-runner"
     BINDINGS: ClassVar = [
+        Binding("h", "toggle_help", "help", priority=True),
+        Binding("escape", "close_help", "close help", show=False),
         Binding("q", "close", "detach / close", priority=True),
         Binding("ctrl+c", "stop_run", "stop", priority=True),
         Binding("ctrl+q", "stop_run", "stop", priority=True, show=False),
@@ -147,6 +194,16 @@ class RunnerApp(App):
     #agent { width: 58%; border: round $secondary; }
     #stats { height: 3; border: round $accent; padding: 0 1; content-align: left middle; }
     #summary { height: auto; border: round $success; padding: 0 1; }
+    #help {
+        layer: overlay;
+        width: 100%;
+        height: 100%;
+        background: $surface;
+        border: round $warning;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+    Screen { layers: base overlay; }
     """
 
     def __init__(
@@ -182,6 +239,9 @@ class RunnerApp(App):
                 highlight_cursor_line=False,
             )
         yield Static(id="stats")
+        help_panel = Static(help_text(), id="help")
+        help_panel.display = False
+        yield help_panel
         summary = Static(id="summary")
         summary.display = False  # revealed only when the run finishes
         yield summary
@@ -193,6 +253,13 @@ class RunnerApp(App):
         self._render_all()
         if self._thread is not None:
             self._thread.start()
+
+    def action_toggle_help(self) -> None:
+        panel = self.query_one("#help")
+        panel.display = not panel.display
+
+    def action_close_help(self) -> None:
+        self.query_one("#help").display = False
 
     def action_close(self) -> None:
         """Before the run ends `q` detaches; afterwards it closes the review."""

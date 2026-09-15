@@ -21,7 +21,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 SEED = {
     "number": 54,
     "title": "[DEMO] Verifier hand-back",
-    "body": "Only issue 54 is permanent. On a clone, implement the demo without cloning again.\n",
+    "body": "Only issue 54 is permanent. On a clone, implement the demo without cloning again.\n"
+    "<!-- issue-runner-permanent-demo-seed:v2 -->\n",
     "url": f"https://github.com/{REPO}/issues/54",
 }
 
@@ -41,16 +42,34 @@ elif args[:2] == ["issue", "create"]:
     if data.get("fail_create"):
         print("creation refused", file=sys.stderr)
         sys.exit(1)
-    number = 100 + len(data["clones"])
+    title = args[args.index("--title") + 1]
+    bucket = "subissues" if title.startswith("[#") else "clones"
+    number = 100 + len(data["clones"]) + len(data.get("subissues", []))
     issue = {
         "number": number,
-        "title": args[args.index("--title") + 1],
+        "title": title,
         "body": args[args.index("--body") + 1],
         "url": "https://github.com/agileandy/copilot-issue-runner/issues/" + str(number),
     }
-    data["clones"].append(issue)
+    data.setdefault(bucket, []).append(issue)
     path.write_text(json.dumps(data))
     print(issue["url"])
+elif args[:2] == ["issue", "list"]:
+    prefix = args[args.index("--search") + 1].split(" in:title")[0]
+    matches = [
+        {"number": i["number"], "title": i["title"]}
+        for i in data.get("subissues", [])
+        if i["title"].startswith(prefix)
+    ]
+    print(json.dumps(matches))
+elif args[:2] == ["issue", "delete"]:
+    number = int(next(a for a in args[2:] if a.isdigit()))
+    for bucket in ("clones", "subissues"):
+        data[bucket] = [i for i in data.get(bucket, []) if i["number"] != number]
+    data["deleted"] = data.get("deleted", []) + [number]
+    path.write_text(json.dumps(data))
+elif args[:2] in (["issue", "close"], ["issue", "comment"]):
+    pass
 else:
     raise SystemExit("unexpected GitHub write: " + repr(args))
 """
@@ -125,12 +144,119 @@ def test_demo_clones_exact_content_and_runs_only_the_clone(live_demo):
     assert state["issue_ref"] == str(clone["number"])
     assert state["branch"].startswith(f"issue-{clone['number']}-")
     assert all(ticket["status"] == "done" for ticket in state["tickets"])
-    assert all(ticket["github_issue"] is None for ticket in state["tickets"])
+    assert all(ticket["github_issue"] is not None for ticket in state["tickets"])
     assert git(fixture.repo_dir, "rev-parse", "HEAD") == source_head
     assert git(fixture.repo_dir, "branch", "--show-current") == "main"
-    assert [args[:2] for args in data["commands"]] == [["issue", "view"], ["issue", "create"]]
+    assert [args[:2] for args in data["commands"]][:2] == [["issue", "view"], ["issue", "create"]]
     assert clone["url"] in result.stdout
     assert "real model calls" in result.stdout.lower()
+
+
+def test_demo_mirrors_each_ticket_as_a_subissue_on_the_clone(live_demo):
+    fixture, data_path, _ = live_demo
+    result = run_cli(live_demo, "--demo")
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(data_path.read_text())
+    clone = data["clones"][0]
+    state = json.loads(
+        (fixture.repo_dir / ".issue-runner" / f"issue-{clone['number']}.json").read_text()
+    )
+    subissues = data["subissues"]
+    assert subissues, "the demo should mirror tickets as sub-issues"
+    assert [i["number"] for i in subissues] == [t["github_issue"] for t in state["tickets"]]
+    assert all(i["title"].startswith(f"[#{clone['number']}] ") for i in subissues)
+    assert all(f"Part of #{clone['number']}." in i["body"] for i in subissues)
+    closed = [
+        next(a for a in args[2:] if a.isdigit())
+        for args in data["commands"]
+        if args[:2] == ["issue", "close"]
+    ]
+    assert sorted(closed) == sorted(str(i["number"]) for i in subissues)
+
+
+def test_demo_subissues_never_attach_to_the_seed(live_demo):
+    result = run_cli(live_demo, "--demo")
+    assert result.returncode == 0, result.stdout + result.stderr
+    _, data_path, _ = live_demo
+    data = json.loads(data_path.read_text())
+    assert data["subissues"], "the demo performs sub-issue writes"
+    assert all(not i["title"].startswith("[#54] ") for i in data["subissues"])
+    assert all("Part of #54." not in i["body"] for i in data["subissues"])
+    targeted = [
+        args
+        for args in data["commands"]
+        if args[:2] in (["issue", "close"], ["issue", "comment"], ["issue", "delete"])
+    ]
+    assert all(next(a for a in args[2:] if a.isdigit()) != "54" for args in targeted)
+
+
+def test_demo_resume_command_keeps_subissue_mirroring_on(live_demo):
+    result = run_cli(live_demo, "--demo", "--plan-only")
+    assert result.returncode == 0, result.stdout + result.stderr
+    resume = next(
+        line for line in result.stdout.splitlines() if line.startswith("Resume this clone:")
+    )
+    assert "--no-github-tickets" not in resume
+    assert "--no-pr" in resume
+
+
+def test_no_github_tickets_still_disables_demo_mirroring(live_demo):
+    result = run_cli(live_demo, "--demo", "--no-github-tickets")
+    assert result.returncode == 0, result.stdout + result.stderr
+    _, data_path, _ = live_demo
+    data = json.loads(data_path.read_text())
+    assert len(data["clones"]) == 1
+    assert [args[:2] for args in data["commands"]] == [["issue", "view"], ["issue", "create"]]
+
+
+def test_demo_clean_deletes_the_clone_and_its_subissues(live_demo):
+    assert run_cli(live_demo, "--demo").returncode == 0
+    fixture, data_path, _ = live_demo
+    before = json.loads(data_path.read_text())
+    clone = before["clones"][0]
+    state_dir = fixture.repo_dir / ".issue-runner"
+    state_file = state_dir / f"issue-{clone['number']}.json"
+    branch = json.loads(state_file.read_text())["branch"]
+    worktree = state_dir / "worktrees" / str(clone["number"])
+    assert worktree.is_dir()
+    assert branch in git(fixture.repo_dir, "branch", "--list", branch)
+
+    result = run_cli(live_demo, "--demo-clean", str(clone["number"]))
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = json.loads(data_path.read_text())
+    assert after["clones"] == []
+    assert after["subissues"] == []
+    assert sorted(after["deleted"]) == sorted(
+        [clone["number"], *[i["number"] for i in before["subissues"]]]
+    )
+    assert str(clone["number"]) in result.stdout
+    assert not state_file.exists()
+    assert not (state_dir / f"usage-issue-{clone['number']}.json").exists()
+    assert not worktree.exists()
+    assert git(fixture.repo_dir, "branch", "--list", branch) == ""
+    assert git(fixture.repo_dir, "branch", "--show-current") == "main"
+    assert git(fixture.repo_dir, "status", "--porcelain") == ""
+
+
+def test_demo_clean_leaves_unrelated_branches_and_state_alone(live_demo):
+    assert run_cli(live_demo, "--demo").returncode == 0
+    fixture, data_path, _ = live_demo
+    clone = json.loads(data_path.read_text())["clones"][0]
+    git(fixture.repo_dir, "branch", "keep-me")
+    other = fixture.repo_dir / ".issue-runner" / "issue-999.json"
+    other.write_text("{}")
+
+    assert run_cli(live_demo, "--demo-clean", str(clone["number"])).returncode == 0
+    assert "keep-me" in git(fixture.repo_dir, "branch", "--list", "keep-me")
+    assert other.exists()
+
+
+def test_demo_clean_refuses_the_permanent_seed(live_demo):
+    result = run_cli(live_demo, "--demo-clean", "54")
+    assert result.returncode == 2
+    assert "54" in result.stderr
+    _, data_path, _ = live_demo
+    assert json.loads(data_path.read_text()).get("deleted", []) == []
 
 
 def test_each_demo_invocation_creates_a_new_clone(live_demo):
@@ -139,7 +265,8 @@ def test_each_demo_invocation_creates_a_new_clone(live_demo):
         assert result.returncode == 0, result.stdout + result.stderr
     fixture, data_path, _ = live_demo
     clones = json.loads(data_path.read_text())["clones"]
-    assert [c["number"] for c in clones] == [100, 101]
+    numbers = [c["number"] for c in clones]
+    assert len(numbers) == 2 and len(set(numbers)) == 2 and 54 not in numbers
     assert all(
         (fixture.repo_dir / ".issue-runner" / f"issue-{c['number']}.json").exists() for c in clones
     )
@@ -232,4 +359,4 @@ def test_resume_command_keeps_options_but_does_not_repeat_demo_or_plan_only(live
     assert args[args.index("--model") + 1] == "test-model"
     assert args[args.index("--max-run-credits") + 1] == "60"
     assert args[args.index("--copilot-cmd") + 1] == "copilot"
-    assert "--no-pr" in args and "--no-github-tickets" in args
+    assert "--no-pr" in args and "--no-github-tickets" not in args
