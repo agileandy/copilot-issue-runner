@@ -62,40 +62,34 @@ gh-runner 7 --plan-only -v
 
 ## Demo mode
 
-`--demo` runs the entire pipeline offline, with **no model call, no credits and
-no GitHub access** — for showing people what the runner does:
+`--demo` runs a **real GitHub/Copilot demonstration** from this repository:
 
 ```bash
-gh-runner --demo                          # throwaway sandbox in a temp directory
-gh-runner --demo --demo-dir ~/tmp/demo    # keep the sandbox somewhere
-gh-runner --demo --demo-dir ~/tmp/demo --demo-reset --visual
+gh-runner --demo --visual
 ```
 
-Reset is allowed only for a runner-owned demo with a valid ownership marker.
-Unowned directories, dangerous paths and symlink destinations are refused.
-Legacy demos without a marker must be left intact or removed manually.
+Each invocation copies the title and body of permanent seed
+[#54](https://github.com/agileandy/copilot-issue-runner/issues/54) into a **new
+issue**, then plans and executes only that clone. The clone's issue number
+provides a unique run ID. The seed stays open and cannot be executed directly.
 
-It creates a small git repo (a `demo_pkg.stats` module and an `issue.md` asking
-for `mean` and `median`), then drives the real orchestrator against a scripted
-stand-in for Copilot. Nothing is faked inside the pipeline: the tests really
-run, the harness really enforces red-then-green, and each ticket is really
-committed. The script is written so the demo shows the interesting paths —
+The seed specifies three steps: parse integers, filter an inclusive range, then
+summarize it. An intentional upper-bound defect must prompt the verifier to
+request a stronger test before the coder repairs it. This uses real model calls
+and credits, not scripted responses.
 
-- ticket 1 goes straight through: red test → implementation → `pass` → commit;
-- ticket 2's first implementation is wrong, so the harness bounces it back;
-- the verifier then returns `refine_test` (even-length median is untested),
-  sending the loop back to the tester and on to the coder before it passes.
+Run from a clean checkout of `agileandy/copilot-issue-runner` with `gh` and
+Copilot authenticated and project test dependencies installed. The normal
+isolated worktree, test gates, visual controls and credit limits apply. Demo
+mode creates no extra GitHub sub-issues and does not push or open a PR.
 
-The demo uses its disposable sandbox directly rather than creating another
-worktree inside it. The sandbox path is printed at the end; inspect the result with
-`git -C <sandbox> log --oneline`. Add `--visual` for the TUI, `--plan-only` to
-stop after planning. `ISSUE_RUNNER_DEMO_DELAY` (seconds, default `0.15`) paces
-the streamed output in visual mode.
+Use `--plan-only` to clone and plan without building. `--dry-run` only reads the
+seed and previews the operation: it creates no clone and makes no model call.
+To resume a stopped demo, use the **clone number** and command printed by the
+runner. Repeating `--demo` deliberately starts a fresh clone instead.
 
-The sandbox runs its tests with whichever interpreter the runner is installed
-under. That interpreter has pytest in a dev checkout but not in a
-`uv tool install` venv, so the demo falls back to a bundled dependency-free test
-runner — the banner prints the command actually in force.
+The old offline `--demo-dir` and `--demo-reset` options are removed. Offline
+fixtures remain available to the automated tests only.
 
 ## Usage
 

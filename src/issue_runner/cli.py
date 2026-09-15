@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
-from .demo import DemoError, demo_banner, setup_demo
+from .demo.seed import is_seed, load_demo_issue
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.build import BuildError
@@ -83,18 +83,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument(
         "--demo",
         action="store_true",
-        help="run the whole pipeline offline in a throwaway sandbox repo: "
-        "no model calls, no credits, no GitHub",
-    )
-    p.add_argument(
-        "--demo-dir",
-        type=Path,
-        help="where to create the demo sandbox (default: a temporary directory)",
-    )
-    p.add_argument(
-        "--demo-reset",
-        action="store_true",
-        help="recreate --demo-dir from scratch if it already exists",
+        help="clone permanent seed #54 and run the clone with real Copilot calls and credits",
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
     p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
@@ -121,6 +110,8 @@ def _resolve_copilot_cmd(cmd: str) -> str:
 
 def _load_issue(args, cfg, repo_dir: Path) -> dict:
     """Route the issue read: file > explicit GitHub --repo > origin remote (Gitea/GitHub)."""
+    if args.demo:
+        return load_demo_issue(cfg, dry_run=args.dry_run)
     if args.issue_file:
         return issue_from_file(args.issue_file)
     if cfg.repo:
@@ -158,20 +149,9 @@ def main(argv=None) -> int:
         print("error: provide an issue number or --issue-file", file=sys.stderr)
         return 2
 
-    demo_env = None
-    if args.demo:
-        try:
-            demo_env = setup_demo(args.demo_dir, force=args.demo_reset)
-        except DemoError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
-        args.issue = None
-        args.issue_file = demo_env.issue_file
-        args.dir = demo_env.repo_dir
-        args.repo = None
-        args.no_github_tickets = True
-        args.no_pr = True
-        args.copilot_cmd = str(demo_env.copilot_cmd)
+    if args.demo and (args.issue or args.issue_file):
+        print("error: use --demo without an issue number or --issue-file", file=sys.stderr)
+        return 2
 
     repo_dir = args.dir.resolve()
     try:
@@ -179,21 +159,14 @@ def main(argv=None) -> int:
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    if demo_env and not args.test_cmd:
-        cfg.test_cmd = demo_env.test_cmd
-    if demo_env:
-        # printed after load_config so the banner's test command is the one in force
-        print(demo_banner(demo_env) + "\n", flush=True)
     if args.repo:
         cfg.repo = args.repo
     if args.test_cmd:
         cfg.test_cmd = args.test_cmd
     if args.regression_cmd:
         cfg.regression_cmd = args.regression_cmd
-    if args.in_place or demo_env:
+    if args.in_place:
         cfg.isolate_worktree = False
-    if demo_env and cfg.regression_cmd is None:
-        cfg.regression_cmd = cfg.test_cmd.format(test_path="tests")
     if args.max_rounds is not None:
         cfg.max_rounds = args.max_rounds
     if args.no_github_tickets:
@@ -206,7 +179,8 @@ def main(argv=None) -> int:
         cfg.visual = True
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
-    cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
+    if not args.demo and args.copilot_cmd is None:
+        cfg.copilot_cmd = _resolve_copilot_cmd(cfg.copilot_cmd)
     if args.max_ai_credits is not None:
         cfg.max_ai_credits = args.max_ai_credits
     if args.max_run_credits is not None:
@@ -227,14 +201,19 @@ def main(argv=None) -> int:
 
     try:
         issue = _load_issue(args, cfg, repo_dir)
-    except (TrackerError, GithubError) as e:
+        if not args.demo and is_seed(issue, cfg.repo):
+            raise GithubError("issue #54 is a permanent seed; use --demo to run a fresh clone")
+    except (TrackerError, GithubError, DevopsError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
     client = CopilotClient(cfg)
     if args.dry_run:
         prompt = PLAN_PROMPT.format(
-            number=issue["number"], title=issue["title"], body=issue["body"], feedback=""
+            number="<new clone>" if args.demo else issue["number"],
+            title=issue["title"],
+            body=issue["body"],
+            feedback="",
         )
         argv_preview = client._build_argv(
             prompt, role="planner", read_only=True, session_name="planner"
@@ -244,11 +223,16 @@ def main(argv=None) -> int:
         print(f"\n--- prompt ({len(prompt)} chars) ---\n{prompt}")
         return 0
 
+    resume = (
+        _demo_resume_command(cfg, issue, list(sys.argv[1:] if argv is None else argv))
+        if args.demo
+        else None
+    )
     with stop_signals(cfg):
-        return _execute(cfg, client, issue, args.plan_only, demo_env)
+        return _execute(cfg, client, issue, args.plan_only, resume)
 
 
-def _execute(cfg, client, issue, plan_only, demo_env) -> int:
+def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
     if cfg.visual and sys.stdout.isatty() and sys.stdin.isatty():
         try:
             from .tui import run_visual
@@ -261,9 +245,9 @@ def _execute(cfg, client, issue, plan_only, demo_env) -> int:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
                 _print_abort_usage(client)
+                _print_demo_resume(resume)
                 return 1
-            _print_summary(report)
-            _print_demo_footer(demo_env)
+            _print_summary(report, resume)
             return _exit_code(report)
 
     try:
@@ -271,19 +255,20 @@ def _execute(cfg, client, issue, plan_only, demo_env) -> int:
     except PipelineError as e:
         print(f"error: {e}", file=sys.stderr)
         _print_abort_usage(client)
+        _print_demo_resume(resume)
         return 1
 
-    _print_summary(report)
-    _print_demo_footer(demo_env)
+    _print_summary(report, resume)
     return _exit_code(report)
 
 
-def _print_demo_footer(demo_env) -> None:
-    if demo_env is None:
-        return
-    print(f"\ndemo sandbox: {demo_env.repo_dir}")
-    print(f"  git -C {demo_env.repo_dir} log --oneline")
-    print(f"  git -C {demo_env.repo_dir} show --stat HEAD")
+def _demo_resume_command(cfg, issue, original_args: list[str]) -> str:
+    args = ["gh-runner", str(issue["number"])]
+    args.extend(arg for arg in original_args if arg not in ("--demo", "--plan-only"))
+    args += ["--dir", str(cfg.repo_dir), "--no-github-tickets", "--no-pr"]
+    if "--copilot-cmd" not in args:
+        args += ["--copilot-cmd", cfg.copilot_cmd]
+    return shlex.join(args)
 
 
 def _exit_code(report) -> int:
@@ -295,13 +280,15 @@ def _exit_code(report) -> int:
     return 0 if report.blocked == 0 else 3
 
 
-def _print_summary(report) -> None:
+def _print_summary(report, resume: str | None = None) -> None:
     print(f"\nbranch: {report.branch or '(plan only)'}")
     if report.worktree:
         print(f"worktree: {report.worktree}")
     print(f"tickets done: {report.done}, blocked: {report.blocked}")
     if report.stopped:
-        print("Run stopped. State and worktree preserved; re-run the same command to resume.")
+        print("Run stopped. State and worktree preserved.")
+        if resume is None:
+            print("Re-run the same command to resume.")
     if report.budget_exhausted:
         print("run stopped: AI credit budget exhausted — re-run to resume")
     if report.usage_summary:
@@ -312,6 +299,13 @@ def _print_summary(report) -> None:
         print(f"pull request: {report.pr_url}")
     for line in report.details:
         print(f"  - {line}")
+    _print_demo_resume(resume)
+
+
+def _print_demo_resume(resume: str | None) -> None:
+    if resume is not None:
+        print(f"\nResume this clone: {resume}")
+        print("Using --demo again creates a fresh clone instead.")
 
 
 def _print_abort_usage(client: CopilotClient) -> None:

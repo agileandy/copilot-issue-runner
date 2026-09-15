@@ -21,6 +21,7 @@ from .budget import BudgetExhausted, RunBudget
 from .config import RunnerConfig
 from .control import RunStopped
 from .copilot import CopilotError
+from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .phases import devops
@@ -86,6 +87,8 @@ def run_issue(
     state_dir: Path | None = None,
     plan_only: bool = False,
 ) -> RunReport:
+    if is_seed(issue, cfg.repo):
+        raise DevopsError("refusing to execute permanent seed #54; use --demo to create a clone")
     source = Path(cfg.repo_dir).resolve()
     if not source.is_dir():
         raise DevopsError(f"target repository directory does not exist: {source}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted stand-in for the Copilot CLI, used by `--demo`.
+"""Scripted stand-in for the Copilot CLI, used only by offline test fixtures.
 
 It accepts the same argv the runner builds, works out which role is calling
 from the prompt text, performs the file edits a real agent would have made, and

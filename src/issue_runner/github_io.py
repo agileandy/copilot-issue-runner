@@ -41,6 +41,11 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
         f"{ticket.description}\n\n"
         f"**Single test assertion:** `{ticket.test_assertion}`"
     )
+    return create_issue(repo, f"[#{parent_number}] {ticket.title}", body, run=run)["number"]
+
+
+def create_issue(repo: str, title: str, body: str, run=subprocess.run) -> dict:
+    """Create an issue without modifying its supplied title or body."""
     argv = [
         "gh",
         "issue",
@@ -48,7 +53,7 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
         "-R",
         repo,
         "--title",
-        f"[#{parent_number}] {ticket.title}",
+        title,
         "--body",
         body,
     ]
@@ -56,7 +61,13 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
     match = re.search(r"/issues/(\d+)", stdout)
     if not match:
         raise GithubError(f"could not parse issue number from gh output: {stdout[:200]!r}")
-    return int(match.group(1))
+    number = int(match.group(1))
+    return {
+        "number": number,
+        "title": title,
+        "body": body,
+        "url": f"https://github.com/{repo}/issues/{number}",
+    }
 
 
 def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None:

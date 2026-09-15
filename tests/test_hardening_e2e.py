@@ -35,9 +35,24 @@ def test_real_cli_exposes_regression_and_workspace_controls():
     assert "--in-place" in result.stdout
 
 
-def test_real_cli_demo_persists_work_and_headless_usage(tmp_path):
+def test_real_cli_offline_fixture_persists_work_and_headless_usage(tmp_path):
     repo = tmp_path / "demo"
-    result = cli("--demo", "--demo-dir", repo)
+    env = setup_demo(repo)
+    result = cli(
+        "--issue-file",
+        env.issue_file,
+        "--dir",
+        repo,
+        "--copilot-cmd",
+        env.copilot_cmd,
+        "--test-cmd",
+        env.test_cmd,
+        "--regression-cmd",
+        env.test_cmd.format(test_path="tests"),
+        "--in-place",
+        "--no-github-tickets",
+        "--no-pr",
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "tickets done: 2, blocked: 0" in result.stdout
     assert f"worktree: {repo}" in result.stdout
@@ -56,7 +71,7 @@ def test_real_cli_demo_persists_work_and_headless_usage(tmp_path):
     assert ".issue-runner/" not in git(repo, "ls-files")
 
 
-def test_real_cli_refuses_to_reset_an_unowned_directory(tmp_path):
+def test_real_cli_rejects_removed_offline_reset_flags_without_touching_files(tmp_path):
     target = tmp_path / "ordinary-project"
     target.mkdir()
     note = target / "keep.txt"
