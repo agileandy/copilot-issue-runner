@@ -484,7 +484,7 @@ def _parse(line: str):
         return data.get("deltaContent"), None, None, None, True
     if kind == "tool.execution_start":
         name = data.get("toolName", "tool")
-        args = json.dumps(data.get("arguments", {}))[:120]
+        args = json.dumps(data.get("arguments", {}), ensure_ascii=False)
         return f"\n⚙ {name} {args}\n", None, None, None, True
     if kind == "assistant.message":
         return None, data.get("content"), None, None, True

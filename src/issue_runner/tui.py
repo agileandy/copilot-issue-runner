@@ -18,7 +18,7 @@ from typing import ClassVar
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Footer, RichLog, Static
+from textual.widgets import Footer, Static, TextArea
 
 from .config import RunnerConfig
 from .control import announce_stop, request_stop
@@ -136,7 +136,7 @@ def format_summary(summary: dict) -> str:
 class RunnerApp(App):
     TITLE = "issue-runner"
     BINDINGS: ClassVar = [
-        ("q", "close", "detach / close"),
+        Binding("q", "close", "detach / close", priority=True),
         Binding("ctrl+c", "stop_run", "stop", priority=True),
         Binding("ctrl+q", "stop_run", "stop", priority=True, show=False),
     ]
@@ -173,7 +173,14 @@ class RunnerApp(App):
         yield Static(id="pipeline")
         with Horizontal(id="middle"):
             yield Static(id="board")
-            yield RichLog(id="agent", wrap=True, markup=False, max_lines=2000)
+            yield TextArea(
+                id="agent",
+                read_only=True,
+                soft_wrap=True,
+                show_line_numbers=False,
+                show_cursor=False,
+                highlight_cursor_line=False,
+            )
         yield Static(id="stats")
         summary = Static(id="summary")
         summary.display = False  # revealed only when the run finishes
@@ -275,10 +282,9 @@ class RunnerApp(App):
             self.stats["calls"] += 1
             self.stats["current_role"] = p.get("role")
             self._call_started = time.monotonic()
-            log = self.query_one("#agent", RichLog)
-            log.write(f"\n━━ {p.get('role')} ({p.get('session') or 'session'}) ━━")
+            self._append_output(f"\n━━ {p.get('role')} ({p.get('session') or 'session'}) ━━\n")
         elif kind == "agent_output":
-            self.query_one("#agent", RichLog).write(p.get("chunk", ""), scroll_end=True)
+            self._append_output(p.get("chunk", ""))
         elif kind == "agent_call_finished":
             self.stats["current_role"] = None
             self._call_started = None
@@ -290,15 +296,23 @@ class RunnerApp(App):
                 self.stats["nano_aiu"] = self.stats.get("nano_aiu", 0) + cost
             if not cost_is_complete(usage):
                 self.stats["unknown_cost_calls"] = self.stats.get("unknown_cost_calls", 0) + 1
-            self.query_one("#agent", RichLog).write(f"── done in {p.get('elapsed', '?')}s ──")
+            self._append_output(f"\n── done in {p.get('elapsed', '?')}s ──\n")
         elif kind == "ticket_blocked":
-            self.query_one("#agent", RichLog).write(f"⚠ BLOCKED: {p.get('reason', '')[:300]}")
+            self._append_output(f"\n⚠ BLOCKED: {p.get('reason', '')}\n")
         if kind in ("phase", "run_started", "tickets_updated", "run_finished", "ticket_blocked"):
             self._render_all()
         if kind == "run_finished" and p.get("stopped") and not self.detached:
             self.exit("stopped")
 
     # -- rendering ---------------------------------------------------------
+
+    def _append_output(self, text: str) -> None:
+        output = self.query_one("#agent", TextArea)
+        output.insert(text, output.document.end, maintain_selection_offset=False)
+        excess = output.document.line_count - 2000
+        if excess > 0:
+            output.delete((0, 0), (excess, 0))
+        output.scroll_end(animate=False)
 
     def _render_all(self) -> None:
         if self.detached:
