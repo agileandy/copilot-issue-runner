@@ -17,6 +17,10 @@ SEED_URL = f"https://github.com/{SEED_REPO}/issues/{SEED_NUMBER}"
 SEED_MARKER = "<!-- issue-runner-permanent-demo-seed:"
 
 
+class DemoCleanIncomplete(GithubError):
+    """Local cleanup succeeded but some issues could not be retired."""
+
+
 def is_seed(issue: dict, repo: str | None) -> bool:
     return issue["number"] == SEED_NUMBER and (
         (repo or "").casefold() == SEED_REPO or issue.get("url") == SEED_URL
@@ -61,7 +65,12 @@ def load_demo_issue(cfg: RunnerConfig, *, dry_run: bool = False) -> dict:
 
 
 def clean_demo_clone(repo_dir, number: int) -> None:
-    """Delete one demo clone, its sub-issues, and the local work it generated."""
+    """Retire one demo clone, its sub-issues, and the local work it generated.
+
+    Deleting an issue needs admin rights, which an ordinary `repo` token does
+    not have, so a refused delete falls back to closing. The local cleanup runs
+    either way: half-removed GitHub state must not strand a worktree.
+    """
     if number == SEED_NUMBER:
         raise GithubError(f"issue #{SEED_NUMBER} is the permanent seed and must never be deleted")
     repo_dir = Path(repo_dir)
@@ -71,16 +80,45 @@ def clean_demo_clone(repo_dir, number: int) -> None:
     issue = github_io.fetch_issue(str(number), repo=SEED_REPO)
     if SEED_MARKER not in (issue.get("body") or ""):
         raise GithubError(f"issue #{number} is not a demo clone of #{SEED_NUMBER}; refusing")
+
     subissues = github_io.list_subissues(SEED_REPO, number)
-    for sub in subissues:
-        github_io.delete_issue(SEED_REPO, sub)
-    github_io.delete_issue(SEED_REPO, number)
+    deleted, closed, failed = [], [], []
+    for target in [*subissues, number]:
+        _retire_issue(target, deleted, closed, failed)
     removed = _clean_local_run(repo_dir, number)
+
+    outcome = ", ".join(
+        part
+        for part in (
+            f"deleted {len(deleted)} issue(s)" if deleted else "",
+            f"closed {len(closed)} issue(s) (your token cannot delete)" if closed else "",
+        )
+        if part
+    )
     print(
-        f"deleted demo clone #{number} and {len(subissues)} sub-issue(s); "
+        f"demo clone #{number}: {outcome or 'no issue could be retired'}; "
         f"removed {removed}. The seed #{SEED_NUMBER} is untouched.",
         flush=True,
     )
+    if failed:
+        raise DemoCleanIncomplete(
+            f"local work was removed, but GitHub issues {failed} could not be "
+            "deleted or closed; retire them by hand"
+        )
+
+
+def _retire_issue(number: int, deleted: list, closed: list, failed: list) -> None:
+    try:
+        github_io.delete_issue(SEED_REPO, number)
+        deleted.append(number)
+        return
+    except GithubError:
+        pass
+    try:
+        github_io.close_subissue(SEED_REPO, number, "retired by gh-runner --demo-clean")
+        closed.append(number)
+    except GithubError:
+        failed.append(number)
 
 
 def _clean_local_run(repo_dir: Path, number: int) -> str:

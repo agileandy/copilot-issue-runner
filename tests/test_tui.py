@@ -309,3 +309,31 @@ async def test_escape_closes_the_help_overlay_and_q_still_detaches(monkeypatch):
         await pilot.press("q")
         await pilot.pause()
         assert app.is_running
+
+
+async def test_help_panel_scrolls_when_the_text_is_taller_than_the_screen():
+    app = RunnerApp(EventBus())
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.press("h")
+        await pilot.pause()
+        panel = app.query_one("#help")
+        assert panel.is_container and panel.allow_vertical_scroll
+        assert panel.max_scroll_y > 0, "the help text must be taller than the panel"
+        assert app.focused is panel
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert panel.scroll_offset.y > 0
+        await pilot.press("end")
+        await pilot.pause()
+        assert panel.scroll_offset.y == panel.max_scroll_y
+
+
+async def test_closing_help_returns_focus_so_keys_still_work():
+    app = RunnerApp(EventBus())
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.press("h")
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert app.query_one("#help").display is False
+        assert app.focused is not app.query_one("#help")

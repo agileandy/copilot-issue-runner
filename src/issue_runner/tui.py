@@ -17,7 +17,7 @@ from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Footer, Static, TextArea
 
 from .config import RunnerConfig
@@ -39,6 +39,7 @@ HELP = """\
 
 [bold]Keys[/]
   [bold]h[/] help on/off      [bold]escape[/] close this panel
+  [bold]↑ ↓ PageUp PageDown Home End[/] scroll this panel
   [bold]q[/] detach the display — the run keeps going; type r + Enter to reattach
   [bold]Ctrl+C[/] stop cleanly at the next model call, keeping state and the worktree
 
@@ -195,6 +196,7 @@ class RunnerApp(App):
     #stats { height: 3; border: round $accent; padding: 0 1; content-align: left middle; }
     #summary { height: auto; border: round $success; padding: 0 1; }
     #help {
+        scrollbar-size-vertical: 1;
         layer: overlay;
         width: 100%;
         height: 100%;
@@ -239,8 +241,9 @@ class RunnerApp(App):
                 highlight_cursor_line=False,
             )
         yield Static(id="stats")
-        help_panel = Static(help_text(), id="help")
+        help_panel = VerticalScroll(Static(help_text(), id="help-body"), id="help")
         help_panel.display = False
+        help_panel.can_focus = True
         yield help_panel
         summary = Static(id="summary")
         summary.display = False  # revealed only when the run finishes
@@ -256,10 +259,17 @@ class RunnerApp(App):
 
     def action_toggle_help(self) -> None:
         panel = self.query_one("#help")
-        panel.display = not panel.display
+        if panel.display:
+            self.action_close_help()
+            return
+        panel.display = True
+        panel.scroll_home(animate=False)
+        panel.focus()
 
     def action_close_help(self) -> None:
-        self.query_one("#help").display = False
+        panel = self.query_one("#help")
+        panel.display = False
+        self.query_one("#agent").focus()
 
     def action_close(self) -> None:
         """Before the run ends `q` detaches; afterwards it closes the review."""

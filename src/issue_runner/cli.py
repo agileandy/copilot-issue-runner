@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
-from .demo.seed import clean_demo_clone, is_seed, load_demo_issue
+from .demo.seed import DemoCleanIncomplete, clean_demo_clone, is_seed, load_demo_issue
 from .github_io import GithubError, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.build import BuildError
@@ -157,6 +157,9 @@ def main(argv=None) -> int:
             return 2
         try:
             clean_demo_clone(args.dir.resolve(), args.demo_clean)
+        except DemoCleanIncomplete as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
         except (GithubError, DevopsError, TrackerError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2

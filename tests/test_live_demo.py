@@ -63,13 +63,18 @@ elif args[:2] == ["issue", "list"]:
     ]
     print(json.dumps(matches))
 elif args[:2] == ["issue", "delete"]:
+    if data.get("refuse_delete"):
+        print("GraphQL: Viewer not authorized to delete (deleteIssue)", file=sys.stderr)
+        sys.exit(1)
     number = int(next(a for a in args[2:] if a.isdigit()))
     for bucket in ("clones", "subissues"):
         data[bucket] = [i for i in data.get(bucket, []) if i["number"] != number]
     data["deleted"] = data.get("deleted", []) + [number]
     path.write_text(json.dumps(data))
 elif args[:2] in (["issue", "close"], ["issue", "comment"]):
-    pass
+    if data.get("refuse_close"):
+        print("close refused", file=sys.stderr)
+        sys.exit(1)
 else:
     raise SystemExit("unexpected GitHub write: " + repr(args))
 """
@@ -360,3 +365,45 @@ def test_resume_command_keeps_options_but_does_not_repeat_demo_or_plan_only(live
     assert args[args.index("--max-run-credits") + 1] == "60"
     assert args[args.index("--copilot-cmd") + 1] == "copilot"
     assert "--no-pr" in args and "--no-github-tickets" not in args
+
+
+def test_demo_clean_closes_issues_when_the_token_cannot_delete(live_demo):
+    assert run_cli(live_demo, "--demo").returncode == 0
+    fixture, data_path, _ = live_demo
+    data = json.loads(data_path.read_text())
+    data["refuse_delete"] = True
+    data_path.write_text(json.dumps(data))
+    clone = data["clones"][0]
+    worktree = fixture.repo_dir / ".issue-runner" / "worktrees" / str(clone["number"])
+    assert worktree.is_dir()
+
+    result = run_cli(live_demo, "--demo-clean", str(clone["number"]))
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = json.loads(data_path.read_text())
+    closed = [
+        next(a for a in args[2:] if a.isdigit())
+        for args in after["commands"]
+        if args[:2] == ["issue", "close"]
+    ]
+    assert str(clone["number"]) in closed
+    assert all(str(i["number"]) in closed for i in data["subissues"])
+    assert "closed" in result.stdout.lower()
+    assert not worktree.exists()
+
+
+def test_demo_clean_removes_local_work_even_if_github_fails_entirely(live_demo):
+    assert run_cli(live_demo, "--demo").returncode == 0
+    fixture, data_path, _ = live_demo
+    data = json.loads(data_path.read_text())
+    data["refuse_delete"] = True
+    data["refuse_close"] = True
+    data_path.write_text(json.dumps(data))
+    clone = data["clones"][0]
+    state_file = fixture.repo_dir / ".issue-runner" / f"issue-{clone['number']}.json"
+    branch = json.loads(state_file.read_text())["branch"]
+
+    result = run_cli(live_demo, "--demo-clean", str(clone["number"]))
+    assert result.returncode == 1
+    assert not state_file.exists()
+    assert git(fixture.repo_dir, "branch", "--list", branch) == ""
+    assert "could not" in result.stderr.lower() or "could not" in result.stdout.lower()
