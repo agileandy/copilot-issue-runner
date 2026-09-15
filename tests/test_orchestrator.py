@@ -612,3 +612,67 @@ def two_ticket_plan():
             ],
         }
     )
+
+
+def test_impossible_test_is_handed_back_to_the_tester_instead_of_blocking(git_repo, cfg):
+    """Run 57: the tester wrote a test no code could satisfy, so the coder kept
+    failing and the ticket died. The spec itself has to be repairable."""
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("no code written", None),
+            ("still nothing", None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    assert [c["role"] for c in client.calls] == [
+        "planner",
+        "builder.tester",
+        "builder.coder",
+        "builder.coder",
+        "builder.tester",
+        "builder.coder",
+        "verifier",
+    ]
+    assert "test still fails" in client.calls[4]["prompt"]
+
+
+def test_a_coder_editing_the_test_hands_that_reason_to_the_tester(git_repo, cfg):
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("rewrote the spec", write_test(git_repo, "assert PASS")),
+            ("rewrote it again", write_test(git_repo, "assert PASS")),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    refine_prompt = client.calls[4]["prompt"]
+    assert "modified the test file" in refine_prompt
+
+
+def test_coder_hand_back_respects_the_round_limit(git_repo, cfg):
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    cfg.max_rounds = 0
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("no code written", None),
+            ("still nothing", None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1 and report.done == 0
+    assert "max_rounds=0" in backend.blocked[0][1]
+    assert "builder.coder failed" in backend.blocked[0][1]
