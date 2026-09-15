@@ -34,6 +34,7 @@ from pathlib import Path
 
 from .budget import RunBudget
 from .config import RunnerConfig
+from .control import announce_stop
 from .events import emit
 from .usage import UsageLedger, cost_is_complete, mark_incomplete, merge_usage
 
@@ -260,13 +261,15 @@ class CopilotClient:
             for reader in readers:
                 reader.start()
             while True:
+                if self.config.events is None:
+                    announce_stop(self.config)
                 self.config.control.check(interrupt_only=True)
                 if time.monotonic() > deadline:
                     raise CopilotError(
                         f"copilot timed out after {self.config.timeout}s for role {role}"
                     )
                 try:
-                    line = lines.get(timeout=1)
+                    line = lines.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if line is None:

@@ -74,7 +74,14 @@ def running_cli(tmp_path, *, visual=True, pause_role="planner"):
         "reply, _, _ = respond(prompt, repo)\n"
         "if role_of(prompt) == os.environ['PAUSE_ROLE']:\n"
         "    (repo / '.issue-runner' / 'call-paused').touch()\n"
+        "    streamed = 0\n"
         "    while not (repo / '.issue-runner' / 'release-call').exists():\n"
+        "        if (repo / '.issue-runner' / 'stream-output').exists():\n"
+        "            print(json.dumps({'type':'assistant.message_delta',\n"
+        "                  'data':{'deltaContent':'streaming progress\\n'}}), flush=True)\n"
+        "            streamed += 1\n"
+        "            if streamed == 100:\n"
+        "                (repo / '.issue-runner' / 'stream-ready').touch()\n"
         "        time.sleep(0.02)\n"
         "print(json.dumps({'type':'assistant.message','data':{'content':reply}}))\n"
         "print(json.dumps({'type':'model.model_call_success','data':{\n"
@@ -92,7 +99,7 @@ def running_cli(tmp_path, *, visual=True, pause_role="planner"):
         PAUSE_ROLE=pause_role,
     )
     args = [
-        sys.executable,
+        os.environ.get("ISSUE_RUNNER_TEST_PYTHON", sys.executable),
         "-c",
         (
             "import fcntl,termios; fcntl.ioctl(0,termios.TIOCSCTTY,0); "
@@ -194,3 +201,71 @@ def test_stop_after_coder_saves_the_verifier_checkpoint_and_releases_locks(tmp_p
         assert len((terminal.repo / ".issue-runner" / "call-pids").read_text().splitlines()) == 3
         with repository_lock(terminal.repo), state_lock(terminal.repo / ".issue-runner"):
             assert state_file.is_file()
+
+
+def test_reattach_then_ctrl_c_exits_cleanly(tmp_path):
+    with running_cli(tmp_path, pause_role="coder") as terminal:
+        terminal.press(b"q")
+        terminal.expect(b"display detached")
+        terminal.press(b"r\n")
+        terminal.expect(b"\x1b[?1049h")
+        terminal.press(b"\x03")
+        terminal.expect(b"Stopping and cleaning up")
+        terminal.release_call()
+        assert terminal.wait_exit() == 130
+
+
+def test_completion_while_detached_returns_to_the_shell(tmp_path):
+    with running_cli(tmp_path) as terminal:
+        terminal.press(b"q")
+        terminal.expect(b"display detached")
+        terminal.release_call()
+        terminal.until(lambda: terminal.proc.poll() is not None, timeout=15)
+        assert terminal.proc.returncode == 0
+
+
+def test_streaming_while_detached_does_not_block_reattach_or_stop(tmp_path):
+    with running_cli(tmp_path) as terminal:
+        terminal.press(b"q")
+        terminal.expect(b"display detached")
+        (terminal.repo / ".issue-runner" / "stream-output").touch()
+        terminal.until(lambda: (terminal.repo / ".issue-runner" / "stream-ready").exists())
+        terminal.press(b"r\n")
+        terminal.expect(b"\x1b[?1049h")
+        terminal.expect(b"streaming progress")
+        terminal.press(b"\x03")
+        terminal.expect(b"Stopping and cleaning up")
+        terminal.release_call()
+        assert terminal.wait_exit() == 130
+
+
+def test_sigint_does_not_deadlock_while_the_display_queue_is_locked(tmp_path):
+    script = (
+        "import queue, signal\n"
+        "from pathlib import Path\n"
+        "from issue_runner.config import RunnerConfig\n"
+        "from issue_runner.control import stop_signals\n"
+        "from issue_runner.events import EventBus\n"
+        "bus = EventBus()\n"
+        "display_queue = queue.Queue()\n"
+        "bus.subscribe(display_queue.put)\n"
+        "cfg = RunnerConfig(repo_dir=Path.cwd(), events=bus)\n"
+        "with stop_signals(cfg):\n"
+        "    with display_queue.mutex:\n"
+        "        signal.raise_signal(signal.SIGINT)\n"
+        "assert cfg.control.requested\n"
+        "print('stop request returned without acquiring the display lock')\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=PROJECT,
+            env=dict(os.environ, PYTHONPATH=str(PROJECT / "src")),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("SIGINT deadlocked while the display queue was being read")
+    assert result.returncode == 0, result.stderr

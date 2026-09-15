@@ -19,7 +19,7 @@ from uuid import uuid4
 from . import github_io
 from .budget import BudgetExhausted, RunBudget
 from .config import RunnerConfig
-from .control import RunStopped
+from .control import RunStopped, announce_stop
 from .copilot import CopilotError
 from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
@@ -390,6 +390,7 @@ def _record_usage(client, state_dir: Path, issue_ref: str, report: RunReport) ->
 
 
 def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
+    announce_stop(cfg)
     ledger = getattr(client, "usage", None)
     if ledger is not None:
         report.usage_summary = ledger.summary_line()

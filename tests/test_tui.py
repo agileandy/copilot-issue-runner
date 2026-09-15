@@ -153,6 +153,23 @@ async def test_q_suspends_and_reattaches_without_destroying_the_app(monkeypatch)
         assert app.is_running and not app.detached and not app.finished
 
 
+def test_display_drains_a_bounded_batch_so_terminal_controls_can_run(monkeypatch):
+    app = RunnerApp(EventBus())
+    count = 0
+
+    def next_event():
+        nonlocal count
+        count += 1
+        if count > 1000:
+            raise AssertionError("streaming events starved the terminal control loop")
+        return RunEvent("agent_output", {"chunk": "streamed output"})
+
+    monkeypatch.setattr(app._queue, "get_nowait", next_event)
+    monkeypatch.setattr(app, "apply_event", lambda event: None)
+    app._drain()
+    assert 0 < count <= 1000
+
+
 async def test_summary_panel_is_hidden_until_the_run_finishes():
     bus = EventBus()
     app = RunnerApp(bus)

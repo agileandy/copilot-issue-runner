@@ -7,7 +7,6 @@ Textual never blocks the run. `q` suspends the same display so it can reattach
 without losing its board or output. Ctrl+C requests a checkpointed stop.
 """
 
-import asyncio
 import os
 import queue
 import select
@@ -22,7 +21,7 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, RichLog, Static
 
 from .config import RunnerConfig
-from .control import request_stop
+from .control import announce_stop, request_stop
 from .events import EventBus, RunEvent
 from .usage import cost_is_complete, format_aiu
 
@@ -188,7 +187,7 @@ class RunnerApp(App):
         if self._thread is not None:
             self._thread.start()
 
-    async def action_close(self) -> None:
+    def action_close(self) -> None:
         """Before the run ends `q` detaches; afterwards it closes the review."""
         if self.finished:
             self.exit("finished")
@@ -211,7 +210,9 @@ class RunnerApp(App):
                         and not self._runner_config.control.requested
                     ):
                         self.action_stop_run()
-                    await asyncio.sleep(0.05)
+                    # App.suspend stops the writer: yielding to the UI event loop
+                    # here would let renderer timers fill its unserviced queue.
+                    time.sleep(0.05)
         finally:
             self.detached = False
         self._render_all()
@@ -227,7 +228,9 @@ class RunnerApp(App):
     # -- event application -------------------------------------------------
 
     def _drain(self) -> None:
-        while True:
+        if self._runner_config is not None:
+            announce_stop(self._runner_config)
+        for _ in range(100):
             try:
                 event = self._queue.get_nowait()
             except queue.Empty:
@@ -298,6 +301,8 @@ class RunnerApp(App):
     # -- rendering ---------------------------------------------------------
 
     def _render_all(self) -> None:
+        if self.detached:
+            return
         self.query_one("#pipeline", Static).update(self.stop_message or format_pipeline(self.state))
         self.query_one("#board", Static).update(format_board(self.state["tickets"]))
         if self.finished:
