@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from ..config import RunnerConfig
+from ..journal import Journal
 from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import Ticket
 
@@ -32,6 +33,11 @@ The test lives at: {test_path}
 The implementation is in the current working tree (inspect `git status` is
 denied — read the files directly).
 
+Earlier rounds of this sub-task, if any, are recorded on its own issue:
+{thread}
+Read that thread before judging, so you do not repeat feedback that has already
+been given or re-reject something you previously accepted.
+
 Judge, in this order:
 1. Is the test ROBUST? It must genuinely exercise the asserted behaviour,
    cover the relevant edge cases for this ticket, use exactly one logical
@@ -53,7 +59,16 @@ Reply with ONLY this JSON (no prose):
 {feedback}"""
 
 
-def verify_step(client, cfg: RunnerConfig, ticket: Ticket, test_path: str) -> Verdict:
+def verify_step(
+    client,
+    cfg: RunnerConfig,
+    ticket: Ticket,
+    test_path: str,
+    journal: Journal | None = None,
+) -> Verdict:
+    journal = journal or Journal()
+    thread = journal.thread(ticket)
+    thread_line = f"  {thread}" if thread else "  (no issue thread for this run)"
     extra = ""
     last_error = "no attempt"
     for _ in range(2):
@@ -63,6 +78,7 @@ def verify_step(client, cfg: RunnerConfig, ticket: Ticket, test_path: str) -> Ve
             test_assertion=ticket.test_assertion,
             test_path=test_path,
             test_cmd=cfg.test_cmd.format(test_path=test_path),
+            thread=thread_line,
             feedback=extra,
         )
         reply = client.run(

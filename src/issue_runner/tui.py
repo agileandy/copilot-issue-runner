@@ -53,6 +53,13 @@ HELP = """\
   [bold]verifier[/]       sees the ticket, the test and the diff, read-only. Answers pass,
                  refine_test or rework_code, with the reason fed back to the right role.
 
+[bold]Where the agents' conversation lives[/]
+  Every hand-back — a rejected stub test, a verdict, a failed regression — is posted as a
+  comment on that ticket's own sub-issue. The next prompt does not repeat it; it sends the
+  agent to the issue to read the thread. So the reasoning survives the run, a resumed run
+  starts with the full history, and you can read exactly why a ticket took four rounds.
+  With no tracker (--no-github-tickets, --issue-file) the feedback is inlined as before.
+
 [bold]Checks and controls[/]
   red first        a new test must fail before any code is written; a test that passes on
                    arrival is handed to the verifier to prove it is not a tautology

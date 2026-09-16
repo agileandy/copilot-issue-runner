@@ -59,6 +59,13 @@ class GithubTickets:
     def block(self, ticket, reason: str) -> None:
         github_io.comment_issue(self.repo, ticket.github_issue, f"BLOCKED: {reason}")
 
+    def comment(self, ticket, body: str) -> None:
+        github_io.comment_issue(self.repo, ticket.github_issue, body)
+
+    def thread_ref(self, ticket) -> str:
+        """How an agent reads this ticket's transcript from inside the worktree."""
+        return f"gh issue view {ticket.github_issue} -R {self.repo} --comments"
+
 
 class GiteaTickets:
     def __init__(self, api_base: str, owner_repo: str, requester=_http_json):
@@ -97,3 +104,12 @@ class GiteaTickets:
             gitea_write_token(),
             {"body": body},
         )
+
+    def comment(self, ticket, body: str) -> None:
+        """Record the transcript on the parent issue, since there is no sub-issue.
+
+        Deliberately no `thread_ref`: Gitea gives the agent no way to read this
+        back, so the journal keeps inlining feedback into the prompt and this
+        thread serves the human reader only.
+        """
+        self._comment(ticket.github_issue, f"Sub-task {ticket.id} ({ticket.title})\n\n{body}")
