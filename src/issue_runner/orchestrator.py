@@ -24,6 +24,7 @@ from .copilot import CopilotError
 from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
+from .journal import Journal
 from .phases import devops
 from .phases.build import (
     BuildError,
@@ -459,8 +460,14 @@ def _block_unsatisfiable(cfg: RunnerConfig, store: TicketStore, report: RunRepor
 
 
 def _process_ticket(
-    cfg: RunnerConfig, client, store: TicketStore, ticket: Ticket, report: RunReport
+    cfg: RunnerConfig,
+    client,
+    store: TicketStore,
+    ticket: Ticket,
+    report: RunReport,
+    journal: Journal | None = None,
 ) -> None:
+    journal = journal or Journal(cfg.tickets_backend)
     if ticket.base_commit is None:
         devops.require_clean(cfg.repo_dir)
         head = devops.head_commit(cfg.repo_dir)
@@ -498,6 +505,7 @@ def _process_ticket(
                         ticket,
                         feedback=ticket.test_feedback or None,
                         require_red=not refining,
+                        journal=journal,
                     )
                 except TestAlreadyPasses as e:
                     path = e.test_path
@@ -515,7 +523,12 @@ def _process_ticket(
                 if ticket.code_feedback or not passed:
                     try:
                         coder_step(
-                            client, cfg, ticket, test_path, feedback=ticket.code_feedback or None
+                            client,
+                            cfg,
+                            ticket,
+                            test_path,
+                            feedback=ticket.code_feedback or None,
+                            journal=journal,
                         )
                     except CoderFailure as e:
                         # the spec may be the problem: let the tester repair it
@@ -524,6 +537,13 @@ def _process_ticket(
                         ticket.test_feedback = str(e)
                         ticket.code_feedback = ""
                         ticket.phase = "refine_test"
+                        journal.post(
+                            ticket,
+                            "builder.coder",
+                            "builder.tester",
+                            str(e),
+                            "coder exhausted its retries — the spec may be wrong",
+                        )
                         if not _hand_back(cfg, store, ticket, report, str(e)):
                             return
                         continue
@@ -535,7 +555,7 @@ def _process_ticket(
 
             if ticket.phase == "verifier":
                 before = devops.workspace_digest(cfg.repo_dir)
-                verdict = verify_step(client, cfg, ticket, test_path)
+                verdict = verify_step(client, cfg, ticket, test_path, journal=journal)
                 if devops.workspace_digest(cfg.repo_dir) != before:
                     raise BuildError("read-only verifier modified the workspace; changes retained")
                 log.info(
@@ -559,6 +579,13 @@ def _process_ticket(
                 ticket.test_feedback = verdict.test_feedback
                 ticket.code_feedback = verdict.code_feedback
                 ticket.phase = "refine_test" if verdict.verdict == "refine_test" else "coder"
+                journal.post(
+                    ticket,
+                    "verifier",
+                    "builder.tester" if verdict.verdict == "refine_test" else "builder.coder",
+                    _verdict_body(verdict),
+                    verdict.verdict,
+                )
                 if not _hand_back(cfg, store, ticket, report, f"last verdict {verdict.verdict}"):
                     return
                 continue
@@ -572,6 +599,9 @@ def _process_ticket(
                     cfg.control.check()
                     ticket.code_feedback = str(e)
                     ticket.phase = "coder"
+                    journal.post(
+                        ticket, "harness", "builder.coder", str(e), "regression suite failed"
+                    )
                     if not _hand_back(cfg, store, ticket, report, str(e)):
                         return
                     continue
@@ -595,6 +625,18 @@ def _process_ticket(
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
         cfg.control.check()
         _block(store, ticket, report, str(e), cfg)
+
+
+def _verdict_body(verdict) -> str:
+    """The verifier's reasoning, in the form the next agent has to act on."""
+    parts = [f"Verdict: **{verdict.verdict}**"]
+    if verdict.reasons:
+        parts.append("\n".join(f"- {r}" for r in verdict.reasons))
+    if verdict.test_feedback:
+        parts.append(f"**For builder.tester:**\n{verdict.test_feedback}")
+    if verdict.code_feedback:
+        parts.append(f"**For builder.coder:**\n{verdict.code_feedback}")
+    return "\n\n".join(parts)
 
 
 def _snapshot_test(cfg: RunnerConfig, ticket: Ticket, path: str) -> None:
