@@ -1,0 +1,92 @@
+# The roster.
+#
+# FWs reference an agent by NAME, never by a model. Swapping a model is a config edit; swapping an
+# agent is a change to a chain. Config defines **identity** — who this agent is. It deliberately
+# carries no output types (§3.3): the call site defines what shape a particular invocation must
+# return, and the same agent can return different types in different FWs.
+#
+# There is no tester agent, on purpose. `uv run pytest` is a command, not a judgement call, and an
+# agent rediscovering the test runner every run spends a context window learning what a subprocess
+# already knows (§3.4).
+
+defaults:
+  # `copilot` (the GitHub Copilot CLI) is the default backend; `pi` ships too, and the value names
+  # the module `f_modules/agent_<value>.py`, so any agent may override it. Two notes for `copilot`:
+  # its `cost` is denominated in AI units rather than dollars, and it publishes no context window,
+  # so declare one in ~/.copilot/context-windows.json if occupancy should render as a percentage.
+  coding_agent: copilot
+  model: github-copilot/claude-opus-5
+  thinking: medium
+  color: ""
+  harness_engineering: []
+  # An allowlist must name every tool it wants: grep, find and ls are off by default in Pi, and
+  # Copilot's `--available-tools` disables everything it does not list.
+  tools: [read, bash, edit, write, grep, find, ls]
+  protected_files:
+    - factory/f_modules/
+    - factory/f_config/
+    - factory/f_*.py
+  data_dir: factory/f_data
+
+observability:
+  db: factory/f_data/sssf.db
+  poll_ms: 500
+
+agents:
+  - name: planner
+    thinking: high
+    color: "#a78bfa"
+    purpose: Turn a request into a plan the builder can implement without asking questions.
+    prompt_engineering:
+      system: factory/f_data/prompt_engineering/planner/system.md
+      user: factory/f_data/prompt_engineering/planner/user.md
+    tools: [read, grep, find, ls, bash, write]
+    # Writes the spec and nothing else. Naming `specs/` here is also what makes the boundary
+    # checkable: everything outside it is a breach, not a judgement call.
+    writes: [specs/]
+
+  - name: builder
+    thinking: medium
+    color: "#60a5fa"
+    purpose: Implement the plan exactly, and report every file you changed.
+    prompt_engineering:
+      system: factory/f_data/prompt_engineering/builder/system.md
+      user: factory/f_data/prompt_engineering/builder/user.md
+    # `writes` is deliberately ABSENT, which means unrestricted except for protected_files (§4.3).
+    # This is the only unrestricted agent in the roster. An empty list would mean the opposite —
+    # repository-read-only — so it must be omitted, never written as [].
+
+  - name: scout
+    model: github-copilot/claude-haiku-4.5
+    thinking: low
+    color: "#34d399"
+    purpose: Find and report where things live. Change nothing.
+    prompt_engineering:
+      system: factory/f_data/prompt_engineering/scout/system.md
+      user: factory/f_data/prompt_engineering/scout/user.md
+    # Cheap and fast, because mechanical recon is the one job where a bigger model buys nothing.
+    tools: [read, grep, find, ls]
+    writes: []
+
+  - name: reviewer
+    thinking: high
+    color: "#f472b6"
+    purpose: Confirm that what was built is what was asked for.
+    prompt_engineering:
+      system: factory/f_data/prompt_engineering/reviewer/system.md
+      user: factory/f_data/prompt_engineering/reviewer/user.md
+    # Repository-read-only. Note this is a boundary, not a tool restriction: bash is granted so the
+    # reviewer can read a diff, and bash could rewrite the code it is reviewing — which is exactly
+    # why `writes: []` is enforced after the fact against the real tree (§4.1).
+    tools: [read, grep, find, ls, bash]
+    writes: []
+
+  - name: documenter
+    thinking: medium
+    color: "#fbbf24"
+    purpose: Write up the change from the diff. Document only; change no behaviour.
+    prompt_engineering:
+      system: factory/f_data/prompt_engineering/documenter/system.md
+      user: factory/f_data/prompt_engineering/documenter/user.md
+    tools: [read, grep, find, ls, write, edit]
+    writes: [app_docs/, docs/, "**/*.md", "*.md"]
