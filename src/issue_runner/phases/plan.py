@@ -1,7 +1,7 @@
 """Plan phase: one read-only Copilot call turns issue + codebase into atomic tickets."""
 
 from ..config import RunnerConfig
-from ..jsonx import JsonExtractError, extract_json
+from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import Ticket
 
 
@@ -57,7 +57,7 @@ def plan_step(client, cfg: RunnerConfig, issue: dict) -> tuple[str, list[Ticket]
         )
         reply = client.run(prompt, role="planner", read_only=True, session_name="planner")
         try:
-            data = extract_json(reply)
+            data = extract_json_object(reply)
             return data.get("summary", ""), _validate(data)
         except (JsonExtractError, PlanError, TypeError) as e:
             last_error = str(e)

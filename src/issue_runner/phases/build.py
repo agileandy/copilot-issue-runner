@@ -24,7 +24,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import RunnerConfig
-from ..jsonx import JsonExtractError, extract_json
+from ..jsonx import JsonExtractError, extract_json_object
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
@@ -267,7 +267,7 @@ def tester_step(
         )
         reply = client.run(prompt, role="builder.tester", session_name=f"tester-t{ticket.id}")
         try:
-            test_path = str(extract_json(reply)["test_path"])
+            test_path = str(extract_json_object(reply)["test_path"])
         except (JsonExtractError, KeyError, TypeError) as e:
             last_error = f"reply was not the required JSON: {e}"
             extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"

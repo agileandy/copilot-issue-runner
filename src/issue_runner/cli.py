@@ -265,6 +265,7 @@ def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
                 _print_abort_usage(client)
+                _print_partial(error)
                 _print_demo_resume(resume)
                 return 1
             _print_summary(report, resume)
@@ -273,13 +274,35 @@ def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
     try:
         report = run_issue(cfg, client, issue, plan_only=plan_only)
     except PipelineError as e:
-        print(f"error: {e}", file=sys.stderr)
-        _print_abort_usage(client)
-        _print_demo_resume(resume)
-        return 1
+        return _report_abort(e, client, resume)
+    except Exception as e:  # noqa: BLE001 — a demo must not end in a traceback
+        logging.getLogger("issue_runner").debug("unexpected failure", exc_info=True)
+        return _report_abort(e, client, resume, unexpected=True)
 
     _print_summary(report, resume)
     return _exit_code(report)
+
+
+def _report_abort(error, client, resume, unexpected: bool = False) -> int:
+    label = f"{type(error).__name__}: {error}" if unexpected else str(error)
+    print(f"error: {label}", file=sys.stderr)
+    _print_abort_usage(client)
+    _print_partial(error)
+    _print_demo_resume(resume)
+    return 1
+
+
+def _print_partial(error: BaseException) -> None:
+    """Show what an aborted run achieved, so the work can still be found."""
+    report = getattr(error, "report", None)
+    if report is None:
+        return
+    print(f"\nbranch: {report.branch or '(none)'}")
+    if report.worktree:
+        print(f"worktree: {report.worktree}")
+    print(f"tickets done: {report.done}, blocked: {report.blocked}")
+    for detail in report.details:
+        print(f"  - {detail}")
 
 
 def _demo_resume_command(cfg, issue, original_args: list[str]) -> str:

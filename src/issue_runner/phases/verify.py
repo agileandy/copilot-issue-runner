@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from ..config import RunnerConfig
-from ..jsonx import JsonExtractError, extract_json
+from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import Ticket
 
 VERDICTS = ("pass", "refine_test", "rework_code")
@@ -69,7 +69,7 @@ def verify_step(client, cfg: RunnerConfig, ticket: Ticket, test_path: str) -> Ve
             prompt, role="verifier", read_only=True, session_name=f"verifier-t{ticket.id}"
         )
         try:
-            data = extract_json(reply)
+            data = extract_json_object(reply)
             verdict = data.get("verdict")
             if verdict not in VERDICTS:
                 raise VerifyError(f"invalid verdict {verdict!r}; must be one of {VERDICTS}")

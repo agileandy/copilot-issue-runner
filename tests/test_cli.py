@@ -508,3 +508,42 @@ def test_invalid_budget_is_a_friendly_invocation_error(tmp_path, capsys):
         == 2
     )
     assert "positive integer" in capsys.readouterr().err
+
+
+def test_an_aborted_run_prints_the_partial_summary_not_just_the_error(capsys, monkeypatch):
+    """Regression: an aborted run printed one bare error line, so the user could
+    not see the branch, the worktree, or the tickets already committed."""
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    report = RunReport(branch="issue-64-demo", worktree="/tmp/wt/64", done=1)
+    report.details.append("ticket 1 done @ abc123def456: Parse comma-separated integers")
+
+    def boom(*args, **kwargs):
+        error = AttributeError("'list' object has no attribute 'get'")
+        error.report = report
+        raise error
+
+    monkeypatch.setattr(cli, "run_issue", boom)
+    rc = cli._execute(_StubCfg(), _StubClient(), {"number": 64}, False, "gh-runner 64 --visual")
+    streams = capsys.readouterr()
+    captured = streams.out + streams.err
+    assert rc == 1
+    assert "issue-64-demo" in captured
+    assert "/tmp/wt/64" in captured
+    assert "tickets done: 1" in captured
+    assert "Parse comma-separated integers" in captured
+    assert "AttributeError" in captured, "name the fault type, do not hide it"
+
+
+class _StubCfg:
+    visual = False
+    events = None
+
+
+class _StubUsage:
+    calls = 0
+
+
+class _StubClient:
+    usage = _StubUsage()

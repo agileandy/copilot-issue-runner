@@ -407,3 +407,4 @@ def test_demo_clean_removes_local_work_even_if_github_fails_entirely(live_demo):
     assert not state_file.exists()
     assert git(fixture.repo_dir, "branch", "--list", branch) == ""
     assert "could not" in result.stderr.lower() or "could not" in result.stdout.lower()
+
