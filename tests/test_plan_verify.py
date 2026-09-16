@@ -72,3 +72,35 @@ def test_verify_step_rejects_unknown_verdict(cfg):
     client = FakeClient([(reply, None), (reply, None)])
     with pytest.raises(VerifyError):
         verify_step(client, cfg, _ticket(), "test_x.py")
+
+
+def test_verify_step_retries_a_list_reply_instead_of_crashing(cfg):
+    """Regression: a JSON list reply raised AttributeError and killed the run."""
+    good = json.dumps({"verdict": "pass", "reasons": ["ok"]})
+    client = FakeClient([('[{"verdict": "pass"}]', None), (good, None)])
+    ticket = Ticket(id=1, title="t", description="d", test_assertion="a == 1")
+    assert verify_step(client, cfg, ticket, "tests/test_t.py").verdict == "pass"
+    assert len(client.calls) == 1, "a single-element list is a usable object"
+
+
+def test_verify_step_reports_a_persistent_non_object_as_a_verify_error(cfg):
+    client = FakeClient([("[1, 2, 3]", None), ("[1, 2, 3]", None)])
+    ticket = Ticket(id=1, title="t", description="d", test_assertion="a == 1")
+    with pytest.raises(VerifyError) as excinfo:
+        verify_step(client, cfg, ticket, "tests/test_t.py")
+    assert "attribute" not in str(excinfo.value).lower()
+    assert len(client.calls) == 2, "the verifier must be given a second chance"
+
+
+def test_plan_step_retries_a_list_reply_instead_of_crashing(cfg):
+    client = FakeClient([("[1, 2, 3]", None), (GOOD_PLAN, None)])
+    summary, tickets = plan_step(client, cfg, ISSUE)
+    assert summary == "add subtract fn" and len(tickets) == 1
+    assert "INVALID" in client.calls[1]["prompt"]
+
+
+def test_plan_step_reports_a_persistent_non_object_as_a_plan_error(cfg):
+    client = FakeClient([("[1, 2, 3]", None), ("[1, 2, 3]", None)])
+    with pytest.raises(PlanError) as excinfo:
+        plan_step(client, cfg, ISSUE)
+    assert "attribute" not in str(excinfo.value).lower()

@@ -676,3 +676,37 @@ def test_coder_hand_back_respects_the_round_limit(git_repo, cfg):
     assert report.blocked == 1 and report.done == 0
     assert "max_rounds=0" in backend.blocked[0][1]
     assert "builder.coder failed" in backend.blocked[0][1]
+
+
+def test_an_aborted_run_still_reports_the_work_it_completed(git_repo, cfg):
+    """Regression: an unexpected exception printed a bare error line, hiding the
+    branch, the worktree and any ticket already committed."""
+
+    plan = json.dumps(
+        {
+            "summary": "two tickets",
+            "tickets": [
+                {"title": "first", "description": "d1", "test_assertion": "a == 1"},
+                {"title": "second", "description": "d2", "test_assertion": "b == 2"},
+            ],
+        }
+    )
+
+    def explode():
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    client = FakeClient(
+        [
+            (plan, None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            ("unreachable", explode),
+        ]
+    )
+    with pytest.raises(AttributeError) as excinfo:
+        run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    report = excinfo.value.report
+    assert report.done == 1, "the committed ticket must still be reported"
+    assert report.branch, "the branch must be reported so the work can be found"
+    assert "first" in " ".join(report.details)

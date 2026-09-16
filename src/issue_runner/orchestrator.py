@@ -133,12 +133,31 @@ def run_issue(
                 emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
                 _emit_finished(cfg, client, report)
                 return report
+            except Exception as e:
+                # never change the exception type: callers and tests match on
+                # it. Carry the partial report so the CLI can still report the
+                # branch, the worktree and any ticket already committed.
+                _record_partial(cfg, store, report)
+                e.report = report
+                raise
             finally:
                 _record_usage(client, state_dir, issue_ref, report)
     finally:
         cfg.repo_dir = original_dir
         if client_config is not None:
             client_config.repo_dir = original_client_dir
+
+
+def _record_partial(cfg: RunnerConfig, store: TicketStore, report: RunReport) -> None:
+    """Fill a report with whatever the run achieved before it failed."""
+    report.done = sum(t.status == "done" for t in store.tickets)
+    report.blocked = sum(t.status == "blocked" for t in store.tickets)
+    for ticket in store.tickets:
+        if ticket.status == "done" and ticket.commit_sha:
+            detail = f"ticket {ticket.id} done @ {ticket.commit_sha[:12]}: {ticket.title}"
+            if detail not in report.details:
+                report.details.append(detail)
+    emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
 
 
 def _prepare_workspace(
