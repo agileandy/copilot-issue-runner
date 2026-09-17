@@ -5,6 +5,8 @@
  */
 import { createCliRenderer, type KeyEvent } from "@opentui/core"
 import { createApp } from "./app"
+import { keyAction } from "./keys"
+import { saveSummary } from "./save"
 import { theme } from "./theme"
 import { connect, type Control } from "./transport"
 
@@ -37,21 +39,35 @@ function leave(message: Control): void {
 }
 
 const onKeyPress = (key: KeyEvent) => {
-  if (key.ctrl && key.name === "c") {
-    if (app.state.finished) leave({ type: "closed" })
-    else link?.send({ type: "stop" })
-    return
-  }
-  if (key.name === "h") {
-    app.toggleHelp()
-    return
-  }
-  if (key.name === "escape") {
-    app.closeHelp()
-    return
-  }
-  if (key.name === "q") {
-    leave(app.state.finished ? { type: "closed" } : { type: "detach" })
+  const action = keyAction(key, {
+    finished: app.state.finished,
+    helpOpen: app.helpOpen(),
+    summaryOpen: app.summaryOpen(),
+  })
+  switch (action) {
+    case "stop":
+      link?.send({ type: "stop" })
+      return
+    case "close":
+      leave({ type: "closed" })
+      return
+    case "detach":
+      leave({ type: "detach" })
+      return
+    case "toggle-help":
+      app.toggleHelp()
+      return
+    case "close-help":
+      app.closeHelp()
+      return
+    case "save-summary":
+      void saveSummary(app.state)
+      return
+    case "dismiss-summary":
+      app.dismissSummary()
+      return
+    default:
+      return
   }
 }
 
