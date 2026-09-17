@@ -41,3 +41,9 @@ def test_the_metrics_section_reports_the_run_time_totals_of_a_finished_run():
     name = "the metrics section reports the run-time totals of a finished run"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_artefacts_section_lists_branch_pull_request_commits_and_changed_files():
+    name = "the artefacts section lists the branch, pull request, commits and changed files"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"

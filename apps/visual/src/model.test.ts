@@ -230,3 +230,33 @@ test("the metrics section reports the run-time totals of a finished run", () => 
     "credits 7.00 AIU",
   ])
 })
+
+test("the artefacts section lists the branch, pull request, commits and changed files", () => {
+  const summary: model.Summary = {
+    done: 1,
+    blocked: 0,
+    branch: "issue-9-x",
+    worktree: "",
+    prUrl: "https://x/pull/2",
+    usage: "",
+    budget: "",
+    budgetExhausted: false,
+    planOnly: false,
+    stopped: false,
+    error: "",
+    artefacts: {
+      files: ["src/a.ts", "tests/a.test.ts"],
+      commits: [{ sha: "abc1234", ticketId: 1, title: "add x", files: ["src/a.ts"] }],
+      prUrl: "https://x/pull/2",
+    },
+    worktreeState: { path: "", branch: "", head: "", dirty: false, uncommitted: [] },
+    stateDir: "",
+  }
+  expect(model.artefactLines(summary)).toEqual([
+    "branch issue-9-x",
+    "pull request https://x/pull/2",
+    "commit abc1234 #1 add x",
+    "changed src/a.ts",
+    "changed tests/a.test.ts",
+  ])
+})

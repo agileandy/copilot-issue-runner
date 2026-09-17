@@ -319,6 +319,19 @@ export function metricsLines(state: ViewState, now: number = Date.now()): string
   ]
 }
 
+/** What the run produced: branch, pull request, commits and changed files. */
+export function artefactLines(summary: Summary): string[] {
+  const { commits, files } = summary.artefacts
+  const lines: string[] = []
+  if (summary.branch) lines.push(`branch ${summary.branch}`)
+  const prUrl = summary.artefacts.prUrl || summary.prUrl
+  if (prUrl) lines.push(`pull request ${prUrl}`)
+  for (const c of commits) lines.push(`commit ${c.sha} #${c.ticketId} ${c.title}`)
+  for (const path of files) lines.push(`changed ${path}`)
+  if (!commits.length && !files.length) lines.push("no artefacts recorded")
+  return lines
+}
+
 /** Keep the output pane bounded; the journal holds the full transcript. */
 export function trimOutput(text: string, maxLines = 1000): string {
   const lines = text.split("\n")
