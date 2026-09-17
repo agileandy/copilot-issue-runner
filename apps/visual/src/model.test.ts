@@ -179,3 +179,29 @@ test("a finished run folds its artefacts into the summary", () => {
     files: ["src/a.ts"],
   })
 })
+
+test("a finished run folds the worktree state into the summary", () => {
+  const state = initialState()
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: {
+      done: 1,
+      blocked: 0,
+      branch: "issue-9-x",
+      worktree_state: {
+        path: "/tmp/wt",
+        branch: "issue-9-x",
+        head: "abc1234",
+        dirty: true,
+        uncommitted: ["notes.md"],
+      },
+    },
+  })
+  expect(state.summary!.worktreeState).toEqual({
+    path: "/tmp/wt",
+    branch: "issue-9-x",
+    head: "abc1234",
+    dirty: true,
+    uncommitted: ["notes.md"],
+  })
+})

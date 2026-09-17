@@ -29,3 +29,9 @@ def test_a_finished_run_folds_its_artefacts_into_the_summary():
     name = "a finished run folds its artefacts into the summary"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_a_finished_run_folds_the_worktree_state_into_the_summary():
+    name = "a finished run folds the worktree state into the summary"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"

@@ -33,6 +33,14 @@ export interface Artefacts {
   prUrl: string
 }
 
+export interface WorktreeState {
+  path: string
+  branch: string
+  head: string
+  dirty: boolean
+  uncommitted: string[]
+}
+
 export interface Summary {
   done: number
   blocked: number
@@ -46,6 +54,8 @@ export interface Summary {
   stopped: boolean
   error: string
   artefacts: Artefacts
+  worktreeState: WorktreeState
+  stateDir: string
 }
 
 export interface ViewState {
@@ -112,6 +122,18 @@ function foldArtefacts(raw: unknown, prUrl: string): Artefacts {
       files: (c.files ?? []) as string[],
     })),
     prUrl: String(a.pr_url ?? prUrl),
+  }
+}
+
+function foldWorktreeState(raw: unknown, fallback: WorktreeState): WorktreeState {
+  const w = raw as Record<string, any> | null | undefined
+  if (!w) return fallback
+  return {
+    path: String(w.path ?? fallback.path),
+    branch: String(w.branch ?? fallback.branch),
+    head: String(w.head ?? ""),
+    dirty: Boolean(w.dirty),
+    uncommitted: (w.uncommitted ?? []) as string[],
   }
 }
 
@@ -189,6 +211,14 @@ export function applyEvent(
         stopped: Boolean(p.stopped),
         error: String(p.error ?? ""),
         artefacts: foldArtefacts(p.artefacts, String(p.pr_url ?? "")),
+        worktreeState: foldWorktreeState(p.worktree_state, {
+          path: String(p.worktree ?? ""),
+          branch: state.branch,
+          head: "",
+          dirty: false,
+          uncommitted: [],
+        }),
+        stateDir: String(p.state_dir ?? ""),
       }
       boardChanged = true
       break
@@ -254,7 +284,7 @@ export function statsLine(state: ViewState, now: number = Date.now()): string {
   return parts.join("  ·  ")
 }
 
-export function summaryOutcome(summary: Omit<Summary, "artefacts">): { text: string; tone: "ok" | "bad" | "plain" } {
+export function summaryOutcome(summary: Omit<Summary, "artefacts" | "worktreeState" | "stateDir">): { text: string; tone: "ok" | "bad" | "plain" } {
   if (summary.error) return { text: "run aborted", tone: "bad" }
   if (summary.stopped) return { text: "stopped by user; work saved", tone: "plain" }
   if (summary.budgetExhausted) return { text: "stopped: credit budget exhausted", tone: "bad" }
@@ -263,7 +293,7 @@ export function summaryOutcome(summary: Omit<Summary, "artefacts">): { text: str
   return { text: "all tickets done", tone: "ok" }
 }
 
-export function summaryLines(summary: Omit<Summary, "artefacts">): string[] {
+export function summaryLines(summary: Omit<Summary, "artefacts" | "worktreeState" | "stateDir">): string[] {
   const lines = [`tickets done ${summary.done}  ·  blocked ${summary.blocked}`]
   if (summary.error) lines.push(summary.error.slice(0, 300))
   if (summary.branch) lines.push(`branch ${summary.branch}`)
