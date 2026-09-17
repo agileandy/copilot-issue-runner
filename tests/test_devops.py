@@ -96,3 +96,16 @@ def test_commit_ticket_requires_explicit_approval(git_repo):
     (git_repo / "new.py").write_text("x = 1")
     with pytest.raises(DevopsError, match="no approved change set"):
         commit_ticket(git_repo, _ticket())
+
+
+def test_worktree_state_reports_untracked_file(git_repo):
+    from issue_runner.phases.devops import head_commit, worktree_state
+
+    (git_repo / "notes.md").write_text("notes")
+    assert worktree_state(git_repo) == {
+        "path": str(git_repo),
+        "branch": "main",
+        "head": head_commit(git_repo),
+        "dirty": True,
+        "uncommitted": ["notes.md"],
+    }
