@@ -264,20 +264,27 @@ model for the verifier, the default for the coder.
 uv sync
 uv run pytest        # no model calls: all agents are faked
 uv run ruff check src tests
+
+cd apps/visual && bun test   # the display's frame and state tests
 ```
 
 ## Visual mode
 
-`--visual` on a TTY opens a contained Textual TUI: pipeline banner, live ticket
-board, streaming agent output, and run stats (calls, tokens, elapsed). Non-TTY
-invocations fall back to plain text automatically.
+`--visual` on a TTY opens the OpenTUI display in `apps/visual`: pipeline banner,
+live ticket board, streaming agent output, and run stats (calls, tokens,
+elapsed). Non-TTY invocations fall back to plain text automatically.
+
+The display is a Bun process that the runner starts and feeds over a loopback
+socket; the pipeline itself never renders. It therefore needs [bun](https://bun.sh)
+on your PATH — its dependencies install themselves on first use. Without bun, or
+with `apps/visual` missing, `--visual` reports why and runs in plain text.
 
 `q` does one of two things depending on when you press it:
 
 - **during the run** — detaches the display; the run continues headless and
   progress is printed as plain lines. Type `r` and press Enter in the same
   terminal to reattach with the existing ticket board, output and statistics.
-- **after the run** — closes the review. When the pipeline finishes the TUI
+- **after the run** — closes the review. When the pipeline finishes the display
   *stays open* on a finished state showing the outcome, tickets done/blocked,
   the branch, the pull request URL and the usage line, so you can read the
   final board and agent output before dismissing it. The same summary is

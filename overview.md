@@ -52,8 +52,8 @@ alone does not prove anything ran.
 - **Budgeted.** Per-invocation and per-run soft credit caps, with real nano-AIU spend recorded per
   role and per ticket. Unknown usage stays unknown rather than being reported as zero.
 - **Observable.** Every Copilot invocation is logged with role, model, effort, duration, tokens and
-  outcome. `--visual` renders the same event stream as a Textual TUI; detaching does not stop the
-  run.
+  outcome. `--visual` renders the same event stream in an OpenTUI display run as a
+  separate Bun process; detaching does not stop the run.
 - **Explicit exit codes.** `0` done · `1` aborted · `2` bad invocation · `3` blocked · `4` budget
   stop · `130` user stop with resumable state.
 
@@ -135,7 +135,8 @@ backend changes.
 ## Layout
 
 ```
-src/issue_runner/       the shipped CLI: orchestrator, phases, copilot transport, TUI, budgets
+src/issue_runner/       the shipped CLI: orchestrator, phases, copilot transport, budgets
+apps/visual/            the --visual display: an OpenTUI (Bun) app fed by the runner
 tests/                  the suite; all agents are faked, no model calls
 factory/f_*.py          workflow chains — one file per chain, deliberately thin
 factory/f_modules/      the engine: types, tracer, phases, agents, gates, permissions, git, quality

@@ -254,14 +254,16 @@ def main(argv=None) -> int:
 
 def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
     if cfg.visual and sys.stdout.isatty() and sys.stdin.isatty():
+        from .visual_display import VisualUnavailable, run_visual
+
         try:
-            from .tui import run_visual
-        except ImportError:
+            report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
+        except VisualUnavailable as e:
+            cfg.events = None
             logging.getLogger("issue_runner").warning(
-                "textual is not installed — falling back to the text visual"
+                "%s — falling back to the text visual", e
             )
         else:
-            report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
                 _print_abort_usage(client)

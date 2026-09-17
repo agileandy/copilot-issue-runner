@@ -7,6 +7,7 @@ import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,32 +21,61 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 class Terminal:
+    """A pseudo-terminal that drains continuously, as a real one does.
+
+    The display repaints whole frames, so a reader that only runs inside
+    `until()` lets the pty buffer fill and blocks the display mid-write.
+    """
+
     def __init__(self, proc, fd, repo):
         self.proc, self.fd, self.repo = proc, fd, repo
         self.output = b""
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._reader = threading.Thread(target=self._pump, daemon=True)
+        self._reader.start()
 
-    def read(self):
-        if select.select([self.fd], [], [], 0.05)[0]:
+    def _pump(self):
+        while not self._stop.is_set():
             try:
-                self.output += os.read(self.fd, 65536)
+                if not select.select([self.fd], [], [], 0.05)[0]:
+                    continue
+                chunk = os.read(self.fd, 65536)
             except OSError as e:
                 if e.errno != errno.EIO:
                     raise
+                return
+            if not chunk:
+                return
+            with self._lock:
+                self.output += chunk
+
+    def read(self):
+        """Kept for callers that used to pump the fd themselves."""
+
+    def snapshot(self):
+        with self._lock:
+            return self.output
 
     def until(self, predicate, timeout=5):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            self.read()
             if predicate():
                 return
-        pytest.fail(f"terminal condition was not reached:\n{self.output[-5000:]!r}")
+            time.sleep(0.02)
+        pytest.fail(f"terminal condition was not reached:\n{self.snapshot()[-5000:]!r}")
 
     def press(self, keys):
-        self.output = b""
+        with self._lock:
+            self.output = b""
         os.write(self.fd, keys)
 
+    def close(self):
+        self._stop.set()
+        self._reader.join(timeout=2)
+
     def expect(self, text):
-        self.until(lambda: text in self.output)
+        self.until(lambda: text in self.snapshot())
 
     def release_call(self):
         (self.repo / ".issue-runner" / "release-call").touch()
@@ -53,6 +83,16 @@ class Terminal:
     def wait_exit(self):
         self.until(lambda: self.proc.poll() is not None)
         return self.proc.returncode
+
+
+def wait_for_display(terminal):
+    """Wait until the display is painting, not merely started.
+
+    A freshly started display owns the keyboard only after its first frames;
+    the second stats repaint is the cheapest proof its loop is running.
+    """
+    terminal.expect(b"issue-runner")
+    terminal.until(lambda: terminal.snapshot().count(b"run 0m") >= 2)
 
 
 @contextmanager
@@ -140,6 +180,7 @@ def running_cli(tmp_path, *, visual=True, pause_role="planner"):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=5)
+        terminal.close()
         os.close(master)
 
 
@@ -163,7 +204,7 @@ def test_ctrl_c_reports_stopping_and_exits_at_the_next_call_boundary(tmp_path, m
         terminal.expect(b"Stopping and cleaning up")
         terminal.release_call()
         assert terminal.wait_exit() == 130
-        assert b"Traceback" not in terminal.output
+        assert b"Traceback" not in terminal.snapshot()
         state_file = next((terminal.repo / ".issue-runner").glob("issue-*.json"))
         state = json.loads(state_file.read_text())
         assert state["tickets"]
@@ -209,6 +250,7 @@ def test_reattach_then_ctrl_c_exits_cleanly(tmp_path):
         terminal.expect(b"display detached")
         terminal.press(b"r\n")
         terminal.expect(b"\x1b[?1049h")
+        wait_for_display(terminal)
         terminal.press(b"\x03")
         terminal.expect(b"Stopping and cleaning up")
         terminal.release_call()

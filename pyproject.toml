@@ -3,7 +3,7 @@ name = "issue-runner"
 version = "0.1.0"
 description = "Generic GitHub issue runner driving GitHub Copilot CLI through plan/build/verify phases"
 requires-python = ">=3.12"
-dependencies = ["textual>=0.80"]
+dependencies = []
 
 [project.scripts]
 issue-runner = "issue_runner.cli:main"

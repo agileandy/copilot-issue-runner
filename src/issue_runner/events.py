@@ -1,7 +1,7 @@
 """Typed event seam between the pipeline and any display.
 
-The orchestrator and CopilotClient emit events here; consumers (the Textual
-TUI, a future `watch` mode, tests) subscribe. Headless runs pass no bus and
+The orchestrator and CopilotClient emit events here; consumers (the `--visual`
+display bridge, a future `watch` mode, tests) subscribe. Headless runs pass no bus and
 nothing changes. A failing subscriber never breaks the pipeline.
 
 Event kinds and payloads:
