@@ -34,6 +34,7 @@ export interface App {
   helpOpen: () => boolean
   summaryOpen: () => boolean
   scrollOutput: () => void
+  scrollSummaryToBottom: () => void
   dispose: () => void
 }
 
@@ -336,7 +337,9 @@ export function createApp(renderer: CliRenderer): App {
     for (let index = used; index < summaryRows.length; index += 1) {
       summaryRows[index]!.visible = false
     }
+    const opening = !summaryModal.visible
     summaryModal.visible = true
+    if (opening) summaryScroll.focus()
     keys.content = KEYS_FINISHED
     outputPane.borderColor = theme.border
   }
@@ -391,6 +394,7 @@ export function createApp(renderer: CliRenderer): App {
     helpOpen: () => help.visible,
     summaryOpen: () => summaryModal.visible,
     scrollOutput: () => outputScroll.scrollTo(outputScroll.scrollHeight),
+    scrollSummaryToBottom: () => summaryScroll.scrollTo(summaryScroll.scrollHeight),
     dispose: () => clearInterval(clock),
   }
 }

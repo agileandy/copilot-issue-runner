@@ -30,3 +30,9 @@ def test_the_finished_run_shows_its_summary_as_a_modal_over_the_panes():
     name = "the finished run shows its summary as a modal over the panes"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_summary_scrolls_to_the_bottom_of_a_long_artefact_list():
+    name = "the summary scrolls to the bottom of a long artefact list"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"

@@ -142,3 +142,30 @@ test("the finished run shows its summary as a modal over the panes", async () =>
     )
   })
 })
+
+test("the summary scrolls to the bottom of a long artefact list", async () => {
+  await withApp({ width: 80, height: 20 }, async (app, setup) => {
+    const files = Array.from({ length: 60 }, (_, index) => `file-${index}.ts`)
+    app.apply({
+      kind: "run_finished",
+      payload: {
+        done: 1,
+        blocked: 0,
+        branch: "issue-9-x",
+        artefacts: { files, commits: [], pr_url: "" },
+        worktree_state: {
+          path: "/tmp/wt",
+          branch: "issue-9-x",
+          head: "abc1234",
+          dirty: false,
+          uncommitted: [],
+        },
+      },
+    })
+
+    await setup.waitForFrame((value) => value.includes("run summary"))
+    app.scrollSummaryToBottom()
+
+    expect(await setup.waitForFrame((value) => value.includes("file-59.ts"))).toContain("file-59.ts")
+  })
+})
