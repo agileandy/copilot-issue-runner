@@ -61,6 +61,29 @@ def test_orchestrator_emits_lifecycle_events(git_repo, cfg):  # noqa: F811
         assert expected in kinds, f"missing event {expected}; got {kinds}"
 
 
+def payload_of_kind(events, kind):
+    return next(e.payload for e in events if e.kind == kind)
+
+
+def test_run_finished_carries_artefacts(git_repo, cfg):  # noqa: F811
+    bus = EventBus()
+    events = []
+    bus.subscribe(lambda e: events.append(e))
+    cfg.events = bus
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1
+
+    assert payload_of_kind(events, "run_finished")["artefacts"]["commits"][0]["ticket_id"] == 1
+
+
 def test_copilot_client_emits_call_events(tmp_path):
     from tests.test_copilot_stream import SCRIPT, FakeProc
 

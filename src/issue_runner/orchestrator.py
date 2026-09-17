@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from . import github_io
+from . import github_io, runsummary
 from .budget import BudgetExhausted, RunBudget
 from .config import RunnerConfig
 from .control import RunStopped, announce_stop
@@ -135,7 +135,7 @@ def run_issue(
                 report.blocked = sum(t.status == "blocked" for t in store.tickets)
                 report.details.append("run stopped by user; saved work can be resumed")
                 emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
-                _emit_finished(cfg, client, report)
+                _emit_finished(cfg, client, report, store)
                 return report
             except Exception as e:
                 # never change the exception type: callers and tests match on
@@ -264,7 +264,7 @@ def _run_issue(
         except BudgetExhausted as e:
             report.budget_exhausted = True
             report.details.append(f"planning did not start: {e}")
-            _emit_finished(cfg, client, report)
+            _emit_finished(cfg, client, report, store)
             return report
         store.plan_summary = summary
         store.set_tickets(tickets)
@@ -299,7 +299,7 @@ def _run_issue(
             report.details.append(
                 f"ticket {t.id} [{t.status}]: {t.title} — assert: {t.test_assertion}"
             )
-        _emit_finished(cfg, client, report)
+        _emit_finished(cfg, client, report, store)
         return report
 
     if cfg.retry_blocked:
@@ -357,7 +357,7 @@ def _run_issue(
         ):
             raise DevopsError("regression command changed the run branch; refusing publication")
         _open_pull_request(cfg, issue, store, report)
-    _emit_finished(cfg, client, report)
+    _emit_finished(cfg, client, report, store)
     return report
 
 
@@ -415,7 +415,9 @@ def _record_usage(client, state_dir: Path, issue_ref: str, report: RunReport) ->
         log.warning("could not write the usage file: %s", e)
 
 
-def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
+def _emit_finished(
+    cfg: RunnerConfig, client, report: RunReport, store: TicketStore | None = None
+) -> None:
     announce_stop(cfg)
     _clear_parent_in_progress(cfg, report)
     ledger = getattr(client, "usage", None)
@@ -438,6 +440,11 @@ def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
         budget_exhausted=report.budget_exhausted,
         plan_only=report.plan_only,
         stopped=report.stopped,
+        artefacts=(
+            runsummary.artefacts(store)
+            if store is not None
+            else {"files": [], "commits": [], "pr_url": report.pr_url}
+        ),
     )
 
 

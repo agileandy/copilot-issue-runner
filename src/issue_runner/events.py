@@ -17,7 +17,8 @@ Event kinds and payloads:
     ticket_blocked      ticket_id, reason
     stop_requested     message
     run_finished      done, blocked, branch, worktree?, pr_url?, usage?, budget?,
-                      budget_exhausted?, plan_only?, stopped?
+                      budget_exhausted?, plan_only?, stopped?,
+                      artefacts={files,commits,pr_url}
 """
 
 import logging
