@@ -59,16 +59,33 @@ class GithubTickets:
     def create(self, parent_number: int, ticket) -> int:
         return github_io.create_subissue(self.repo, parent_number, ticket)
 
+    def _mark(self, number: int) -> None:
+        if not self._label_ready:
+            github_io.ensure_label(self.repo, IN_PROGRESS_LABEL, _LABEL_COLOUR, _LABEL_DESCRIPTION)
+            self._label_ready = True
+        github_io.add_label(self.repo, number, IN_PROGRESS_LABEL)
+
     def start(self, ticket) -> None:
         """Show on GitHub that an agent is working this sub-task right now.
 
         Issues have no native in-progress state outside Projects, so a label is
         the only mechanism every repository has.
         """
-        if not self._label_ready:
-            github_io.ensure_label(self.repo, IN_PROGRESS_LABEL, _LABEL_COLOUR, _LABEL_DESCRIPTION)
-            self._label_ready = True
-        github_io.add_label(self.repo, ticket.github_issue, IN_PROGRESS_LABEL)
+        self._mark(ticket.github_issue)
+
+    def start_parent(self, number: int) -> None:
+        """Mark the issue the whole run is working, not just one sub-task.
+
+        Sub-issues carry the label only while their own ticket is building, so
+        without this the parent looks untouched for the entire run.
+        """
+        self._mark(number)
+
+    def finish_parent(self, number: int) -> None:
+        try:
+            github_io.remove_label(self.repo, number, IN_PROGRESS_LABEL)
+        except GithubError:
+            pass
 
     def close(self, ticket, comment: str) -> None:
         # drop the in-progress label first: a closed issue still carrying it

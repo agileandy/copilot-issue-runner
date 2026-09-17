@@ -58,6 +58,7 @@ class RunReport:
     worktree: str = ""
     plan_only: bool = False
     stopped: bool = False
+    parent_in_progress: int | None = None
     details: list[str] = field(default_factory=list)
 
 
@@ -139,6 +140,7 @@ def run_issue(
                 # it. Carry the partial report so the CLI can still report the
                 # branch, the worktree and any ticket already committed.
                 _record_partial(cfg, store, report)
+                _clear_parent_in_progress(cfg, report)
                 e.report = report
                 raise
             finally:
@@ -247,6 +249,7 @@ def _run_issue(
     if report.worktree:
         log.info("run workspace: %s", report.worktree)
     emit(cfg.events, "run_started", issue_ref=issue_ref, title=issue["title"])
+    _mark_parent_in_progress(cfg, issue, report)
     emit(cfg.events, "phase", name="plan")
     cfg.control.check()
 
@@ -412,6 +415,7 @@ def _record_usage(client, state_dir: Path, issue_ref: str, report: RunReport) ->
 
 def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
     announce_stop(cfg)
+    _clear_parent_in_progress(cfg, report)
     ledger = getattr(client, "usage", None)
     if ledger is not None:
         report.usage_summary = ledger.summary_line()
@@ -664,8 +668,39 @@ def _mark_in_progress(cfg: RunnerConfig, ticket: Ticket) -> None:
         return
     try:
         backend.start(ticket)
-    except Exception:  # noqa: BLE001 — a status light must never stop the run
+    except Exception:  # a status light must never stop the run
         log.warning("could not mark ticket %s in progress", ticket.id, exc_info=True)
+
+
+def _mark_parent_in_progress(cfg: RunnerConfig, issue: dict, report: RunReport) -> None:
+    """Show that the run owns the whole issue, for as long as the run lasts.
+
+    Best-effort like the per-ticket light, and remembered on the report so
+    every exit path can take it back down again.
+    """
+    backend = cfg.tickets_backend
+    number = issue.get("number")
+    if not number or backend is None or not hasattr(backend, "start_parent"):
+        return
+    try:
+        backend.start_parent(number)
+    except Exception:  # a status light must never stop the run
+        log.warning("could not mark issue %s in progress", number, exc_info=True)
+        return
+    report.parent_in_progress = number
+
+
+def _clear_parent_in_progress(cfg: RunnerConfig, report: RunReport) -> None:
+    """Take the light back down: nothing is working this issue any more."""
+    number = report.parent_in_progress
+    backend = cfg.tickets_backend
+    if not number or backend is None or not hasattr(backend, "finish_parent"):
+        return
+    report.parent_in_progress = None
+    try:
+        backend.finish_parent(number)
+    except Exception:  # a status light must never stop the run
+        log.warning("could not clear the in-progress mark on issue %s", number, exc_info=True)
 
 
 def _brief_body(ticket: Ticket, store: TicketStore) -> str:
@@ -800,7 +835,7 @@ def _finish_ticket(
     if ticket.github_issue and cfg.tickets_backend:
         try:
             cfg.tickets_backend.close(ticket, f"{note}Done in {sha} on {store.branch}")
-        except Exception:  # noqa: BLE001 — the commit already happened
+        except Exception:  # the commit already happened
             log.warning("could not close the sub-issue for ticket %s", ticket.id, exc_info=True)
             report.details.append(
                 f"ticket {ticket.id} is committed at {sha[:12]} but its sub-issue "

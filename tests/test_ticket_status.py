@@ -27,6 +27,12 @@ class StatusBackend:
     def start(self, ticket):
         self.events.append(("start", ticket.id))
 
+    def start_parent(self, number):
+        self.events.append(("start_parent", number))
+
+    def finish_parent(self, number):
+        self.events.append(("finish_parent", number))
+
     def close(self, ticket, comment):
         if self.fail_close:
             raise RuntimeError("github is down")
@@ -206,3 +212,99 @@ def test_a_finished_subissue_is_closed_as_completed_without_the_label():
     assert any("--remove-label" in c for c in calls), "the in-progress label must be cleared"
     close = next(c for c in calls if c[:3] == ["gh", "issue", "close"])
     assert "completed" in close, "a proven ticket must not look abandoned"
+
+
+def test_the_parent_issue_is_marked_in_progress_for_the_whole_run(git_repo, cfg):
+    """Sub-issues only carry the mark while their own ticket builds, so without
+    this the issue the run was launched against never looks started."""
+    backend = StatusBackend()
+    cfg.tickets_backend = backend
+    client = FakeClient(
+        [
+            (two_ticket_plan(), None),
+            *ticket_script(git_repo, "one"),
+            *ticket_script(git_repo, "two"),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE)
+    assert report.done == 2
+
+    assert backend.events[0] == ("start_parent", 17), (
+        "the issue must be marked before any planning or sub-task work"
+    )
+    assert backend.events[-1] == ("finish_parent", 17), (
+        "the mark must come down last, once no agent is working the issue"
+    )
+
+
+def test_the_parent_mark_comes_down_when_a_ticket_blocks(git_repo, cfg):
+    backend = StatusBackend()
+    cfg.tickets_backend = backend
+    client = FakeClient(
+        [(one_ticket_plan(), None), *[(json.dumps({"test_path": "test_one.py"}), None)] * 3]
+    )
+
+    run_issue(cfg, client, ISSUE)
+
+    assert ("finish_parent", 17) in backend.events, (
+        "an issue nobody is working must not keep claiming it is in progress"
+    )
+
+
+def test_a_tracker_without_parent_support_still_runs(git_repo, cfg):
+    """Gitea mirrors into a checklist and has no parent label to set."""
+
+    class NoParent(StatusBackend):
+        start_parent = None
+        finish_parent = None
+
+        def __getattribute__(self, name):
+            if name in ("start_parent", "finish_parent"):
+                raise AttributeError(name)
+            return object.__getattribute__(self, name)
+
+    cfg.tickets_backend = NoParent()
+    client = FakeClient([(one_ticket_plan(), None), *ticket_script(git_repo, "one")])
+
+    report = run_issue(cfg, client, ISSUE)
+
+    assert report.done >= 1
+
+
+def test_a_refused_parent_mark_is_not_taken_back_down(git_repo, cfg):
+    """Nothing was set, so nothing must be cleared — otherwise the run would
+    strip a label a human put on the issue by hand."""
+
+    class Refusing(StatusBackend):
+        def start_parent(self, number):
+            raise RuntimeError("no permission to label")
+
+    backend = Refusing()
+    cfg.tickets_backend = backend
+    client = FakeClient([(one_ticket_plan(), None), *ticket_script(git_repo, "one")])
+
+    report = run_issue(cfg, client, ISSUE)
+
+    assert report.done >= 1
+    assert not any(e[0] == "finish_parent" for e in backend.events)
+
+
+def test_github_labels_and_unlabels_the_parent_issue():
+    calls = []
+
+    import issue_runner.github_io as gio
+
+    original = gio._run
+    gio._run = lambda argv, run=None: calls.append(argv)
+    try:
+        backend = GithubTickets("owner/repo")
+        backend.start_parent(89)
+        backend.finish_parent(89)
+    finally:
+        gio._run = original
+
+    add = next(c for c in calls if "--add-label" in c)
+    remove = next(c for c in calls if "--remove-label" in c)
+    assert "89" in add and add[-1] == IN_PROGRESS_LABEL
+    assert "89" in remove and remove[-1] == IN_PROGRESS_LABEL
