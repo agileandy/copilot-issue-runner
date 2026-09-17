@@ -73,7 +73,9 @@ def _render_visual(
     branch: str | None = None,
     tickets: list[Ticket] | None = None,
 ) -> None:
-    if not cfg.visual:
+    if not cfg.visual or cfg.events is not None:
+        # a live display draws the same state from the event stream; printing the
+        # snapshot as well would scribble over the frame it owns
         return
     payload = {
         "plan": plan if plan is not None else "pending",

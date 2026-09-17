@@ -4,7 +4,9 @@ import sys
 
 import pytest
 
-from issue_runner.orchestrator import run_issue
+from issue_runner.config import RunnerConfig
+from issue_runner.events import EventBus
+from issue_runner.orchestrator import _render_visual, run_issue
 from issue_runner.tickets import TicketStore
 from issue_runner.visual import render_flow
 from tests.conftest import FakeClient
@@ -40,6 +42,18 @@ def test_render_flow_snapshot_contract():
         and render_flow({"plan": "done", "branch": "active", "tickets": []})
         == "issue pipeline\nplan: done\n   ↓\nbranch: active\n   ↓\nper-ticket build/verify:\n  tickets: none\n   ↓\ncommit: pending"
     )
+
+
+def test_the_snapshot_is_only_printed_when_no_display_is_attached(tmp_path, capsys):
+    """Printing over the display's own frame is what a corrupt screen looks like."""
+    cfg = RunnerConfig(repo_dir=tmp_path, visual=True)
+
+    _render_visual(cfg, plan="done", branch="b", tickets=[])
+    assert "issue pipeline" in capsys.readouterr().out
+
+    cfg.events = EventBus()
+    _render_visual(cfg, plan="done", branch="b", tickets=[])
+    assert capsys.readouterr().out == ""
 
 
 def test_render_flow_includes_ticket_id_in_snapshot():

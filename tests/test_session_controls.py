@@ -186,6 +186,9 @@ def running_cli(tmp_path, *, visual=True, pause_role="planner"):
 
 def test_detach_then_reattach_in_the_same_terminal(tmp_path):
     with running_cli(tmp_path) as terminal:
+        # the pipeline's plain snapshot belongs to runs with no display; printed
+        # here it would scribble over the frame the display owns
+        assert b"issue pipeline" not in terminal.snapshot()
         terminal.press(b"q")
         terminal.expect(b"display detached")
         terminal.press(b"r\n")
