@@ -8,6 +8,7 @@ import {
   summaryOutcome,
   trimOutput,
 } from "./model"
+import * as model from "./model"
 
 test("the pipeline marks the current phase and the phases already passed", () => {
   const state = initialState()
@@ -204,4 +205,28 @@ test("a finished run folds the worktree state into the summary", () => {
     dirty: true,
     uncommitted: ["notes.md"],
   })
+})
+
+test("the metrics section reports the run-time totals of a finished run", () => {
+  const state = initialState(0)
+  state.stats = {
+    calls: 2,
+    inputTokens: 41000,
+    outputTokens: 2000,
+    nanoAiu: 7_000_000_000,
+    unknownCostCalls: 0,
+  }
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: { done: 3, blocked: 0, branch: "issue-9-x" },
+  })
+  expect(model.metricsLines(state, 65_000)).toEqual([
+    "outcome all tickets done",
+    "duration 1m05s",
+    "phases plan → branch → build → finished",
+    "tickets done 3 · blocked 0",
+    "model calls 2",
+    "tokens in 41,000 / out 2,000",
+    "credits 7.00 AIU",
+  ])
 })

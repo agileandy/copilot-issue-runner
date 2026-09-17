@@ -35,3 +35,9 @@ def test_a_finished_run_folds_the_worktree_state_into_the_summary():
     name = "a finished run folds the worktree state into the summary"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_metrics_section_reports_the_run_time_totals_of_a_finished_run():
+    name = "the metrics section reports the run-time totals of a finished run"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"

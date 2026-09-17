@@ -304,6 +304,21 @@ export function summaryLines(summary: Omit<Summary, "artefacts" | "worktreeState
   return lines
 }
 
+/** The run-time totals of a finished run, one label per line. */
+export function metricsLines(state: ViewState, now: number = Date.now()): string[] {
+  if (!state.summary) return []
+  const s = state.stats
+  return [
+    `outcome ${summaryOutcome(state.summary).text}`,
+    `duration ${formatClock((now - state.startedAt) / 1000)}`,
+    `phases ${PHASES.join(" → ")}`,
+    `tickets done ${state.summary.done} · blocked ${state.summary.blocked}`,
+    `model calls ${s.calls}`,
+    `tokens in ${s.inputTokens.toLocaleString("en-US")} / out ${s.outputTokens.toLocaleString("en-US")}`,
+    s.nanoAiu !== null ? `credits ${formatAiu(s.nanoAiu)}` : "credits unknown",
+  ]
+}
+
 /** Keep the output pane bounded; the journal holds the full transcript. */
 export function trimOutput(text: string, maxLines = 1000): string {
   const lines = text.split("\n")
