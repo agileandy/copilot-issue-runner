@@ -200,3 +200,19 @@ test("the summary stays open when later events arrive", async () => {
     expect(app.summaryOpen()).toBe(true)
   })
 })
+
+test("dismissing the summary puts the terminal back", async () => {
+  await withApp({ width: 100, height: 24 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: { done: 3, blocked: 0, branch: "issue-9-x", pr_url: "https://x/pull/2" },
+    })
+    await setup.waitForFrame((value) => value.includes("run summary"))
+
+    app.dismissSummary()
+
+    expect(await setup.waitForFrame((value) => !value.includes("run summary"))).not.toContain(
+      "run summary",
+    )
+  })
+})

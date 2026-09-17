@@ -42,3 +42,9 @@ def test_the_summary_stays_open_when_later_events_arrive():
     name = "the summary stays open when later events arrive"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_dismissing_the_summary_puts_the_terminal_back():
+    name = "dismissing the summary puts the terminal back"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
