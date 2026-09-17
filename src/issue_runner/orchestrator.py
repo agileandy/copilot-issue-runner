@@ -427,6 +427,17 @@ def _emit_finished(
     if isinstance(budget, RunBudget) and (budget.limit is not None or not budget.cost_is_complete):
         report.budget_summary = budget.describe()
     emit(cfg.events, "phase", name="finished")
+    try:
+        worktree_state = devops.worktree_state(cfg.repo_dir)
+    except DevopsError:
+        # a broken git must never break the run; report what we already know
+        worktree_state = {
+            "path": report.worktree,
+            "branch": report.branch,
+            "head": "",
+            "dirty": False,
+            "uncommitted": [],
+        }
     emit(
         cfg.events,
         "run_finished",
@@ -434,6 +445,7 @@ def _emit_finished(
         blocked=report.blocked,
         branch=report.branch,
         worktree=report.worktree,
+        worktree_state=worktree_state,
         pr_url=report.pr_url,
         usage=report.usage_summary,
         budget=report.budget_summary,
