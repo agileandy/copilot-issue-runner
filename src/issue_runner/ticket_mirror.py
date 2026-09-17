@@ -15,7 +15,12 @@ import json
 import re
 
 from . import github_io
+from .github_io import GithubError
 from .trackers import _http_json, gitea_write_token
+
+IN_PROGRESS_LABEL = "in progress"
+_LABEL_COLOUR = "0e8a16"
+_LABEL_DESCRIPTION = "an issue-runner agent is working on this sub-task now"
 
 MARK_START = "<!-- issue-runner:tasks -->"
 MARK_END = "<!-- /issue-runner:tasks -->"
@@ -49,14 +54,37 @@ def upsert_task_line(
 class GithubTickets:
     def __init__(self, repo: str):
         self.repo = repo
+        self._label_ready = False
 
     def create(self, parent_number: int, ticket) -> int:
         return github_io.create_subissue(self.repo, parent_number, ticket)
 
+    def start(self, ticket) -> None:
+        """Show on GitHub that an agent is working this sub-task right now.
+
+        Issues have no native in-progress state outside Projects, so a label is
+        the only mechanism every repository has.
+        """
+        if not self._label_ready:
+            github_io.ensure_label(self.repo, IN_PROGRESS_LABEL, _LABEL_COLOUR, _LABEL_DESCRIPTION)
+            self._label_ready = True
+        github_io.add_label(self.repo, ticket.github_issue, IN_PROGRESS_LABEL)
+
     def close(self, ticket, comment: str) -> None:
+        # drop the in-progress label first: a closed issue still carrying it
+        # would claim work is happening on a sub-task that is already finished
+        try:
+            github_io.remove_label(self.repo, ticket.github_issue, IN_PROGRESS_LABEL)
+        except GithubError:
+            pass
         github_io.close_subissue(self.repo, ticket.github_issue, comment)
 
     def block(self, ticket, reason: str) -> None:
+        # the label goes too: a blocked ticket is not being worked on
+        try:
+            github_io.remove_label(self.repo, ticket.github_issue, IN_PROGRESS_LABEL)
+        except GithubError:
+            pass
         github_io.comment_issue(self.repo, ticket.github_issue, f"BLOCKED: {reason}")
 
     def comment(self, ticket, body: str) -> None:
@@ -85,6 +113,9 @@ class GiteaTickets:
     def create(self, parent_number: int, ticket) -> int:
         self._update_line(parent_number, ticket, done=False)
         return parent_number  # the parent issue is the tracker ref for checklist mode
+
+    def start(self, ticket) -> None:
+        self._update_line(ticket.github_issue, ticket, done=False, note="in progress")
 
     def close(self, ticket, comment: str) -> None:
         parent_number = ticket.github_issue

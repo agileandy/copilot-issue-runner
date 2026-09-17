@@ -75,7 +75,59 @@ def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None
 
 
 def close_subissue(repo: str, number: int, comment: str, run=subprocess.run) -> None:
-    _run(["gh", "issue", "close", "-R", repo, str(number), "--comment", comment], run)
+    """Close a finished sub-task, recorded as genuinely completed.
+
+    The reason matters: GitHub renders "completed" and "not planned" with
+    different icons, so without it a proven, committed ticket is indistinguishable
+    from one that was abandoned.
+    """
+    _run(
+        [
+            "gh",
+            "issue",
+            "close",
+            "-R",
+            repo,
+            str(number),
+            "--reason",
+            "completed",
+            "--comment",
+            comment,
+        ],
+        run,
+    )
+
+
+def ensure_label(repo: str, label: str, color: str, description: str, run=subprocess.run) -> None:
+    """Create the label if the repo does not have it yet.
+
+    `--force` makes this idempotent: the first run creates it, later runs update
+    it in place rather than failing on a duplicate.
+    """
+    _run(
+        [
+            "gh",
+            "label",
+            "create",
+            label,
+            "-R",
+            repo,
+            "--color",
+            color,
+            "--description",
+            description,
+            "--force",
+        ],
+        run,
+    )
+
+
+def add_label(repo: str, number: int, label: str, run=subprocess.run) -> None:
+    _run(["gh", "issue", "edit", str(number), "-R", repo, "--add-label", label], run)
+
+
+def remove_label(repo: str, number: int, label: str, run=subprocess.run) -> None:
+    _run(["gh", "issue", "edit", str(number), "-R", repo, "--remove-label", label], run)
 
 
 def list_subissues(repo: str, parent_number: int, run=subprocess.run) -> list[int]:
