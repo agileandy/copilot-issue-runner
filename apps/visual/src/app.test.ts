@@ -117,3 +117,28 @@ test("help opens over the panes and closes again", async () => {
     expect(app.helpOpen()).toBe(false)
   })
 })
+
+test("the finished run shows its summary as a modal over the panes", async () => {
+  await withApp({ width: 100, height: 28 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: {
+        done: 3,
+        blocked: 0,
+        branch: "issue-9-x",
+        artefacts: { files: ["src/a.ts"], commits: [], pr_url: "https://x/pull/2" },
+        worktree_state: {
+          path: "/tmp/wt",
+          branch: "issue-9-x",
+          head: "abc1234",
+          dirty: true,
+          uncommitted: ["notes.md"],
+        },
+      },
+    })
+
+    expect(await setup.waitForFrame((value) => value.includes("run summary"))).toContain(
+      "uncommitted notes.md",
+    )
+  })
+})

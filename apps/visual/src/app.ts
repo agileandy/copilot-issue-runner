@@ -10,11 +10,13 @@ import {
 import { helpText } from "./help"
 import {
   applyEvent,
+  artefactLines,
   initialState,
+  metricsLines,
   pipelineChips,
   statsLine,
-  summaryLines,
   summaryOutcome,
+  worktreeLines,
   trimOutput,
   type RunEvent,
   type Ticket,
@@ -30,6 +32,7 @@ export interface App {
   toggleHelp: () => void
   closeHelp: () => void
   helpOpen: () => boolean
+  summaryOpen: () => boolean
   scrollOutput: () => void
   dispose: () => void
 }
@@ -127,13 +130,6 @@ export function createApp(renderer: CliRenderer): App {
   body.add(boardPane)
   body.add(outputPane)
 
-  const summaryPane = panel(renderer, " run finished ", {
-    borderColor: theme.ok,
-    paddingLeft: 1,
-    paddingRight: 1,
-  })
-  summaryPane.visible = false
-
   const statsRow = new BoxRenderable(renderer, {
     height: 1,
     paddingLeft: 1,
@@ -179,13 +175,47 @@ export function createApp(renderer: CliRenderer): App {
   help.add(helpScroll)
   help.visible = false
 
+  // The finished run reads as a report, not a strip squeezed under the panes.
+  const summaryModal = new BoxRenderable(renderer, {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: "100%",
+    height: "100%",
+    border: true,
+    borderStyle: "rounded",
+    borderColor: theme.ok,
+    backgroundColor: theme.panel,
+    flexDirection: "column",
+    paddingLeft: 1,
+    paddingRight: 1,
+    title: " run summary — s save · d dismiss ",
+  })
+  const summaryOutcomeText = new TextRenderable(renderer, { content: "", height: 1, wrapMode: "none" })
+  const summaryScroll = new ScrollBoxRenderable(renderer, {
+    flexGrow: 1,
+    backgroundColor: theme.panel,
+    contentOptions: { backgroundColor: theme.panel, flexDirection: "column", paddingRight: 1 },
+    scrollbarOptions: QUIET_SCROLLBAR,
+  })
+  const summaryKeys = new TextRenderable(renderer, {
+    content: KEYS_FINISHED,
+    fg: theme.dim,
+    height: 1,
+    wrapMode: "none",
+  })
+  summaryModal.add(summaryOutcomeText)
+  summaryModal.add(summaryScroll)
+  summaryModal.add(summaryKeys)
+  summaryModal.visible = false
+
   root.add(header)
   root.add(banner)
   root.add(body)
-  root.add(summaryPane)
   root.add(statsRow)
   root.add(footer)
   root.add(help)
+  root.add(summaryModal)
 
   outputScroll.focus()
 
@@ -268,22 +298,45 @@ export function createApp(renderer: CliRenderer): App {
     }
   }
 
-  const summaryOutcomeText = new TextRenderable(renderer, { content: "", height: 1 })
-  const summaryBody = new TextRenderable(renderer, { content: "", fg: theme.text, height: 1 })
-  summaryPane.add(summaryOutcomeText)
-  summaryPane.add(summaryBody)
+  // Rows are reused for the same reason the board reuses them.
+  const summaryRows: TextRenderable[] = []
+
+  function summaryRow(index: number): TextRenderable {
+    let row = summaryRows[index]
+    if (!row) {
+      row = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "none", height: 1 })
+      summaryRows[index] = row
+      summaryScroll.add(row)
+    }
+    row.visible = true
+    return row
+  }
 
   function renderSummary(): void {
-    if (!state.summary) return
-    const outcome = summaryOutcome(state.summary)
+    const summary = state.summary
+    if (!summary) return
+    const outcome = summaryOutcome(summary)
     const tone = outcome.tone === "ok" ? theme.ok : outcome.tone === "bad" ? theme.bad : theme.text
-    const lines = summaryLines(state.summary)
-    summaryOutcomeText.content = t`${bold(fg(tone)(outcome.text))}`
-    summaryBody.content = lines.join("\n")
-    // auto height measures the content before it is set, so the rows are explicit
-    summaryBody.height = lines.length
-    summaryPane.height = lines.length + 3
-    summaryPane.visible = true
+    summaryOutcomeText.content = t`${bold(fg(tone)(`run finished — ${outcome.text}`))}`
+    const sections: [string, string[]][] = [
+      ["run metrics", metricsLines(state)],
+      ["artefacts", artefactLines(summary)],
+      ["worktree", worktreeLines(summary)],
+    ]
+    let used = 0
+    for (const [heading, lines] of sections) {
+      const head = summaryRow(used++)
+      head.content = t`${bold(fg(theme.accent)(heading))}`
+      for (const line of lines) {
+        const row = summaryRow(used++)
+        row.content = line
+        row.fg = theme.text
+      }
+    }
+    for (let index = used; index < summaryRows.length; index += 1) {
+      summaryRows[index]!.visible = false
+    }
+    summaryModal.visible = true
     keys.content = KEYS_FINISHED
     outputPane.borderColor = theme.border
   }
@@ -336,6 +389,7 @@ export function createApp(renderer: CliRenderer): App {
       outputScroll.focus()
     },
     helpOpen: () => help.visible,
+    summaryOpen: () => summaryModal.visible,
     scrollOutput: () => outputScroll.scrollTo(outputScroll.scrollHeight),
     dispose: () => clearInterval(clock),
   }
