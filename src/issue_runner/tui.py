@@ -54,10 +54,11 @@ HELP = """\
                  refine_test or rework_code, with the reason fed back to the right role.
 
 [bold]Where the agents' conversation lives[/]
-  Every hand-back — a rejected stub test, a verdict, a failed regression — is posted as a
-  comment on that ticket's own sub-issue. The next prompt does not repeat it; it sends the
-  agent to the issue to read the thread. So the reasoning survives the run, a resumed run
-  starts with the full history, and you can read exactly why a ticket took four rounds.
+  Every handoff is posted as a comment on that ticket's own sub-issue: the planner's brief,
+  the accepted test, the implementation ready for review, the verdict — and every hand-back,
+  such as a rejected stub or a failed regression. A ticket that goes right first time is
+  documented just as fully as one that takes four rounds. When work IS sent back, the next
+  prompt does not repeat the reason; it sends the agent to the issue to read the thread.
   With no tracker (--no-github-tickets, --issue-file) the feedback is inlined as before.
 
 [bold]Checks and controls[/]

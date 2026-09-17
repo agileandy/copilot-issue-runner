@@ -52,6 +52,29 @@ def write(repo, content, name="test_subtract.py"):
 REPLY = json.dumps({"test_path": "test_subtract.py"})
 
 
+@pytest.fixture
+def git_repo(repo):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    git("init", "-b", "main")
+    git("config", "user.email", "runner@test.local")
+    git("config", "user.name", "Runner Test")
+    git("add", "-A")
+    git("commit", "-m", "seed")
+    return repo
+
+
+def write_sub(repo, content):
+    return lambda: (repo / "test_sub.py").write_text(content)
+
+
+def implement_sub(repo):
+    return lambda: (repo / "impl.py").write_text("code")
+
+
 def test_a_rejected_test_is_recorded_on_the_ticket(repo, cfg):
     """The reason a test was bounced belongs on the issue, not only in a prompt."""
     backend = RecordingBackend()
@@ -214,3 +237,131 @@ def test_a_repeat_after_something_else_is_posted_again():
     journal.post(t, "harness", "builder.coder", "A")
 
     assert len(backend.comments) == 3, "a later recurrence is real history, not noise"
+
+
+def test_a_ticket_that_goes_right_first_time_is_still_documented(git_repo, cfg):
+    """The defect this fixes: a clean run left the sub-issue completely empty.
+
+    Only failures were recorded, so a ticket whose test went red then green on
+    the first attempt produced no trace at all — the issue looked dead while
+    the work was actually happening.
+    """
+    import subprocess
+
+    from issue_runner.orchestrator import run_issue
+
+    backend = RecordingBackend()
+    backend.created = {}
+
+    def create(parent_number, t):
+        backend.created[t.id] = 900 + t.id
+        return 900 + t.id
+
+    def close(t, comment):
+        backend.comments.append((t.github_issue, f"CLOSED: {comment}"))
+
+    backend.create = create
+    backend.close = close
+    backend.block = lambda t, reason: None
+    cfg.tickets_backend = backend
+
+    client = FakeClient(
+        [
+            (
+                json.dumps(
+                    {
+                        "summary": "one ticket",
+                        "tickets": [
+                            {
+                                "title": "subtract ints",
+                                "description": "implement subtract",
+                                "test_assertion": "subtract(5,3) == 2",
+                            }
+                        ],
+                    }
+                ),
+                None,
+            ),
+            (json.dumps({"test_path": "test_sub.py"}), write_sub(git_repo, "assert RED")),
+            ("done", implement_sub(git_repo)),
+            (json.dumps({"verdict": "pass", "reasons": ["robust"]}), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, {"number": 17, "title": "Add subtract", "body": "x", "url": ""})
+    assert report.done == 1, "the ticket must actually complete"
+
+    bodies = [b for _, b in backend.comments]
+    handoffs = [b for b in bodies if "→" in b]
+    assert len(handoffs) >= 4, f"every handoff must be recorded, got {len(handoffs)}: {bodies}"
+    assert any("planner → builder.tester" in b for b in bodies), "the brief is missing"
+    assert any("builder.tester → builder.coder" in b for b in bodies), "the spec handoff is missing"
+    assert any("builder.coder → verifier" in b for b in bodies), "the review request is missing"
+    assert any("verifier → harness" in b for b in bodies), "the passing verdict is missing"
+    del subprocess
+
+
+def test_the_recorded_brief_carries_the_assertion_the_work_is_judged_against(repo, cfg):
+    from issue_runner.orchestrator import _brief_body
+    from issue_runner.tickets import TicketStore
+
+    store = TicketStore(repo, "17")
+    store.branch = "issue-17-x"
+    t = ticket()
+    t.files_hint = ["src/range.py"]
+    t.depends_on = [4]
+
+    body = _brief_body(t, store)
+
+    assert "subtract(5, 3) == 2" in body
+    assert "src/range.py" in body
+    assert "ticket 4" in body
+    assert "issue-17-x" in body
+
+
+def test_the_accepted_test_is_announced_as_a_frozen_specification():
+    from issue_runner.orchestrator import _test_body
+
+    body = _test_body(ticket(), "tests/test_range.py")
+
+    assert "tests/test_range.py" in body
+    assert "FAIL" in body, "the red-first proof is the point of the handoff"
+    assert "frozen" in body
+
+
+def test_an_already_green_test_is_announced_honestly():
+    from issue_runner.orchestrator import _test_body
+
+    t = ticket()
+    t.already_satisfied = True
+
+    assert "may already exist" in _test_body(t, "tests/test_range.py")
+
+
+def test_the_coder_handoff_lists_what_changed_excluding_the_test(repo, cfg):
+    import subprocess
+
+    from issue_runner.orchestrator import _code_body
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True)
+    (repo / "impl.py").write_text("code")
+    (repo / "test_range.py").write_text("assert RED")
+
+    body = _code_body(cfg, "test_range.py")
+
+    assert "impl.py" in body
+    assert "- `test_range.py`" not in body, "the test is the spec, not part of the change"
+
+
+def test_listing_the_changed_files_can_fail_without_costing_the_ticket(repo, cfg):
+    """The handoff text is a record, not a gate — git failing must not abort."""
+    from issue_runner.orchestrator import _code_body
+
+    body = _code_body(cfg, "test_range.py")
+
+    assert "now passes" in body
+    assert "no source file changed" in body

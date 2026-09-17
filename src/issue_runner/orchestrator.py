@@ -481,6 +481,10 @@ def _process_ticket(
     store.save()
     log.info("ticket %d: %s", ticket.id, ticket.title)
     emit(cfg.events, "ticket_started", ticket_id=ticket.id, title=ticket.title)
+    if ticket.phase == "tester" and ticket.rounds == 0:
+        # only on the ticket's first start: a resumed run must not repost the brief,
+        # since the in-process duplicate guard is gone once the process restarts
+        journal.post(ticket, "planner", "builder.tester", _brief_body(ticket, store), "brief")
     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     try:
         while True:
@@ -512,6 +516,13 @@ def _process_ticket(
                     ticket.already_satisfied = True
                 _snapshot_test(cfg, ticket, path)
                 ticket.phase = "verifier" if ticket.already_satisfied else "coder"
+                journal.post(
+                    ticket,
+                    "builder.tester",
+                    "verifier" if ticket.already_satisfied else "builder.coder",
+                    _test_body(ticket, path),
+                    "test accepted",
+                )
                 ticket.code_feedback = ""
                 ticket.test_feedback = ""
                 store.save()
@@ -550,6 +561,13 @@ def _process_ticket(
                 _require_accepted_test(cfg, ticket)
                 ticket.phase = "verifier"
                 ticket.code_feedback = ""
+                journal.post(
+                    ticket,
+                    "builder.coder",
+                    "verifier",
+                    _code_body(cfg, test_path),
+                    "implementation ready for review",
+                )
                 store.save()
                 continue
 
@@ -574,6 +592,13 @@ def _process_ticket(
                 if verdict.verdict == "pass":
                     ticket.approved_digest = before
                     ticket.phase = "regression"
+                    journal.post(
+                        ticket,
+                        "verifier",
+                        "harness",
+                        _verdict_body(verdict),
+                        "pass — going to the regression gate",
+                    )
                     store.save()
                     continue
                 ticket.test_feedback = verdict.test_feedback
@@ -625,6 +650,47 @@ def _process_ticket(
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
         cfg.control.check()
         _block(store, ticket, report, str(e), cfg)
+
+
+def _brief_body(ticket: Ticket, store: TicketStore) -> str:
+    """What the planner asked for — the brief every later role is judged against."""
+    parts = [ticket.description.strip()]
+    parts.append(f"**Single test assertion:** `{ticket.test_assertion}`")
+    if ticket.files_hint:
+        parts.append("**Files likely involved:** " + ", ".join(ticket.files_hint))
+    if ticket.depends_on:
+        parts.append("**Depends on:** " + ", ".join(f"ticket {d}" for d in ticket.depends_on))
+    if store.branch:
+        parts.append(f"Work happens on `{store.branch}`.")
+    return "\n\n".join(p for p in parts if p)
+
+
+def _test_body(ticket: Ticket, path: str) -> str:
+    """The specification the coder must satisfy, and the proof it is a real one."""
+    if ticket.already_satisfied:
+        return (
+            f"Accepted test: `{path}`\n\n"
+            "It passes with no new code, so the behaviour may already exist. "
+            "Sent straight to the verifier to arbitrate rather than to the coder."
+        )
+    return (
+        f"Accepted test: `{path}`\n\n"
+        "It was executed and observed to FAIL before any implementation exists, which is "
+        "what makes it a specification rather than a claim. It is now frozen: the coder "
+        "cannot edit it."
+    )
+
+
+def _code_body(cfg: RunnerConfig, test_path: str) -> str:
+    """What the coder changed to turn the frozen test green."""
+    try:
+        changed = [p for p in devops.changed_paths(cfg.repo_dir) if p != test_path]
+    except DevopsError:
+        # this text is a record, never a gate: failing to list the files must
+        # not cost a ticket that has already been proven green
+        changed = []
+    files = "\n".join(f"- `{p}`" for p in changed) if changed else "- (no source file changed)"
+    return f"The frozen test `{test_path}` now passes.\n\nChanged:\n{files}"
 
 
 def _verdict_body(verdict) -> str:
