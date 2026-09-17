@@ -119,3 +119,22 @@ def test_copilot_client_emits_call_events(tmp_path):
     assert kinds[-1] == "agent_call_finished"
     assert events[0].payload["role"] == "builder.coder"
     assert "elapsed" in events[-1].payload
+
+
+def test_run_finished_carries_state_dir(git_repo, cfg):  # noqa: F811
+    bus = EventBus()
+    events = []
+    bus.subscribe(lambda e: events.append(e))
+    cfg.events = bus
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1
+
+    assert payload_of_kind(events, "run_finished")["state_dir"].endswith(".state")

@@ -452,6 +452,7 @@ def _emit_finished(
         budget_exhausted=report.budget_exhausted,
         plan_only=report.plan_only,
         stopped=report.stopped,
+        state_dir=str(store.state_dir) if store is not None else "",
         artefacts=(
             runsummary.artefacts(store)
             if store is not None
