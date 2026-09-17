@@ -342,6 +342,18 @@ export function worktreeLines(summary: Summary): string[] {
   return lines
 }
 
+/** The whole run, as one saveable Markdown report. */
+export function summaryReport(state: ViewState, now: number = Date.now()): string {
+  const summary = state.summary
+  if (!summary) return ""
+  const sections: string[][] = [
+    ["## run metrics", ...metricsLines(state, now)],
+    ["## artefacts", ...artefactLines(summary)],
+    ["## worktree", ...worktreeLines(summary)],
+  ]
+  return [`# run summary — ${state.issueRef} ${state.issue}`, "", sections.map((s) => s.join("\n")).join("\n\n")].join("\n")
+}
+
 /** Keep the output pane bounded; the journal holds the full transcript. */
 export function trimOutput(text: string, maxLines = 1000): string {
   const lines = text.split("\n")

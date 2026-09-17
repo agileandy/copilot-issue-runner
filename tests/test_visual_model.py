@@ -53,3 +53,9 @@ def test_the_worktree_section_reports_path_branch_head_state_and_uncommitted_fil
     name = "the worktree section reports the path, branch, head, state and uncommitted files"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_summary_report_composes_the_metrics_artefacts_and_worktree_sections():
+    name = "the summary report composes the metrics, artefacts and worktree sections"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"

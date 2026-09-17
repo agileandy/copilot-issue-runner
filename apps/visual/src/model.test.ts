@@ -292,3 +292,36 @@ test("the worktree section reports the path, branch, head, state and uncommitted
     "uncommitted notes.md",
   ])
 })
+
+test("the summary report composes the metrics, artefacts and worktree sections", () => {
+  const state = initialState(0)
+  applyEvent(state, {
+    kind: "run_started",
+    payload: { title: "add x", issue_ref: "agileandy/copilot-issue-runner#9" },
+  })
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: {
+      done: 1,
+      blocked: 0,
+      branch: "issue-9-x",
+      worktree: "/tmp/wt",
+      pr_url: "https://x/pull/2",
+      artefacts: {
+        files: ["src/a.ts"],
+        commits: [{ sha: "abc1234", ticket_id: 1, title: "add x", files: ["src/a.ts"] }],
+        pr_url: "https://x/pull/2",
+      },
+      worktree_state: {
+        path: "/tmp/wt",
+        branch: "issue-9-x",
+        head: "abc1234",
+        dirty: false,
+        uncommitted: [],
+      },
+    },
+  })
+  expect(
+    model.summaryReport(state, 65_000).split("\n").filter((l) => l.startsWith("## ")),
+  ).toEqual(["## run metrics", "## artefacts", "## worktree"])
+})
