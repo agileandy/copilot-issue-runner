@@ -59,6 +59,9 @@ HELP = """\
   such as a rejected stub or a failed regression. A ticket that goes right first time is
   documented just as fully as one that takes four rounds. When work IS sent back, the next
   prompt does not repeat the reason; it sends the agent to the issue to read the thread.
+  Each sub-issue is labelled "in progress" as its ticket starts, and that label is cleared
+  when the ticket is closed as completed — the last thing that happens before the next
+  ticket begins. Status marking is best-effort: a tracker that refuses it never stops work.
   With no tracker (--no-github-tickets, --issue-file) the feedback is inlined as before.
 
 [bold]Checks and controls[/]

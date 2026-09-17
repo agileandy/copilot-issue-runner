@@ -481,6 +481,7 @@ def _process_ticket(
     store.save()
     log.info("ticket %d: %s", ticket.id, ticket.title)
     emit(cfg.events, "ticket_started", ticket_id=ticket.id, title=ticket.title)
+    _mark_in_progress(cfg, ticket)
     if ticket.phase == "tester" and ticket.rounds == 0:
         # only on the ticket's first start: a resumed run must not repost the brief,
         # since the in-process duplicate guard is gone once the process restarts
@@ -652,6 +653,21 @@ def _process_ticket(
         _block(store, ticket, report, str(e), cfg)
 
 
+def _mark_in_progress(cfg: RunnerConfig, ticket: Ticket) -> None:
+    """Show on the tracker that this sub-task is being worked on right now.
+
+    Best-effort by design: this is a status light, and a tracker that will not
+    take it is no reason to refuse to do the work.
+    """
+    backend = cfg.tickets_backend
+    if not ticket.github_issue or backend is None or not hasattr(backend, "start"):
+        return
+    try:
+        backend.start(ticket)
+    except Exception:  # noqa: BLE001 — a status light must never stop the run
+        log.warning("could not mark ticket %s in progress", ticket.id, exc_info=True)
+
+
 def _brief_body(ticket: Ticket, store: TicketStore) -> str:
     """What the planner asked for — the brief every later role is judged against."""
     parts = [ticket.description.strip()]
@@ -778,8 +794,18 @@ def _finish_ticket(
     report.details.append(f"ticket {ticket.id} done @ {sha[:12]}: {note}{ticket.title}")
     emit(cfg.events, "ticket_done", ticket_id=ticket.id, note=f"committed {sha[:12]}")
     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+    # deliberately the last thing that happens to this ticket: the work is
+    # committed and proven, so the tracker is told it is done immediately
+    # before the runner moves on to the next one
     if ticket.github_issue and cfg.tickets_backend:
-        cfg.tickets_backend.close(ticket, f"{note}Done in {sha} on {store.branch}")
+        try:
+            cfg.tickets_backend.close(ticket, f"{note}Done in {sha} on {store.branch}")
+        except Exception:  # noqa: BLE001 — the commit already happened
+            log.warning("could not close the sub-issue for ticket %s", ticket.id, exc_info=True)
+            report.details.append(
+                f"ticket {ticket.id} is committed at {sha[:12]} but its sub-issue "
+                f"#{ticket.github_issue} could not be closed"
+            )
 
 
 def _block(
