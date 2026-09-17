@@ -332,6 +332,16 @@ export function artefactLines(summary: Summary): string[] {
   return lines
 }
 
+/** Where the work landed: the worktree, its head and anything uncommitted. */
+export function worktreeLines(summary: Summary): string[] {
+  const w = summary.worktreeState
+  const lines = [`worktree ${w.path}`, `branch ${w.branch}`]
+  if (w.head) lines.push(`head ${w.head}`)
+  lines.push(`state ${w.dirty ? "dirty" : "clean"}`)
+  for (const path of w.uncommitted) lines.push(`uncommitted ${path}`)
+  return lines
+}
+
 /** Keep the output pane bounded; the journal holds the full transcript. */
 export function trimOutput(text: string, maxLines = 1000): string {
   const lines = text.split("\n")

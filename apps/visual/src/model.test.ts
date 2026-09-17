@@ -260,3 +260,35 @@ test("the artefacts section lists the branch, pull request, commits and changed 
     "changed tests/a.test.ts",
   ])
 })
+
+test("the worktree section reports the path, branch, head, state and uncommitted files", () => {
+  const summary: model.Summary = {
+    done: 1,
+    blocked: 0,
+    branch: "issue-9-x",
+    worktree: "/tmp/wt",
+    prUrl: "",
+    usage: "",
+    budget: "",
+    budgetExhausted: false,
+    planOnly: false,
+    stopped: false,
+    error: "",
+    artefacts: { files: [], commits: [], prUrl: "" },
+    worktreeState: {
+      path: "/tmp/wt",
+      branch: "issue-9-x",
+      head: "abc1234",
+      dirty: true,
+      uncommitted: ["notes.md"],
+    },
+    stateDir: "",
+  }
+  expect(model.worktreeLines(summary)).toEqual([
+    "worktree /tmp/wt",
+    "branch issue-9-x",
+    "head abc1234",
+    "state dirty",
+    "uncommitted notes.md",
+  ])
+})

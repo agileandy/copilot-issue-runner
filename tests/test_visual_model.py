@@ -47,3 +47,9 @@ def test_the_artefacts_section_lists_branch_pull_request_commits_and_changed_fil
     name = "the artefacts section lists the branch, pull request, commits and changed files"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_worktree_section_reports_path_branch_head_state_and_uncommitted_files():
+    name = "the worktree section reports the path, branch, head, state and uncommitted files"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
