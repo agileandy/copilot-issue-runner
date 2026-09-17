@@ -27,6 +27,12 @@ export interface Stats {
   unknownCostCalls: number
 }
 
+export interface Artefacts {
+  files: string[]
+  commits: { sha: string; ticketId: number | string; title: string; files: string[] }[]
+  prUrl: string
+}
+
 export interface Summary {
   done: number
   blocked: number
@@ -39,6 +45,7 @@ export interface Summary {
   planOnly: boolean
   stopped: boolean
   error: string
+  artefacts: Artefacts
 }
 
 export interface ViewState {
@@ -93,6 +100,21 @@ function costIsComplete(usage: Record<string, any> | undefined): boolean | null 
  * Fold one event into `state`. Returns any text the output pane should append
  * and whether the board, banner or summary need redrawing.
  */
+function foldArtefacts(raw: unknown, prUrl: string): Artefacts {
+  const a = raw as Record<string, any> | null | undefined
+  if (!a) return { files: [], commits: [], prUrl }
+  return {
+    files: (a.files ?? []) as string[],
+    commits: ((a.commits ?? []) as Record<string, any>[]).map((c) => ({
+      sha: String(c.sha ?? ""),
+      ticketId: c.ticket_id,
+      title: String(c.title ?? ""),
+      files: (c.files ?? []) as string[],
+    })),
+    prUrl: String(a.pr_url ?? prUrl),
+  }
+}
+
 export function applyEvent(
   state: ViewState,
   event: RunEvent,
@@ -166,6 +188,7 @@ export function applyEvent(
         planOnly: Boolean(p.plan_only),
         stopped: Boolean(p.stopped),
         error: String(p.error ?? ""),
+        artefacts: foldArtefacts(p.artefacts, String(p.pr_url ?? "")),
       }
       boardChanged = true
       break
@@ -231,7 +254,7 @@ export function statsLine(state: ViewState, now: number = Date.now()): string {
   return parts.join("  ·  ")
 }
 
-export function summaryOutcome(summary: Summary): { text: string; tone: "ok" | "bad" | "plain" } {
+export function summaryOutcome(summary: Omit<Summary, "artefacts">): { text: string; tone: "ok" | "bad" | "plain" } {
   if (summary.error) return { text: "run aborted", tone: "bad" }
   if (summary.stopped) return { text: "stopped by user; work saved", tone: "plain" }
   if (summary.budgetExhausted) return { text: "stopped: credit budget exhausted", tone: "bad" }
@@ -240,7 +263,7 @@ export function summaryOutcome(summary: Summary): { text: string; tone: "ok" | "
   return { text: "all tickets done", tone: "ok" }
 }
 
-export function summaryLines(summary: Summary): string[] {
+export function summaryLines(summary: Omit<Summary, "artefacts">): string[] {
   const lines = [`tickets done ${summary.done}  ·  blocked ${summary.blocked}`]
   if (summary.error) lines.push(summary.error.slice(0, 300))
   if (summary.branch) lines.push(`branch ${summary.branch}`)

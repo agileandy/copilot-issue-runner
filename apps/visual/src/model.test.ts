@@ -156,3 +156,26 @@ test("a blocked ticket keeps its full reason in the output", () => {
   const applied = applyEvent(state, { kind: "ticket_blocked", payload: { reason } })
   expect(applied.output).toContain(reason)
 })
+
+test("a finished run folds its artefacts into the summary", () => {
+  const state = initialState()
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: {
+      done: 1,
+      blocked: 0,
+      branch: "issue-9-x",
+      artefacts: {
+        files: ["src/a.ts"],
+        commits: [{ sha: "abc1234", ticket_id: 1, title: "add x", files: ["src/a.ts"] }],
+        pr_url: "https://x/pull/2",
+      },
+    },
+  })
+  expect(state.summary!.artefacts.commits[0]).toEqual({
+    sha: "abc1234",
+    ticketId: 1,
+    title: "add x",
+    files: ["src/a.ts"],
+  })
+})
