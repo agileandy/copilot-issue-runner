@@ -33,6 +33,8 @@ export interface App {
   closeHelp: () => void
   helpOpen: () => boolean
   summaryOpen: () => boolean
+  summaryDismissed: () => boolean
+  dismissSummary: () => void
   scrollOutput: () => void
   scrollSummaryToBottom: () => void
   dispose: () => void
@@ -69,6 +71,9 @@ function panel(renderer: CliRenderer, title: string, extra: Record<string, any> 
 export function createApp(renderer: CliRenderer): App {
   const state = initialState()
   let output = ""
+  // The overlay is the app's own state: only a dismissal closes it, never a
+  // later event and never a re-render.
+  let summaryDismissed = false
 
   const root = new BoxRenderable(renderer, {
     flexGrow: 1,
@@ -337,6 +342,7 @@ export function createApp(renderer: CliRenderer): App {
     for (let index = used; index < summaryRows.length; index += 1) {
       summaryRows[index]!.visible = false
     }
+    if (summaryDismissed) return
     const opening = !summaryModal.visible
     summaryModal.visible = true
     if (opening) summaryScroll.focus()
@@ -393,6 +399,12 @@ export function createApp(renderer: CliRenderer): App {
     },
     helpOpen: () => help.visible,
     summaryOpen: () => summaryModal.visible,
+    summaryDismissed: () => summaryDismissed,
+    dismissSummary: () => {
+      summaryDismissed = true
+      summaryModal.visible = false
+      outputScroll.focus()
+    },
     scrollOutput: () => outputScroll.scrollTo(outputScroll.scrollHeight),
     scrollSummaryToBottom: () => summaryScroll.scrollTo(summaryScroll.scrollHeight),
     dispose: () => clearInterval(clock),

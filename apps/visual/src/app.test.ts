@@ -169,3 +169,34 @@ test("the summary scrolls to the bottom of a long artefact list", async () => {
     expect(await setup.waitForFrame((value) => value.includes("file-59.ts"))).toContain("file-59.ts")
   })
 })
+
+// The overlay stays up until the user dismisses it, so its visibility has to be
+// state the app owns (a `summaryDismissed` flag), not whatever the last render
+// happened to leave on the renderable.
+test("the summary stays open when later events arrive", async () => {
+  await withApp({ width: 100, height: 24 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: { done: 3, blocked: 0, branch: "issue-9-x", pr_url: "https://x/pull/2" },
+    })
+    await setup.waitForFrame((value) => value.includes("run summary"))
+
+    app.apply({ kind: "agent_output", payload: { chunk: "late noise\n" } })
+    app.apply({ kind: "tickets_updated", payload: { tickets: [] } })
+    await setup.waitForFrame((value) => value.includes("run summary"))
+
+    const tracked = app as unknown as { summaryDismissed?: (() => boolean) | boolean }
+    if (tracked.summaryDismissed === undefined) {
+      throw new Error(
+        "createApp must track the overlay in a summaryDismissed flag so refresh() re-shows it",
+      )
+    }
+    const dismissed =
+      typeof tracked.summaryDismissed === "function"
+        ? tracked.summaryDismissed()
+        : tracked.summaryDismissed
+    if (dismissed) throw new Error("nothing dismissed the overlay, yet the app reports it dismissed")
+
+    expect(app.summaryOpen()).toBe(true)
+  })
+})

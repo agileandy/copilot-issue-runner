@@ -36,3 +36,9 @@ def test_the_summary_scrolls_to_the_bottom_of_a_long_artefact_list():
     name = "the summary scrolls to the bottom of a long artefact list"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_the_summary_stays_open_when_later_events_arrive():
+    name = "the summary stays open when later events arrive"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
