@@ -5,6 +5,7 @@ Keys
   h help on/off      escape close this panel
   ↑ ↓ PageUp PageDown Home End  scroll this panel
   q detach the display — the run keeps going; type r + Enter to reattach
+  s save summary     d dismiss summary — on the run summary overlay, however the run ended
   Ctrl+C stop cleanly at the next model call, keeping state and the worktree
 
 Roles and what each prompt is given

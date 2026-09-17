@@ -201,6 +201,25 @@ test("the summary stays open when later events arrive", async () => {
   })
 })
 
+// A stopped run is no longer bounced straight back to the shell: it gets the
+// same overlay a completed run gets, so the footer has to tell the user how to
+// save it and how to put it away again.
+test("a stopped run is held on the summary overlay with its dismiss keys", async () => {
+  await withApp({ width: 100, height: 24 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: { done: 1, blocked: 0, branch: "issue-9-x", stopped: true },
+    })
+
+    const frame = await setup.waitForFrame((value) => value.includes("run summary"))
+    if (!frame.includes("stopped by user; work saved")) {
+      throw new Error(`the stopped run's summary overlay never rendered:\n${frame}`)
+    }
+
+    expect(frame).toMatch(/s save summary[\s\S]*d dismiss summary/)
+  })
+})
+
 test("dismissing the summary puts the terminal back", async () => {
   await withApp({ width: 100, height: 24 }, async (app, setup) => {
     app.apply({

@@ -54,7 +54,8 @@ const QUIET_SCROLLBAR = {
 const BOARD_WIDTH = 40
 
 const KEYS_RUNNING = "h help  ·  q detach  ·  ↑↓ PgUp/PgDn scroll  ·  Ctrl+C stop"
-const KEYS_FINISHED = "h help  ·  q close  ·  ↑↓ PgUp/PgDn scroll"
+const KEYS_FINISHED =
+  "h help  ·  q close  ·  ↑↓ PgUp/PgDn scroll  ·  s save summary  ·  d dismiss summary"
 
 function panel(renderer: CliRenderer, title: string, extra: Record<string, any> = {}) {
   return new BoxRenderable(renderer, {

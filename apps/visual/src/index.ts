@@ -80,9 +80,6 @@ renderer.once("destroy", () => {
 link = await connect(port, {
   onEvent: (event) => {
     app.apply(event)
-    // a stopped run returns the user to the shell; only a run that ran its
-    // course is held on screen for review
-    if (app.state.summary?.stopped) leave({ type: "closed" })
   },
   onClose: () => {
     // the runner went away: never sit on a display that can no longer update

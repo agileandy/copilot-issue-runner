@@ -95,6 +95,12 @@ def wait_for_display(terminal):
     terminal.until(lambda: terminal.snapshot().count(b"run 0m") >= 2)
 
 
+def close_summary(terminal):
+    """A stopped run now holds the summary overlay until it is closed explicitly."""
+    terminal.until(lambda: b"run summary" in terminal.snapshot(), timeout=15)
+    terminal.press(b"q")
+
+
 @contextmanager
 def running_cli(tmp_path, *, visual=True, pause_role="planner"):
     import fcntl
@@ -206,6 +212,8 @@ def test_ctrl_c_reports_stopping_and_exits_at_the_next_call_boundary(tmp_path, m
         terminal.press(b"\x03")
         terminal.expect(b"Stopping and cleaning up")
         terminal.release_call()
+        if mode == "visual":
+            close_summary(terminal)
         assert terminal.wait_exit() == 130
         assert b"Traceback" not in terminal.snapshot()
         state_file = next((terminal.repo / ".issue-runner").glob("issue-*.json"))
@@ -222,6 +230,7 @@ def test_second_ctrl_c_interrupts_the_current_child_and_exits(tmp_path):
         terminal.press(b"\x03")
         terminal.expect(b"Stopping and cleaning up")
         terminal.press(b"\x03")
+        close_summary(terminal)
         assert terminal.wait_exit() == 130
         for pid in map(
             int, (terminal.repo / ".issue-runner" / "call-pids").read_text().splitlines()
@@ -257,6 +266,7 @@ def test_reattach_then_ctrl_c_exits_cleanly(tmp_path):
         terminal.press(b"\x03")
         terminal.expect(b"Stopping and cleaning up")
         terminal.release_call()
+        close_summary(terminal)
         assert terminal.wait_exit() == 130
 
 
@@ -281,6 +291,7 @@ def test_streaming_while_detached_does_not_block_reattach_or_stop(tmp_path):
         terminal.press(b"\x03")
         terminal.expect(b"Stopping and cleaning up")
         terminal.release_call()
+        close_summary(terminal)
         assert terminal.wait_exit() == 130
 
 
