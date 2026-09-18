@@ -36,6 +36,23 @@ def extract_json(text: str):
     raise JsonExtractError(f"no parseable JSON found in reply: {text[:200]!r}")
 
 
+def extract_json_object(text: str) -> dict:
+    """extract_json, narrowed to the object every caller actually expects.
+
+    Callers index the result by key, so a list or scalar reply used to escape
+    as an AttributeError and abort the run. Unwrap the common single-element
+    list, and otherwise fail as a JsonExtractError the retry loops handle.
+    """
+    data = extract_json(text)
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return data[0]
+    if not isinstance(data, dict):
+        raise JsonExtractError(
+            f"reply must be a single JSON object, got {type(data).__name__}: {str(data)[:200]!r}"
+        )
+    return data
+
+
 def _scan_balanced(text: str):
     decoder = json.JSONDecoder()
     for i, ch in enumerate(text):

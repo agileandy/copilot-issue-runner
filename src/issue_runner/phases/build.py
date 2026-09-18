@@ -24,7 +24,8 @@ import subprocess
 from pathlib import Path
 
 from ..config import RunnerConfig
-from ..jsonx import JsonExtractError, extract_json
+from ..journal import Journal
+from ..jsonx import JsonExtractError, extract_json_object
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
@@ -50,6 +51,15 @@ _COMMENT_PREFIXES = ("#", "//", "/*", "*", "*/", "--", ";", "%")
 
 class BuildError(RuntimeError):
     pass
+
+
+class CoderFailure(BuildError):
+    """The coder exhausted its retries against the accepted test.
+
+    Often the spec is at fault — an assertion no code can satisfy, or one the
+    coder keeps trying to rewrite — so the orchestrator hands this back to the
+    tester within the round limit instead of blocking the ticket outright.
+    """
 
 
 class TestAlreadyPasses(BuildError):
@@ -244,8 +254,12 @@ def tester_step(
     ticket: Ticket,
     feedback: str | None = None,
     require_red: bool = True,
+    journal: Journal | None = None,
 ) -> str:
-    extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{feedback}" if feedback else ""
+    journal = journal or Journal()
+    # `feedback` was already recorded by the orchestrator when it handed back,
+    # so this only delivers it; rejections raised below are new messages.
+    extra = journal.render(ticket, feedback) if feedback else ""
     last_error = "no attempt made"
     already_green_path = None
     for _ in range(cfg.tester_retries + 1):
@@ -258,10 +272,12 @@ def tester_step(
         )
         reply = client.run(prompt, role="builder.tester", session_name=f"tester-t{ticket.id}")
         try:
-            test_path = str(extract_json(reply)["test_path"])
+            test_path = str(extract_json_object(reply)["test_path"])
         except (JsonExtractError, KeyError, TypeError) as e:
             last_error = f"reply was not the required JSON: {e}"
-            extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+            extra = journal.hand_back(
+                ticket, "harness", "builder.tester", last_error, "test rejected"
+            )
             continue
 
         try:
@@ -269,7 +285,9 @@ def tester_step(
         except BuildError as e:
             already_green_path = None
             last_error = str(e)
-            extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+            extra = journal.hand_back(
+                ticket, "harness", "builder.tester", last_error, "test rejected"
+            )
             continue
 
         if not full.is_file():
@@ -287,7 +305,9 @@ def tester_step(
             except BuildError as e:
                 already_green_path = None
                 last_error = f"test {test_path} did not actually run, so it proves nothing: {e}"
-                extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+                extra = journal.hand_back(
+                    ticket, "harness", "builder.tester", last_error, "test rejected"
+                )
                 continue
             if require_red and passed:
                 already_green_path = test_path
@@ -298,7 +318,7 @@ def tester_step(
                 )
             else:
                 return test_path
-        extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+        extra = journal.hand_back(ticket, "harness", "builder.tester", last_error, "test rejected")
     if already_green_path:
         raise TestAlreadyPasses(
             f"ticket {ticket.id}: every candidate test passes without new code — "
@@ -314,6 +334,7 @@ def coder_step(
     ticket: Ticket,
     test_path: str,
     feedback: str | None = None,
+    journal: Journal | None = None,
 ) -> None:
     full = resolve_test_path(cfg, test_path)
     if not full.is_file():
@@ -322,7 +343,8 @@ def coder_step(
     # and is not committed until the verifier passes, so git cannot restore it
     original = full.read_bytes()
     test_hash = hashlib.sha256(original).hexdigest()
-    extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{feedback}" if feedback else ""
+    journal = journal or Journal()
+    extra = journal.render(ticket, feedback) if feedback else ""
     last_error = "no attempt made"
     for _ in range(cfg.coder_retries + 1):
         prompt = CODER_PROMPT.format(
@@ -345,10 +367,12 @@ def coder_step(
                 # e.g. the implementation broke collection: a fault to fix, not a
                 # failing assertion, so say so rather than reporting a red test
                 last_error = f"the test could not be executed after your change: {e}"
-                extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
+                extra = journal.hand_back(
+                    ticket, "harness", "builder.coder", last_error, "change rejected"
+                )
                 continue
             if passed:
                 return
             last_error = f"test still fails. Output:\n{output[-2000:]}"
-        extra = f"\nFEEDBACK ON YOUR PREVIOUS ATTEMPT (fix this):\n{last_error}"
-    raise BuildError(f"builder.coder failed for ticket {ticket.id}: {last_error}")
+        extra = journal.hand_back(ticket, "harness", "builder.coder", last_error, "change rejected")
+    raise CoderFailure(f"builder.coder failed for ticket {ticket.id}: {last_error}")

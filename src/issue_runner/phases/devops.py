@@ -65,6 +65,18 @@ def require_clean(repo_dir: Path) -> None:
         )
 
 
+def worktree_state(repo_dir: Path) -> dict:
+    status = _git(repo_dir, "status", "--porcelain", "--untracked-files=all").stdout
+    uncommitted = sorted(line[3:] for line in status.splitlines() if line.strip())
+    return {
+        "path": str(repo_dir),
+        "branch": current_branch(repo_dir),
+        "head": head_commit(repo_dir),
+        "dirty": bool(uncommitted),
+        "uncommitted": uncommitted,
+    }
+
+
 def git_common_dir(repo_dir: Path) -> Path:
     raw = _git(repo_dir, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
     return Path(raw).resolve()

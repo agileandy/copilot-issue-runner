@@ -62,40 +62,34 @@ gh-runner 7 --plan-only -v
 
 ## Demo mode
 
-`--demo` runs the entire pipeline offline, with **no model call, no credits and
-no GitHub access** — for showing people what the runner does:
+`--demo` runs a **real GitHub/Copilot demonstration** from this repository:
 
 ```bash
-gh-runner --demo                          # throwaway sandbox in a temp directory
-gh-runner --demo --demo-dir ~/tmp/demo    # keep the sandbox somewhere
-gh-runner --demo --demo-dir ~/tmp/demo --demo-reset --visual
+gh-runner --demo --visual
 ```
 
-Reset is allowed only for a runner-owned demo with a valid ownership marker.
-Unowned directories, dangerous paths and symlink destinations are refused.
-Legacy demos without a marker must be left intact or removed manually.
+Each invocation copies the title and body of permanent seed
+[#54](https://github.com/agileandy/copilot-issue-runner/issues/54) into a **new
+issue**, then plans and executes only that clone. The clone's issue number
+provides a unique run ID. The seed stays open and cannot be executed directly.
 
-It creates a small git repo (a `demo_pkg.stats` module and an `issue.md` asking
-for `mean` and `median`), then drives the real orchestrator against a scripted
-stand-in for Copilot. Nothing is faked inside the pipeline: the tests really
-run, the harness really enforces red-then-green, and each ticket is really
-committed. The script is written so the demo shows the interesting paths —
+The seed specifies three steps: parse integers, filter an inclusive range, then
+summarize it. An intentional upper-bound defect must prompt the verifier to
+request a stronger test before the coder repairs it. This uses real model calls
+and credits, not scripted responses.
 
-- ticket 1 goes straight through: red test → implementation → `pass` → commit;
-- ticket 2's first implementation is wrong, so the harness bounces it back;
-- the verifier then returns `refine_test` (even-length median is untested),
-  sending the loop back to the tester and on to the coder before it passes.
+Run from a clean checkout of `agileandy/copilot-issue-runner` with `gh` and
+Copilot authenticated and project test dependencies installed. The normal
+isolated worktree, test gates, visual controls and credit limits apply. Demo
+mode creates no extra GitHub sub-issues and does not push or open a PR.
 
-The demo uses its disposable sandbox directly rather than creating another
-worktree inside it. The sandbox path is printed at the end; inspect the result with
-`git -C <sandbox> log --oneline`. Add `--visual` for the TUI, `--plan-only` to
-stop after planning. `ISSUE_RUNNER_DEMO_DELAY` (seconds, default `0.15`) paces
-the streamed output in visual mode.
+Use `--plan-only` to clone and plan without building. `--dry-run` only reads the
+seed and previews the operation: it creates no clone and makes no model call.
+To resume a stopped demo, use the **clone number** and command printed by the
+runner. Repeating `--demo` deliberately starts a fresh clone instead.
 
-The sandbox runs its tests with whichever interpreter the runner is installed
-under. That interpreter has pytest in a dev checkout but not in a
-`uv tool install` venv, so the demo falls back to a bundled dependency-free test
-runner — the banner prints the command actually in force.
+The old offline `--demo-dir` and `--demo-reset` options are removed. Offline
+fixtures remain available to the automated tests only.
 
 ## Usage
 
@@ -137,6 +131,12 @@ the harness would misread as a passing test.
 
 `test_cmd` in `runner.toml` and `--test-cmd` always override detection.
 
+Python detection uses the target project's environment for both focused tests and
+the regression suite: `uv run --no-sync python` when `uv.lock` exists, otherwise
+the project's `.venv` Python when present, then `python` from the caller's PATH.
+It never selects the globally installed runner's private interpreter. Prepare the
+project dependencies before running; detection does not install them.
+
 Test commands run non-interactively with colour disabled. Go reports each case
 and does not reuse cached results. Pytest keeps its result summary visible even
 when the project already sets quiet options. Custom commands must emit a
@@ -177,6 +177,7 @@ reported, not fatal — the commits are already on the branch.
 | `2` | bad invocation |
 | `3` | some tickets blocked |
 | `4` | stopped on the run credit budget |
+| `130` | stopped by the user; saved work is resumable |
 
 ### Ticket dependencies
 
@@ -263,19 +264,27 @@ model for the verifier, the default for the coder.
 uv sync
 uv run pytest        # no model calls: all agents are faked
 uv run ruff check src tests
+
+cd apps/visual && bun test   # the display's frame and state tests
 ```
 
 ## Visual mode
 
-`--visual` on a TTY opens a contained Textual TUI: pipeline banner, live ticket
-board, streaming agent output, and run stats (calls, tokens, elapsed). Non-TTY
-invocations fall back to plain text automatically.
+`--visual` on a TTY opens the OpenTUI display in `apps/visual`: pipeline banner,
+live ticket board, streaming agent output, and run stats (calls, tokens,
+elapsed). Non-TTY invocations fall back to plain text automatically.
+
+The display is a Bun process that the runner starts and feeds over a loopback
+socket; the pipeline itself never renders. It therefore needs [bun](https://bun.sh)
+on your PATH — its dependencies install themselves on first use. Without bun, or
+with `apps/visual` missing, `--visual` reports why and runs in plain text.
 
 `q` does one of two things depending on when you press it:
 
 - **during the run** — detaches the display; the run continues headless and
-  progress is printed as plain lines.
-- **after the run** — closes the review. When the pipeline finishes the TUI
+  progress is printed as plain lines. Type `r` and press Enter in the same
+  terminal to reattach with the existing ticket board, output and statistics.
+- **after the run** — closes the review. When the pipeline finishes the display
   *stays open* on a finished state showing the outcome, tickets done/blocked,
   the branch, the pull request URL and the usage line, so you can read the
   final board and agent output before dismissing it. The same summary is
@@ -285,3 +294,15 @@ A crash also settles into that finished state, showing the error, rather than
 leaving a live-looking display.
 
 Visual mode changes rendering, not the transport or accounting.
+
+### Stopping a run
+
+Press **Ctrl+C** in the visual view, detached view or plain CLI. The runner
+immediately reports **"Stopping and cleaning up..."**, finishes the current
+operation, and stops before starting another model call.
+
+Press Ctrl+C again to interrupt an active Copilot invocation and clean up its
+owned subprocesses. On exit, the runner saves its accepted phase and usage,
+releases its locks, and returns `130`. It does not delete branches or worktrees.
+Re-run the same command to resume; `--retry-blocked` is not required for a user
+stop.

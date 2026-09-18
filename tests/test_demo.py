@@ -1,4 +1,4 @@
-"""The --demo sandbox must run the whole pipeline offline, with no model call."""
+"""The offline fixtures used by automated tests stay safe and dependency-free."""
 
 import json
 import subprocess
@@ -11,6 +11,27 @@ from issue_runner import demo as demo_module
 from issue_runner.cli import main
 from issue_runner.demo import DemoError, demo_test_cmd, minitest, setup_demo
 from issue_runner.demo.responder import respond
+
+
+def run_offline_fixture(dest):
+    env = setup_demo(dest)
+    return main(
+        [
+            "--issue-file",
+            str(env.issue_file),
+            "--dir",
+            str(env.repo_dir),
+            "--copilot-cmd",
+            str(env.copilot_cmd),
+            "--test-cmd",
+            env.test_cmd,
+            "--regression-cmd",
+            env.test_cmd.format(test_path="tests"),
+            "--in-place",
+            "--no-github-tickets",
+            "--no-pr",
+        ]
+    )
 
 
 class _RmtreeCalled(AssertionError):
@@ -111,7 +132,7 @@ def test_responder_streams_copilot_json_events(tmp_path):
 
 def test_demo_runs_the_whole_pipeline_offline(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("ISSUE_RUNNER_DEMO_DELAY", "0")
-    rc = main(["--demo", "--demo-dir", str(tmp_path / "sandbox")])
+    rc = run_offline_fixture(tmp_path / "sandbox")
     out = capsys.readouterr().out
 
     assert rc == 0
@@ -262,7 +283,7 @@ def test_marker_is_written_and_kept_out_of_the_index(tmp_path):
 def test_marker_survives_an_ordinary_demo_run(tmp_path, monkeypatch):
     monkeypatch.setenv("ISSUE_RUNNER_DEMO_DELAY", "0")
     dest = tmp_path / "sandbox"
-    assert main(["--demo", "--demo-dir", str(dest)]) == 0
+    assert run_offline_fixture(dest) == 0
 
     marker = dest / demo_module.STATE_DIR_NAME / demo_module.MARKER_NAME
     assert json.loads(marker.read_text())["marker"] == demo_module.MARKER_MAGIC

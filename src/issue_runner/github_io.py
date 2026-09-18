@@ -41,6 +41,11 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
         f"{ticket.description}\n\n"
         f"**Single test assertion:** `{ticket.test_assertion}`"
     )
+    return create_issue(repo, f"[#{parent_number}] {ticket.title}", body, run=run)["number"]
+
+
+def create_issue(repo: str, title: str, body: str, run=subprocess.run) -> dict:
+    """Create an issue without modifying its supplied title or body."""
     argv = [
         "gh",
         "issue",
@@ -48,7 +53,7 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
         "-R",
         repo,
         "--title",
-        f"[#{parent_number}] {ticket.title}",
+        title,
         "--body",
         body,
     ]
@@ -56,7 +61,13 @@ def create_subissue(repo: str, parent_number: int, ticket, run=subprocess.run) -
     match = re.search(r"/issues/(\d+)", stdout)
     if not match:
         raise GithubError(f"could not parse issue number from gh output: {stdout[:200]!r}")
-    return int(match.group(1))
+    number = int(match.group(1))
+    return {
+        "number": number,
+        "title": title,
+        "body": body,
+        "url": f"https://github.com/{repo}/issues/{number}",
+    }
 
 
 def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None:
@@ -64,7 +75,85 @@ def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None
 
 
 def close_subissue(repo: str, number: int, comment: str, run=subprocess.run) -> None:
-    _run(["gh", "issue", "close", "-R", repo, str(number), "--comment", comment], run)
+    """Close a finished sub-task, recorded as genuinely completed.
+
+    The reason matters: GitHub renders "completed" and "not planned" with
+    different icons, so without it a proven, committed ticket is indistinguishable
+    from one that was abandoned.
+    """
+    _run(
+        [
+            "gh",
+            "issue",
+            "close",
+            "-R",
+            repo,
+            str(number),
+            "--reason",
+            "completed",
+            "--comment",
+            comment,
+        ],
+        run,
+    )
+
+
+def ensure_label(repo: str, label: str, color: str, description: str, run=subprocess.run) -> None:
+    """Create the label if the repo does not have it yet.
+
+    `--force` makes this idempotent: the first run creates it, later runs update
+    it in place rather than failing on a duplicate.
+    """
+    _run(
+        [
+            "gh",
+            "label",
+            "create",
+            label,
+            "-R",
+            repo,
+            "--color",
+            color,
+            "--description",
+            description,
+            "--force",
+        ],
+        run,
+    )
+
+
+def add_label(repo: str, number: int, label: str, run=subprocess.run) -> None:
+    _run(["gh", "issue", "edit", str(number), "-R", repo, "--add-label", label], run)
+
+
+def remove_label(repo: str, number: int, label: str, run=subprocess.run) -> None:
+    _run(["gh", "issue", "edit", str(number), "-R", repo, "--remove-label", label], run)
+
+
+def list_subissues(repo: str, parent_number: int, run=subprocess.run) -> list[int]:
+    """Numbers of the sub-issues this runner opened for `parent_number`."""
+    prefix = f"[#{parent_number}] "
+    argv = [
+        "gh",
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--search",
+        f"{prefix} in:title",
+        "--state",
+        "all",
+        "--limit",
+        "100",
+        "--json",
+        "number,title",
+    ]
+    found = json.loads(_run(argv, run) or "[]")
+    return [i["number"] for i in found if i["title"].startswith(prefix)]
+
+
+def delete_issue(repo: str, number: int, run=subprocess.run) -> None:
+    _run(["gh", "issue", "delete", "-R", repo, str(number), "--yes"], run)
 
 
 def open_pull_request(repo: str, head: str, title: str, body: str, run=subprocess.run) -> str:

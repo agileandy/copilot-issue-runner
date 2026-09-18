@@ -1,9 +1,12 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
-from issue_runner.orchestrator import run_issue
+from issue_runner.config import RunnerConfig
+from issue_runner.events import EventBus
+from issue_runner.orchestrator import _render_visual, run_issue
 from issue_runner.tickets import TicketStore
 from issue_runner.visual import render_flow
 from tests.conftest import FakeClient
@@ -39,6 +42,18 @@ def test_render_flow_snapshot_contract():
         and render_flow({"plan": "done", "branch": "active", "tickets": []})
         == "issue pipeline\nplan: done\n   ↓\nbranch: active\n   ↓\nper-ticket build/verify:\n  tickets: none\n   ↓\ncommit: pending"
     )
+
+
+def test_the_snapshot_is_only_printed_when_no_display_is_attached(tmp_path, capsys):
+    """Printing over the display's own frame is what a corrupt screen looks like."""
+    cfg = RunnerConfig(repo_dir=tmp_path, visual=True)
+
+    _render_visual(cfg, plan="done", branch="b", tickets=[])
+    assert "issue pipeline" in capsys.readouterr().out
+
+    cfg.events = EventBus()
+    _render_visual(cfg, plan="done", branch="b", tickets=[])
+    assert capsys.readouterr().out == ""
 
 
 def test_render_flow_includes_ticket_id_in_snapshot():
@@ -280,9 +295,10 @@ def test_already_satisfied_ticket_arbitrated_done(git_repo, cfg):
     assert "already satisfied" in backend.closed[0][1]
 
 
-def test_already_satisfied_but_verifier_refuses_blocks_with_reason(git_repo, cfg):
+def test_already_satisfied_hand_back_respects_round_limit(git_repo, cfg):
     backend = RecordingBackend()
     cfg.tickets_backend = backend
+    cfg.max_rounds = 0
     client = FakeClient(
         [*already_green_script(git_repo), (verdict("refine_test", tf="test is a tautology"), None)]
     )
@@ -290,7 +306,98 @@ def test_already_satisfied_but_verifier_refuses_blocks_with_reason(git_repo, cfg
     assert report.blocked == 1
     assert backend.blocked, "backend.block must be called with the reason"
     assert backend.blocked[0][0] == 1
-    assert "tautology" in backend.blocked[0][1] or "verifier" in backend.blocked[0][1]
+    assert "max_rounds=0" in backend.blocked[0][1]
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets[0].test_feedback == "test is a tautology"
+
+
+def test_initially_green_test_can_be_refined_to_expose_and_fix_a_real_bug(git_repo, cfg):
+    from issue_runner.phases.build import run_tests
+    from tests.hardening_support import git
+
+    faulty = (
+        "def within_range(text, lower, upper):\n"
+        "    return [n for n in map(int, text.split(',')) if lower <= n < upper]\n"
+    )
+    (git_repo / "range_impl.py").write_text(faulty)
+    git(git_repo, "add", "range_impl.py")
+    git(git_repo, "commit", "-m", "test: seed incomplete inclusive range")
+    cfg.test_cmd = f"{sys.executable} -m pytest {{test_path}} -q"
+    cfg.regression_cmd = f"{sys.executable} -m pytest -q"
+    cfg.tester_retries = 0
+    weak = (
+        "from range_impl import within_range\n\n"
+        "def test_interior():\n"
+        "    assert within_range('1,3,5', 2, 4) == [3]\n"
+    )
+    strong = weak + (
+        "\ndef test_upper_endpoint():\n    assert within_range('1,3,4,5', 2, 4) == [3,4]\n"
+    )
+    plan = json.dumps(
+        {
+            "summary": "filter inclusive bounds",
+            "tickets": [
+                {
+                    "title": "Filter inclusive bounds",
+                    "description": "Both endpoints must be included",
+                    "test_assertion": "within_range('1,3,5', 2, 4) == [3]",
+                }
+            ],
+        }
+    )
+
+    def repair():
+        assert run_tests(cfg, "test_range.py")[0] is False
+        (git_repo / "range_impl.py").write_text(faulty.replace("n < upper", "n <= upper"))
+
+    client = FakeClient(
+        [
+            (plan, None),
+            (
+                '{"test_path":"test_range.py"}',
+                lambda: (git_repo / "test_range.py").write_text(weak),
+            ),
+            (verdict("refine_test", tf="include the upper bound"), None),
+            (
+                '{"test_path":"test_range.py"}',
+                lambda: (git_repo / "test_range.py").write_text(strong),
+            ),
+            ("fixed", repair),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
+    assert [c["role"] for c in client.calls] == [
+        "planner",
+        "builder.tester",
+        "verifier",
+        "builder.tester",
+        "builder.coder",
+        "verifier",
+    ]
+    assert "include the upper bound" in client.calls[3]["prompt"]
+    assert run_tests(cfg, "test_range.py")[0] is True
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets[0].rounds == 1
+    assert store.tickets[0].already_satisfied is False
+
+
+def test_initially_green_test_can_request_code_rework(git_repo, cfg):
+    client = FakeClient(
+        [
+            *already_green_script(git_repo),
+            (verdict("rework_code", cf="fix the missing behavior"), None),
+            ("fixed", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
+    assert client.calls[-2]["role"] == "builder.coder"
+    assert "fix the missing behavior" in client.calls[-2]["prompt"]
 
 
 def test_retry_blocked_resets_and_reruns(git_repo, cfg):
@@ -519,3 +626,101 @@ def two_ticket_plan():
             ],
         }
     )
+
+
+def test_impossible_test_is_handed_back_to_the_tester_instead_of_blocking(git_repo, cfg):
+    """Run 57: the tester wrote a test no code could satisfy, so the coder kept
+    failing and the ticket died. The spec itself has to be repairable."""
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("no code written", None),
+            ("still nothing", None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    assert [c["role"] for c in client.calls] == [
+        "planner",
+        "builder.tester",
+        "builder.coder",
+        "builder.coder",
+        "builder.tester",
+        "builder.coder",
+        "verifier",
+    ]
+    assert "test still fails" in client.calls[4]["prompt"]
+
+
+def test_a_coder_editing_the_test_hands_that_reason_to_the_tester(git_repo, cfg):
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("rewrote the spec", write_test(git_repo, "assert PASS")),
+            ("rewrote it again", write_test(git_repo, "assert PASS")),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+    refine_prompt = client.calls[4]["prompt"]
+    assert "modified the test file" in refine_prompt
+
+
+def test_coder_hand_back_respects_the_round_limit(git_repo, cfg):
+    backend = RecordingBackend()
+    cfg.tickets_backend = backend
+    cfg.max_rounds = 0
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("no code written", None),
+            ("still nothing", None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1 and report.done == 0
+    assert "max_rounds=0" in backend.blocked[0][1]
+    assert "builder.coder failed" in backend.blocked[0][1]
+
+
+def test_an_aborted_run_still_reports_the_work_it_completed(git_repo, cfg):
+    """Regression: an unexpected exception printed a bare error line, hiding the
+    branch, the worktree and any ticket already committed."""
+
+    plan = json.dumps(
+        {
+            "summary": "two tickets",
+            "tickets": [
+                {"title": "first", "description": "d1", "test_assertion": "a == 1"},
+                {"title": "second", "description": "d2", "test_assertion": "b == 2"},
+            ],
+        }
+    )
+
+    def explode():
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    client = FakeClient(
+        [
+            (plan, None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            ("unreachable", explode),
+        ]
+    )
+    with pytest.raises(AttributeError) as excinfo:
+        run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    report = excinfo.value.report
+    assert report.done == 1, "the committed ticket must still be reported"
+    assert report.branch, "the branch must be reported so the work can be found"
+    assert "first" in " ".join(report.details)

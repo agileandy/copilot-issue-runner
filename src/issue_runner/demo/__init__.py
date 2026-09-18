@@ -1,10 +1,8 @@
-"""Self-contained offline demo: a sandbox repo plus a scripted stand-in for copilot.
+"""Offline sandbox fixtures for tests, independent of the live --demo command.
 
-`--demo` exists so the pipeline can be shown end to end — plan, red test, green
-code, verifier hand-back, per-ticket commit — with no model call, no credit
-spend and no GitHub access. Everything is generated on disk from the constants
-below rather than shipped as package data, so the demo works identically from a
-wheel, a checkout or `uv run`.
+The live CLI demo clones the permanent GitHub seed (see demo.seed). Tests keep
+using these sandbox helpers and the scripted responder so automated validation
+never spends model credits or writes to GitHub.
 
 The stand-in binary is `responder.py`, invoked through a tiny shell shim because
 the runner takes a single command string, not an argv list.
@@ -47,7 +45,7 @@ requires-python = ">=3.12"
 README_MD = """\
 # issue-runner demo sandbox
 
-A throwaway git repository created by `gh-runner --demo`. The runner plans the
+A throwaway git repository created by the offline test fixture. The runner plans the
 issue in `issue.md`, then drives a scripted stand-in for Copilot through the
 TDD loop, committing one ticket at a time.
 

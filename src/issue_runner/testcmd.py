@@ -13,12 +13,13 @@ that as a passing test and the TDD loop would break.
 """
 
 import json
-import sys
+import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_TEST_CMD = f"{sys.executable} -m pytest {{test_path}} -q"
-DEFAULT_REGRESSION_CMD = f"{sys.executable} -m pytest -q"
+DEFAULT_TEST_CMD = "python -m pytest {test_path} -q"
+DEFAULT_REGRESSION_CMD = "python -m pytest -q"
 # -v names every case (the only per-test evidence go prints) and -count=1
 # defeats the result cache, which otherwise replays "ok pkg (cached)" without
 # running anything.
@@ -29,6 +30,21 @@ GO_TEST_CMD = "go test -v -count=1 ./..."
 class Detection:
     test_cmd: str
     marker: str | None  # None = nothing recognised; test_cmd is the fallback
+
+
+def _python_test_cmd(marker: Path) -> str:
+    repo = marker.parent
+    if (repo / "uv.lock").is_file():
+        python = "uv run --no-sync python"
+    else:
+        relative = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        project_python = repo / ".venv" / relative
+        python = shlex.quote(str(project_python)) if project_python.is_file() else "python"
+    return f"{python} -m pytest {{test_path}} -q"
+
+
+def _python_regression_cmd(marker: Path) -> str:
+    return _python_test_cmd(marker).replace(" {test_path}", "")
 
 
 def _node_test_cmd(path: Path) -> str | None:
@@ -51,9 +67,9 @@ def _node_regression_cmd(path: Path) -> str | None:
 
 # ordered: the first marker that matches wins in a polyglot repo
 _MARKERS: tuple[tuple[str, object], ...] = (
-    ("pyproject.toml", DEFAULT_TEST_CMD),
-    ("setup.py", DEFAULT_TEST_CMD),
-    ("setup.cfg", DEFAULT_TEST_CMD),
+    ("pyproject.toml", _python_test_cmd),
+    ("setup.py", _python_test_cmd),
+    ("setup.cfg", _python_test_cmd),
     ("package.json", _node_test_cmd),
     ("go.mod", GO_TEST_CMD),
     ("Cargo.toml", "cargo test"),
@@ -62,9 +78,9 @@ _MARKERS: tuple[tuple[str, object], ...] = (
 # the same markers, but the whole suite: no {test_path} placeholder. `go test`
 # and `cargo test` are already whole-suite commands.
 _REGRESSION_MARKERS: tuple[tuple[str, object], ...] = (
-    ("pyproject.toml", DEFAULT_REGRESSION_CMD),
-    ("setup.py", DEFAULT_REGRESSION_CMD),
-    ("setup.cfg", DEFAULT_REGRESSION_CMD),
+    ("pyproject.toml", _python_regression_cmd),
+    ("setup.py", _python_regression_cmd),
+    ("setup.cfg", _python_regression_cmd),
     ("package.json", _node_regression_cmd),
     ("go.mod", GO_TEST_CMD),
     ("Cargo.toml", "cargo test"),

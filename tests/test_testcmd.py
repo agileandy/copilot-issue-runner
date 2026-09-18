@@ -1,10 +1,17 @@
 import json
+import os
+import shlex
 import sys
 
 import pytest
 
 from issue_runner.config import load_config
-from issue_runner.testcmd import DEFAULT_TEST_CMD, GO_TEST_CMD, detect_test_cmd
+from issue_runner.testcmd import (
+    DEFAULT_TEST_CMD,
+    GO_TEST_CMD,
+    detect_regression_cmd,
+    detect_test_cmd,
+)
 
 
 def test_pyproject_detects_pytest(tmp_path):
@@ -12,7 +19,7 @@ def test_pyproject_detects_pytest(tmp_path):
     found = detect_test_cmd(tmp_path)
     assert found.marker == "pyproject.toml"
     assert found.test_cmd == DEFAULT_TEST_CMD
-    assert sys.executable in found.test_cmd
+    assert shlex.split(found.test_cmd)[0] == "python"
 
 
 def test_setup_py_detects_pytest(tmp_path):
@@ -117,4 +124,47 @@ def test_this_repo_still_uses_pytest():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
-    assert detect_test_cmd(repo_root).test_cmd == DEFAULT_TEST_CMD
+    assert detect_test_cmd(repo_root).test_cmd == "uv run --no-sync python -m pytest {test_path} -q"
+
+
+def test_uv_project_uses_its_environment_for_both_test_commands(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "uv.lock").touch()
+    assert detect_test_cmd(tmp_path).test_cmd == "uv run --no-sync python -m pytest {test_path} -q"
+    assert detect_regression_cmd(tmp_path) == "uv run --no-sync python -m pytest -q"
+
+
+def test_project_virtualenv_is_used_instead_of_the_runner_environment(tmp_path):
+    repo = tmp_path / "project with spaces"
+    repo.mkdir()
+    (repo / "setup.py").touch()
+    relative = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    python = repo / ".venv" / relative
+    python.parent.mkdir(parents=True)
+    python.touch()
+
+    assert shlex.split(detect_test_cmd(repo).test_cmd) == [
+        str(python),
+        "-m",
+        "pytest",
+        "{test_path}",
+        "-q",
+    ]
+    assert shlex.split(detect_regression_cmd(repo)) == [str(python), "-m", "pytest", "-q"]
+
+
+def test_python_without_a_project_environment_uses_the_callers_path(tmp_path):
+    (tmp_path / "pyproject.toml").touch()
+    assert detect_regression_cmd(tmp_path) == "python -m pytest -q"
+    assert sys.executable not in detect_regression_cmd(tmp_path)
+
+
+def test_explicit_test_and_regression_commands_still_override_detection(tmp_path):
+    (tmp_path / "pyproject.toml").touch()
+    (tmp_path / "uv.lock").touch()
+    (tmp_path / "runner.toml").write_text(
+        'test_cmd = "custom-test {test_path}"\nregression_cmd = "custom-suite"\n'
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.test_cmd == "custom-test {test_path}"
+    assert cfg.regression_cmd == "custom-suite"

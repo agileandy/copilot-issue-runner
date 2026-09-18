@@ -18,3 +18,10 @@ node_modules/
 # Secrets
 .env
 *.secrets
+
+# --- factory (added by the factory installer) ---
+factory/f_data/sessions/
+factory/f_data/sssf.db
+factory/f_data/sssf.db-wal
+factory/f_data/sssf.db-shm
+# --- end factory ---

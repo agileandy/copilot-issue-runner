@@ -34,6 +34,7 @@ from pathlib import Path
 
 from .budget import RunBudget
 from .config import RunnerConfig
+from .control import announce_stop
 from .events import emit
 from .usage import UsageLedger, cost_is_complete, mark_incomplete, merge_usage
 
@@ -102,6 +103,7 @@ class CopilotClient:
         session_name: str | None,
     ) -> str:
         structured = not self.plain_transport
+        self.config.control.check()
         self.budget.check()  # never start a call the run limit has already reached
         argv = self._build_argv(prompt, role, read_only, session_name, structured=structured)
         role_cfg = self.config.role(role)
@@ -181,6 +183,7 @@ class CopilotClient:
         try:
             result = self.runner(
                 argv,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=self.config.timeout,
@@ -210,6 +213,7 @@ class CopilotClient:
         try:
             proc = self.popen(
                 argv,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -257,12 +261,15 @@ class CopilotClient:
             for reader in readers:
                 reader.start()
             while True:
+                if self.config.events is None:
+                    announce_stop(self.config)
+                self.config.control.check(interrupt_only=True)
                 if time.monotonic() > deadline:
                     raise CopilotError(
                         f"copilot timed out after {self.config.timeout}s for role {role}"
                     )
                 try:
-                    line = lines.get(timeout=1)
+                    line = lines.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if line is None:
@@ -477,7 +484,7 @@ def _parse(line: str):
         return data.get("deltaContent"), None, None, None, True
     if kind == "tool.execution_start":
         name = data.get("toolName", "tool")
-        args = json.dumps(data.get("arguments", {}))[:120]
+        args = json.dumps(data.get("arguments", {}), ensure_ascii=False)
         return f"\n⚙ {name} {args}\n", None, None, None, True
     if kind == "assistant.message":
         return None, data.get("content"), None, None, True

@@ -16,15 +16,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from . import github_io
+from . import github_io, runsummary
 from .budget import BudgetExhausted, RunBudget
 from .config import RunnerConfig
+from .control import RunStopped, announce_stop
 from .copilot import CopilotError
+from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
+from .journal import Journal
 from .phases import devops
 from .phases.build import (
     BuildError,
+    CoderFailure,
     TestAlreadyPasses,
     coder_step,
     resolve_test_path,
@@ -53,6 +57,8 @@ class RunReport:
     budget_summary: str = ""
     worktree: str = ""
     plan_only: bool = False
+    stopped: bool = False
+    parent_in_progress: int | None = None
     details: list[str] = field(default_factory=list)
 
 
@@ -67,7 +73,9 @@ def _render_visual(
     branch: str | None = None,
     tickets: list[Ticket] | None = None,
 ) -> None:
-    if not cfg.visual:
+    if not cfg.visual or cfg.events is not None:
+        # a live display draws the same state from the event stream; printing the
+        # snapshot as well would scribble over the frame it owns
         return
     payload = {
         "plan": plan if plan is not None else "pending",
@@ -84,6 +92,8 @@ def run_issue(
     state_dir: Path | None = None,
     plan_only: bool = False,
 ) -> RunReport:
+    if is_seed(issue, cfg.repo):
+        raise DevopsError("refusing to execute permanent seed #54; use --demo to create a clone")
     source = Path(cfg.repo_dir).resolve()
     if not source.is_dir():
         raise DevopsError(f"target repository directory does not exist: {source}")
@@ -115,12 +125,44 @@ def run_issue(
                     report.branch = store.branch or ""
                     report.worktree = str(cfg.repo_dir)
                 return _run_issue(cfg, client, issue, store, report, plan_only)
+            except RunStopped:
+                for ticket in store.tickets:
+                    if ticket.status == "in_progress":
+                        ticket.status = "pending"
+                store.save()
+                report.stopped = True
+                report.done = sum(t.status == "done" for t in store.tickets)
+                report.blocked = sum(t.status == "blocked" for t in store.tickets)
+                report.details.append("run stopped by user; saved work can be resumed")
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                _emit_finished(cfg, client, report, store)
+                return report
+            except Exception as e:
+                # never change the exception type: callers and tests match on
+                # it. Carry the partial report so the CLI can still report the
+                # branch, the worktree and any ticket already committed.
+                _record_partial(cfg, store, report)
+                _clear_parent_in_progress(cfg, report)
+                e.report = report
+                raise
             finally:
                 _record_usage(client, state_dir, issue_ref, report)
     finally:
         cfg.repo_dir = original_dir
         if client_config is not None:
             client_config.repo_dir = original_client_dir
+
+
+def _record_partial(cfg: RunnerConfig, store: TicketStore, report: RunReport) -> None:
+    """Fill a report with whatever the run achieved before it failed."""
+    report.done = sum(t.status == "done" for t in store.tickets)
+    report.blocked = sum(t.status == "blocked" for t in store.tickets)
+    for ticket in store.tickets:
+        if ticket.status == "done" and ticket.commit_sha:
+            detail = f"ticket {ticket.id} done @ {ticket.commit_sha[:12]}: {ticket.title}"
+            if detail not in report.details:
+                report.details.append(detail)
+    emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
 
 
 def _prepare_workspace(
@@ -209,7 +251,9 @@ def _run_issue(
     if report.worktree:
         log.info("run workspace: %s", report.worktree)
     emit(cfg.events, "run_started", issue_ref=issue_ref, title=issue["title"])
+    _mark_parent_in_progress(cfg, issue, report)
     emit(cfg.events, "phase", name="plan")
+    cfg.control.check()
 
     if store.tickets:
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
@@ -220,7 +264,7 @@ def _run_issue(
         except BudgetExhausted as e:
             report.budget_exhausted = True
             report.details.append(f"planning did not start: {e}")
-            _emit_finished(cfg, client, report)
+            _emit_finished(cfg, client, report, store)
             return report
         store.plan_summary = summary
         store.set_tickets(tickets)
@@ -233,10 +277,12 @@ def _run_issue(
         tickets=ticket_snapshot(store.tickets),
         summary=store.plan_summary,
     )
+    cfg.control.check()
 
     # mirror tickets to the tracker; also backfills runs planned without a backend
     if cfg.tickets_backend and issue["number"]:
         for ticket in store.tickets:
+            cfg.control.check()
             if ticket.github_issue is None:
                 ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
                 store.save()
@@ -253,7 +299,7 @@ def _run_issue(
             report.details.append(
                 f"ticket {t.id} [{t.status}]: {t.title} — assert: {t.test_assertion}"
             )
-        _emit_finished(cfg, client, report)
+        _emit_finished(cfg, client, report, store)
         return report
 
     if cfg.retry_blocked:
@@ -270,6 +316,7 @@ def _run_issue(
 
     emit(cfg.events, "phase", name="build")
     while True:
+        cfg.control.check()
         ready = store.ready()
         if not ready:
             break
@@ -302,6 +349,7 @@ def _run_issue(
             )
         approved_head = devops.head_commit(cfg.repo_dir)
         _regression_gate(cfg)
+        cfg.control.check()
         devops.require_clean(cfg.repo_dir)
         if (
             devops.head_commit(cfg.repo_dir) != approved_head
@@ -309,7 +357,7 @@ def _run_issue(
         ):
             raise DevopsError("regression command changed the run branch; refusing publication")
         _open_pull_request(cfg, issue, store, report)
-    _emit_finished(cfg, client, report)
+    _emit_finished(cfg, client, report, store)
     return report
 
 
@@ -339,7 +387,9 @@ def _open_pull_request(
         return
     title = f"Fixes #{issue['number']} — {issue['title']}"
     try:
+        cfg.control.check()
         devops.push_branch(cfg.repo_dir, report.branch)
+        cfg.control.check()
         report.pr_url = github_io.open_pull_request(
             cfg.repo, head=report.branch, title=title, body=_pr_body(issue, store, report)
         )
@@ -365,7 +415,11 @@ def _record_usage(client, state_dir: Path, issue_ref: str, report: RunReport) ->
         log.warning("could not write the usage file: %s", e)
 
 
-def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
+def _emit_finished(
+    cfg: RunnerConfig, client, report: RunReport, store: TicketStore | None = None
+) -> None:
+    announce_stop(cfg)
+    _clear_parent_in_progress(cfg, report)
     ledger = getattr(client, "usage", None)
     if ledger is not None:
         report.usage_summary = ledger.summary_line()
@@ -373,6 +427,17 @@ def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
     if isinstance(budget, RunBudget) and (budget.limit is not None or not budget.cost_is_complete):
         report.budget_summary = budget.describe()
     emit(cfg.events, "phase", name="finished")
+    try:
+        worktree_state = devops.worktree_state(cfg.repo_dir)
+    except DevopsError:
+        # a broken git must never break the run; report what we already know
+        worktree_state = {
+            "path": report.worktree,
+            "branch": report.branch,
+            "head": "",
+            "dirty": False,
+            "uncommitted": [],
+        }
     emit(
         cfg.events,
         "run_finished",
@@ -380,11 +445,19 @@ def _emit_finished(cfg: RunnerConfig, client, report: RunReport) -> None:
         blocked=report.blocked,
         branch=report.branch,
         worktree=report.worktree,
+        worktree_state=worktree_state,
         pr_url=report.pr_url,
         usage=report.usage_summary,
         budget=report.budget_summary,
         budget_exhausted=report.budget_exhausted,
         plan_only=report.plan_only,
+        stopped=report.stopped,
+        state_dir=str(store.state_dir) if store is not None else "",
+        artefacts=(
+            runsummary.artefacts(store)
+            if store is not None
+            else {"files": [], "commits": [], "pr_url": report.pr_url}
+        ),
     )
 
 
@@ -413,8 +486,14 @@ def _block_unsatisfiable(cfg: RunnerConfig, store: TicketStore, report: RunRepor
 
 
 def _process_ticket(
-    cfg: RunnerConfig, client, store: TicketStore, ticket: Ticket, report: RunReport
+    cfg: RunnerConfig,
+    client,
+    store: TicketStore,
+    ticket: Ticket,
+    report: RunReport,
+    journal: Journal | None = None,
 ) -> None:
+    journal = journal or Journal(cfg.tickets_backend)
     if ticket.base_commit is None:
         devops.require_clean(cfg.repo_dir)
         head = devops.head_commit(cfg.repo_dir)
@@ -428,9 +507,15 @@ def _process_ticket(
     store.save()
     log.info("ticket %d: %s", ticket.id, ticket.title)
     emit(cfg.events, "ticket_started", ticket_id=ticket.id, title=ticket.title)
+    _mark_in_progress(cfg, ticket)
+    if ticket.phase == "tester" and ticket.rounds == 0:
+        # only on the ticket's first start: a resumed run must not repost the brief,
+        # since the in-process duplicate guard is gone once the process restarts
+        journal.post(ticket, "planner", "builder.tester", _brief_body(ticket, store), "brief")
     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     try:
         while True:
+            cfg.control.check()
             if devops.current_branch(cfg.repo_dir) != store.branch:
                 raise DevopsError("the agent changed the run branch")
             if ticket.phase == "commit":
@@ -443,6 +528,7 @@ def _process_ticket(
 
             if ticket.phase in ("tester", "refine_test"):
                 refining = ticket.phase == "refine_test"
+                ticket.already_satisfied = False
                 try:
                     path = tester_step(
                         client,
@@ -450,12 +536,20 @@ def _process_ticket(
                         ticket,
                         feedback=ticket.test_feedback or None,
                         require_red=not refining,
+                        journal=journal,
                     )
                 except TestAlreadyPasses as e:
                     path = e.test_path
                     ticket.already_satisfied = True
                 _snapshot_test(cfg, ticket, path)
                 ticket.phase = "verifier" if ticket.already_satisfied else "coder"
+                journal.post(
+                    ticket,
+                    "builder.tester",
+                    "verifier" if ticket.already_satisfied else "builder.coder",
+                    _test_body(ticket, path),
+                    "test accepted",
+                )
                 ticket.code_feedback = ""
                 ticket.test_feedback = ""
                 store.save()
@@ -465,18 +559,48 @@ def _process_ticket(
             if ticket.phase == "coder":
                 passed, _ = run_tests(cfg, test_path)
                 if ticket.code_feedback or not passed:
-                    coder_step(
-                        client, cfg, ticket, test_path, feedback=ticket.code_feedback or None
-                    )
+                    try:
+                        coder_step(
+                            client,
+                            cfg,
+                            ticket,
+                            test_path,
+                            feedback=ticket.code_feedback or None,
+                            journal=journal,
+                        )
+                    except CoderFailure as e:
+                        # the spec may be the problem: let the tester repair it
+                        # rather than losing the ticket to an unsatisfiable test
+                        cfg.control.check()
+                        ticket.test_feedback = str(e)
+                        ticket.code_feedback = ""
+                        ticket.phase = "refine_test"
+                        journal.post(
+                            ticket,
+                            "builder.coder",
+                            "builder.tester",
+                            str(e),
+                            "coder exhausted its retries — the spec may be wrong",
+                        )
+                        if not _hand_back(cfg, store, ticket, report, str(e)):
+                            return
+                        continue
                 _require_accepted_test(cfg, ticket)
                 ticket.phase = "verifier"
                 ticket.code_feedback = ""
+                journal.post(
+                    ticket,
+                    "builder.coder",
+                    "verifier",
+                    _code_body(cfg, test_path),
+                    "implementation ready for review",
+                )
                 store.save()
                 continue
 
             if ticket.phase == "verifier":
                 before = devops.workspace_digest(cfg.repo_dir)
-                verdict = verify_step(client, cfg, ticket, test_path)
+                verdict = verify_step(client, cfg, ticket, test_path, journal=journal)
                 if devops.workspace_digest(cfg.repo_dir) != before:
                     raise BuildError("read-only verifier modified the workspace; changes retained")
                 log.info(
@@ -495,21 +619,25 @@ def _process_ticket(
                 if verdict.verdict == "pass":
                     ticket.approved_digest = before
                     ticket.phase = "regression"
+                    journal.post(
+                        ticket,
+                        "verifier",
+                        "harness",
+                        _verdict_body(verdict),
+                        "pass — going to the regression gate",
+                    )
                     store.save()
                     continue
-                if ticket.already_satisfied:
-                    _block(
-                        store,
-                        ticket,
-                        report,
-                        f"pre-existing behaviour was not confirmed: {'; '.join(verdict.reasons)} "
-                        f"{verdict.test_feedback or verdict.code_feedback}",
-                        cfg,
-                    )
-                    return
                 ticket.test_feedback = verdict.test_feedback
                 ticket.code_feedback = verdict.code_feedback
                 ticket.phase = "refine_test" if verdict.verdict == "refine_test" else "coder"
+                journal.post(
+                    ticket,
+                    "verifier",
+                    "builder.tester" if verdict.verdict == "refine_test" else "builder.coder",
+                    _verdict_body(verdict),
+                    verdict.verdict,
+                )
                 if not _hand_back(cfg, store, ticket, report, f"last verdict {verdict.verdict}"):
                     return
                 continue
@@ -520,8 +648,12 @@ def _process_ticket(
                 try:
                     _regression_gate(cfg)
                 except RegressionFailure as e:
+                    cfg.control.check()
                     ticket.code_feedback = str(e)
                     ticket.phase = "coder"
+                    journal.post(
+                        ticket, "harness", "builder.coder", str(e), "regression suite failed"
+                    )
                     if not _hand_back(cfg, store, ticket, report, str(e)):
                         return
                     continue
@@ -543,7 +675,107 @@ def _process_ticket(
         report.details.append(f"ticket {ticket.id} paused before {ticket.phase}: {e}")
         emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
     except (BuildError, CopilotError, VerifyError, DevopsError) as e:
+        cfg.control.check()
         _block(store, ticket, report, str(e), cfg)
+
+
+def _mark_in_progress(cfg: RunnerConfig, ticket: Ticket) -> None:
+    """Show on the tracker that this sub-task is being worked on right now.
+
+    Best-effort by design: this is a status light, and a tracker that will not
+    take it is no reason to refuse to do the work.
+    """
+    backend = cfg.tickets_backend
+    if not ticket.github_issue or backend is None or not hasattr(backend, "start"):
+        return
+    try:
+        backend.start(ticket)
+    except Exception:  # a status light must never stop the run
+        log.warning("could not mark ticket %s in progress", ticket.id, exc_info=True)
+
+
+def _mark_parent_in_progress(cfg: RunnerConfig, issue: dict, report: RunReport) -> None:
+    """Show that the run owns the whole issue, for as long as the run lasts.
+
+    Best-effort like the per-ticket light, and remembered on the report so
+    every exit path can take it back down again.
+    """
+    backend = cfg.tickets_backend
+    number = issue.get("number")
+    if not number or backend is None or not hasattr(backend, "start_parent"):
+        return
+    try:
+        backend.start_parent(number)
+    except Exception:  # a status light must never stop the run
+        log.warning("could not mark issue %s in progress", number, exc_info=True)
+        return
+    report.parent_in_progress = number
+
+
+def _clear_parent_in_progress(cfg: RunnerConfig, report: RunReport) -> None:
+    """Take the light back down: nothing is working this issue any more."""
+    number = report.parent_in_progress
+    backend = cfg.tickets_backend
+    if not number or backend is None or not hasattr(backend, "finish_parent"):
+        return
+    report.parent_in_progress = None
+    try:
+        backend.finish_parent(number)
+    except Exception:  # a status light must never stop the run
+        log.warning("could not clear the in-progress mark on issue %s", number, exc_info=True)
+
+
+def _brief_body(ticket: Ticket, store: TicketStore) -> str:
+    """What the planner asked for — the brief every later role is judged against."""
+    parts = [ticket.description.strip()]
+    parts.append(f"**Single test assertion:** `{ticket.test_assertion}`")
+    if ticket.files_hint:
+        parts.append("**Files likely involved:** " + ", ".join(ticket.files_hint))
+    if ticket.depends_on:
+        parts.append("**Depends on:** " + ", ".join(f"ticket {d}" for d in ticket.depends_on))
+    if store.branch:
+        parts.append(f"Work happens on `{store.branch}`.")
+    return "\n\n".join(p for p in parts if p)
+
+
+def _test_body(ticket: Ticket, path: str) -> str:
+    """The specification the coder must satisfy, and the proof it is a real one."""
+    if ticket.already_satisfied:
+        return (
+            f"Accepted test: `{path}`\n\n"
+            "It passes with no new code, so the behaviour may already exist. "
+            "Sent straight to the verifier to arbitrate rather than to the coder."
+        )
+    return (
+        f"Accepted test: `{path}`\n\n"
+        "It was executed and observed to FAIL before any implementation exists, which is "
+        "what makes it a specification rather than a claim. It is now frozen: the coder "
+        "cannot edit it."
+    )
+
+
+def _code_body(cfg: RunnerConfig, test_path: str) -> str:
+    """What the coder changed to turn the frozen test green."""
+    try:
+        changed = [p for p in devops.changed_paths(cfg.repo_dir) if p != test_path]
+    except DevopsError:
+        # this text is a record, never a gate: failing to list the files must
+        # not cost a ticket that has already been proven green
+        changed = []
+    files = "\n".join(f"- `{p}`" for p in changed) if changed else "- (no source file changed)"
+    return f"The frozen test `{test_path}` now passes.\n\nChanged:\n{files}"
+
+
+def _verdict_body(verdict) -> str:
+    """The verifier's reasoning, in the form the next agent has to act on."""
+    parts = [f"Verdict: **{verdict.verdict}**"]
+    if verdict.reasons:
+        parts.append("\n".join(f"- {r}" for r in verdict.reasons))
+    if verdict.test_feedback:
+        parts.append(f"**For builder.tester:**\n{verdict.test_feedback}")
+    if verdict.code_feedback:
+        parts.append(f"**For builder.coder:**\n{verdict.code_feedback}")
+    return "\n\n".join(parts)
 
 
 def _snapshot_test(cfg: RunnerConfig, ticket: Ticket, path: str) -> None:
@@ -575,6 +807,7 @@ def _require_accepted_test(cfg: RunnerConfig, ticket: Ticket) -> str:
 
 
 def _regression_gate(cfg: RunnerConfig) -> None:
+    cfg.control.check()
     command = cfg.regression_cmd or detect_regression_cmd(cfg.repo_dir)
     if not command:
         raise BuildError(
@@ -582,7 +815,12 @@ def _regression_gate(cfg: RunnerConfig) -> None:
         )
     if "{test_path}" in command:
         raise BuildError("regression_cmd must run the suite without a {test_path} selector")
-    passed, output = run_test_command(cfg, command)
+    try:
+        passed, output = run_test_command(cfg, command)
+    except BuildError:
+        cfg.control.check()
+        raise
+    cfg.control.check()
     if not passed:
         raise RegressionFailure(
             f"regression gate failed; repair existing behaviour:\n{output[-3000:]}"
@@ -613,8 +851,18 @@ def _finish_ticket(
     report.details.append(f"ticket {ticket.id} done @ {sha[:12]}: {note}{ticket.title}")
     emit(cfg.events, "ticket_done", ticket_id=ticket.id, note=f"committed {sha[:12]}")
     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+    # deliberately the last thing that happens to this ticket: the work is
+    # committed and proven, so the tracker is told it is done immediately
+    # before the runner moves on to the next one
     if ticket.github_issue and cfg.tickets_backend:
-        cfg.tickets_backend.close(ticket, f"{note}Done in {sha} on {store.branch}")
+        try:
+            cfg.tickets_backend.close(ticket, f"{note}Done in {sha} on {store.branch}")
+        except Exception:  # the commit already happened
+            log.warning("could not close the sub-issue for ticket %s", ticket.id, exc_info=True)
+            report.details.append(
+                f"ticket {ticket.id} is committed at {sha[:12]} but its sub-issue "
+                f"#{ticket.github_issue} could not be closed"
+            )
 
 
 def _block(
