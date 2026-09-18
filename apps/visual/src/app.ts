@@ -19,6 +19,7 @@ import {
   worktreeLines,
   trimOutput,
   type RunEvent,
+  type Summary,
   type Ticket,
   type ViewState,
 } from "./model"
@@ -199,6 +200,12 @@ export function createApp(renderer: CliRenderer): App {
     title: " run summary — s save · d dismiss ",
   })
   const summaryOutcomeText = new TextRenderable(renderer, { content: "", height: 1, wrapMode: "none" })
+  const summarySubtitle = new TextRenderable(renderer, {
+    content: "",
+    fg: theme.dim,
+    height: 1,
+    wrapMode: "none",
+  })
   const summaryScroll = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
     backgroundColor: theme.panel,
@@ -212,6 +219,7 @@ export function createApp(renderer: CliRenderer): App {
     wrapMode: "none",
   })
   summaryModal.add(summaryOutcomeText)
+  summaryModal.add(summarySubtitle)
   summaryModal.add(summaryScroll)
   summaryModal.add(summaryKeys)
   summaryModal.visible = false
@@ -319,12 +327,49 @@ export function createApp(renderer: CliRenderer): App {
     return row
   }
 
+  // Colour by the first word of a line: the line text itself stays exactly as
+  // the model built it, so the saved report and the overlay never drift apart.
+  const LINE_COLOR: Record<string, string> = {
+    duration: theme.text,
+    phases: theme.dim,
+    credits: theme.warn,
+    branch: theme.accent,
+    pull: theme.accent,
+    commit: theme.warn,
+    changed: theme.text,
+    worktree: theme.accent,
+    head: theme.warn,
+    uncommitted: theme.warn,
+    no: theme.dim,
+  }
+
+  function headingText(heading: string) {
+    const rule = Math.max(4, (renderer.width || 80) - heading.length - 9)
+    return t`${bold(fg(theme.accent)(`▌ ${heading}`))} ${fg(theme.border)("─".repeat(rule))}`
+  }
+
+  function lineText(line: string, summary: Summary) {
+    const gap = line.indexOf(" ")
+    const label = gap === -1 ? line : line.slice(0, gap)
+    const rest = gap === -1 ? "" : line.slice(gap + 1)
+    let color = LINE_COLOR[label] ?? theme.text
+    if (label === "outcome") {
+      const tone = summaryOutcome(summary).tone
+      color = tone === "ok" ? theme.ok : tone === "bad" ? theme.bad : theme.text
+    }
+    if (label === "tickets") color = summary.blocked ? theme.bad : theme.ok
+    if (label === "state") color = rest.startsWith("dirty") ? theme.warn : theme.ok
+    return t`  ${fg(theme.dim)(label)} ${fg(color)(rest)}`
+  }
+
   function renderSummary(): void {
     const summary = state.summary
     if (!summary) return
     const outcome = summaryOutcome(summary)
     const tone = outcome.tone === "ok" ? theme.ok : outcome.tone === "bad" ? theme.bad : theme.text
-    summaryOutcomeText.content = t`${bold(fg(tone)(`run finished — ${outcome.text}`))}`
+    const glyph = outcome.tone === "ok" ? "✔" : outcome.tone === "bad" ? "⚠" : "●"
+    summaryOutcomeText.content = t`${bold(fg(tone)(`${glyph} run finished — ${outcome.text}`))}`
+    summarySubtitle.content = t`${fg(theme.dim)(`${state.issueRef} ${state.issue}`.trim())}`
     const sections: [string, string[]][] = [
       ["run metrics", metricsLines(state)],
       ["artefacts", artefactLines(summary)],
@@ -332,12 +377,10 @@ export function createApp(renderer: CliRenderer): App {
     ]
     let used = 0
     for (const [heading, lines] of sections) {
-      const head = summaryRow(used++)
-      head.content = t`${bold(fg(theme.accent)(heading))}`
+      summaryRow(used++).content = ""
+      summaryRow(used++).content = headingText(heading)
       for (const line of lines) {
-        const row = summaryRow(used++)
-        row.content = line
-        row.fg = theme.text
+        summaryRow(used++).content = lineText(line, summary)
       }
     }
     for (let index = used; index < summaryRows.length; index += 1) {
