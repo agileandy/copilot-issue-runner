@@ -204,6 +204,7 @@ def test_dependency_cycle_blocks_both_tickets_without_model_calls(git_repo, cfg)
     store = TicketStore(git_repo / ".state", issue_ref="17")
     store.load()
     assert all("cycle" in t.blocked_reason for t in store.tickets)
+    assert all(t.blocked_stage == "dependencies" for t in store.tickets)
 
 
 def test_budget_stop_leaves_dependents_pending_not_blocked(git_repo, cfg):

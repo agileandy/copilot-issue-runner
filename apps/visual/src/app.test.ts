@@ -235,3 +235,30 @@ test("dismissing the summary puts the terminal back", async () => {
     )
   })
 })
+
+test("a blocked run explains why at the top of the summary and wraps long reasons", async () => {
+  await withApp({ width: 80, height: 30 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: {
+        done: 0,
+        blocked: 1,
+        blocked_tickets: [
+          {
+            id: 1,
+            title: "add config",
+            reason:
+              "no usable test result from `/a/very/long/worktree/path/.venv/bin/python -m pytest -q`: pytest reported 7 collection/setup error(s) — the test never ran",
+            causes: ["ModuleNotFoundError: No module named 'openpyxl'"],
+          },
+        ],
+        notes: ["no tickets started: fix the cause, then re-run with --retry-blocked"],
+      },
+    })
+    const frame = await setup.waitForFrame((value) => value.includes("why it stopped"))
+    expect(frame).toContain("ticket #1 add config")
+    expect(frame).toContain("test never ran")
+    expect(frame).toContain("No module named 'openpyxl'")
+    expect(frame).toContain("--retry-blocked")
+  })
+})

@@ -211,7 +211,16 @@ def slugify(text: str, max_len: int = 40) -> str:
 
 
 # junk a `git add -A` must never sweep into a ticket commit
-DEFAULT_EXCLUDES = (".issue-runner/", "__pycache__/", "*.pyc", ".pytest_cache/")
+# the run worktree's own environment and build byproducts are never ticket work
+DEFAULT_EXCLUDES = (
+    ".issue-runner/",
+    "__pycache__/",
+    "*.pyc",
+    ".pytest_cache/",
+    ".venv/",
+    "node_modules/",
+    "*.egg-info/",
+)
 
 
 def create_branch(repo_dir: Path, issue_ref: str, slug: str) -> str:

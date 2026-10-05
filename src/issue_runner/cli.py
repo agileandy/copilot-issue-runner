@@ -54,6 +54,11 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--test-cmd", help="test command template, e.g. 'pytest {test_path} -q'")
     p.add_argument("--regression-cmd", help="full regression suite command, with no file selector")
     p.add_argument(
+        "--setup-cmd",
+        action="append",
+        help="command that prepares the run worktree's dependencies (repeatable)",
+    )
+    p.add_argument(
         "--in-place",
         action="store_true",
         help="use the supplied clean checkout instead of a separate managed run worktree",
@@ -183,6 +188,9 @@ def main(argv=None) -> int:
         cfg.repo = args.repo
     if args.test_cmd:
         cfg.test_cmd = args.test_cmd
+        cfg.test_cmd_detected = False
+    if args.setup_cmd:
+        cfg.setup_cmd = args.setup_cmd
     if args.regression_cmd:
         cfg.regression_cmd = args.regression_cmd
     if args.in_place:

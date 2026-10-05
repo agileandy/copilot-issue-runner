@@ -104,7 +104,7 @@ Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
 `--retry-blocked` · `--visual` · `--demo` ·
-`--regression-cmd 'pytest -q'` · `--in-place` ·
+`--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
 
@@ -134,8 +134,9 @@ the harness would misread as a passing test.
 Python detection uses the target project's environment for both focused tests and
 the regression suite: `uv run --no-sync python` when `uv.lock` exists, otherwise
 the project's `.venv` Python when present, then `python` from the caller's PATH.
-It never selects the globally installed runner's private interpreter. Prepare the
-project dependencies before running; detection does not install them.
+It never selects the globally installed runner's private interpreter. In a run
+worktree, detection happens after the worktree's environment is set up (below),
+so the focused test and the full suite always use the same environment.
 
 Test commands run non-interactively with colour disabled. Go reports each case
 and does not reuse cached results. Pytest keeps its result summary visible even
@@ -148,10 +149,30 @@ Override it with `regression_cmd` or `--regression-cmd`; it must not contain
 `{test_path}`. Unknown projects need an explicit regression command. Both commands
 must report actual test execution, not just exit successfully.
 
-Dependencies must be usable from the printed run worktree. Point commands at an
-existing environment, prepare dependencies in that worktree before resuming, or
-use `--in-place` with your own clean, prepared worktree. The runner does not
-silently install dependencies or delete worktrees and branches.
+### Run worktree environment
+
+A new run worktree has none of the source checkout's ignored directories, so it
+starts without `.venv` or `node_modules`. Before any ticket work, on every run
+and resume, the runner prepares the worktree's dependencies:
+
+| Project | Setup |
+|---|---|
+| Python with `uv.lock` | `uv sync --frozen` |
+| Python without a lock file | `uv venv --allow-existing .venv`, then `uv pip install` of the project (when it has a `[project]` table or `setup.py`), every root `requirements*.txt`, and `pytest` |
+| `package.json` with a lock file | `npm ci`, or the frozen install for `pnpm-lock.yaml`, `yarn.lock` or `bun.lock` |
+| `package.json` without a lock file, `go.mod`, `Cargo.toml` | nothing |
+
+`setup_cmd` in `runner.toml` (a command or a list of commands) or a repeated
+`--setup-cmd` replaces the detected setup. Use it when dependencies live
+somewhere detection cannot see, for example `backend/requirements.txt`.
+Automatic setup runs only when the test command was detected too: an explicit
+`test_cmd` or `--test-cmd` already names its environment. `--in-place` runs do
+no setup.
+
+If a setup command fails, the run stops before any model call and shows its
+output. Setup may only write ignored paths: `.venv/`, `node_modules/` and
+`*.egg-info/` are excluded for every run, and a setup that changes tracked or
+untracked files stops the run. The runner never deletes worktrees or branches.
 
 For new runs, state records every accepted phase and its artifacts. Older state
 without worktree metadata can resume only from its original clean issue branch.

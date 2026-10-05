@@ -251,6 +251,8 @@ test("the artefacts section lists the branch, pull request, commits and changed 
     },
     worktreeState: { path: "", branch: "", head: "", dirty: false, uncommitted: [] },
     stateDir: "",
+    blockedTickets: [],
+    notes: [],
   }
   expect(model.artefactLines(summary)).toEqual([
     "branch issue-9-x",
@@ -283,6 +285,8 @@ test("the worktree section reports the path, branch, head, state and uncommitted
       uncommitted: ["notes.md"],
     },
     stateDir: "",
+    blockedTickets: [],
+    notes: [],
   }
   expect(model.worktreeLines(summary)).toEqual([
     "worktree /tmp/wt",
@@ -324,4 +328,38 @@ test("the summary report composes the metrics, artefacts and worktree sections",
   expect(
     model.summaryReport(state, 65_000).split("\n").filter((l) => l.startsWith("## ")),
   ).toEqual(["## run metrics", "## artefacts", "## worktree"])
+})
+
+test("the why section lists each blocked ticket, its causes and run notes", () => {
+  const state = initialState(0)
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: {
+      done: 0,
+      blocked: 1,
+      blocked_tickets: [
+        {
+          id: 1,
+          title: "add config",
+          stage: "full test-suite check",
+          reason: "no usable test result from `pytest -q`",
+          causes: ["ModuleNotFoundError: No module named 'openpyxl'"],
+        },
+      ],
+      notes: ["no tickets started: re-run with --retry-blocked"],
+    },
+  })
+  expect(model.whyLines(state.summary!)).toEqual([
+    "ticket #1 add config",
+    "stage full test-suite check",
+    "reason no usable test result from `pytest -q`",
+    "cause ModuleNotFoundError: No module named 'openpyxl'",
+    "note no tickets started: re-run with --retry-blocked",
+  ])
+  expect(model.summaryReport(state, 0).split("\n").filter((l) => l.startsWith("## "))).toEqual([
+    "## why it stopped",
+    "## run metrics",
+    "## artefacts",
+    "## worktree",
+  ])
 })

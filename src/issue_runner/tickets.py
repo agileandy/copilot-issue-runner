@@ -32,6 +32,8 @@ class Ticket:
     test_path: str | None = None
     github_issue: int | None = None
     blocked_reason: str | None = None
+    # the phase the ticket was in when it blocked, or "dependencies"
+    blocked_stage: str | None = None
     phase: str = "tester"
     test_snapshot: str | None = None
     test_hash: str | None = None

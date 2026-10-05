@@ -16,9 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from . import github_io, runsummary
+from . import envsetup, github_io, runsummary
 from .budget import BudgetExhausted, RunBudget
-from .config import RunnerConfig
+from .config import RunnerConfig, apply_detected_test_cmd
 from .control import RunStopped, announce_stop
 from .copilot import CopilotError
 from .demo.seed import is_seed
@@ -98,6 +98,7 @@ def run_issue(
     if not source.is_dir():
         raise DevopsError(f"target repository directory does not exist: {source}")
     original_dir = cfg.repo_dir
+    original_test_cmd = cfg.test_cmd
     client_config = getattr(client, "config", None)
     original_client_dir = client_config.repo_dir if client_config is not None else None
     if issue["number"]:
@@ -120,6 +121,11 @@ def run_issue(
                 store.source_repo = str(source)
                 if not plan_only:
                     _prepare_workspace(cfg, store, source, branch_slug)
+                    if Path(cfg.repo_dir).resolve() != source:
+                        envsetup.prepare(cfg, Path(cfg.repo_dir))
+                        if cfg.test_cmd_detected:
+                            # the focused test and the full suite share one environment
+                            apply_detected_test_cmd(cfg)
                     if client_config is not None:
                         client_config.repo_dir = cfg.repo_dir
                     report.branch = store.branch or ""
@@ -149,6 +155,7 @@ def run_issue(
                 _record_usage(client, state_dir, issue_ref, report)
     finally:
         cfg.repo_dir = original_dir
+        cfg.test_cmd = original_test_cmd
         if client_config is not None:
             client_config.repo_dir = original_client_dir
 
@@ -308,6 +315,7 @@ def _run_issue(
                 ticket.status = "pending"
                 ticket.rounds = 0
                 ticket.blocked_reason = None
+                ticket.blocked_stage = None
                 report.blocked -= 1
         store.save()
 
@@ -326,7 +334,9 @@ def _run_issue(
             raise StateError("multiple tickets own unfinished changes; refusing ambiguous recovery")
         if unfinished and unfinished[0].status == "blocked" and devops.changed_paths(cfg.repo_dir):
             report.details.append(
-                f"work retained in {cfg.repo_dir}; use --retry-blocked before starting more tickets"
+                f"stopped: ticket {unfinished[0].id} is blocked and its unfinished changes are "
+                f"in {cfg.repo_dir}; later tickets wait until it is fixed and re-run with "
+                "--retry-blocked"
             )
             break
         next_ticket = active[0] if active else ready[0]
@@ -458,6 +468,8 @@ def _emit_finished(
             if store is not None
             else {"files": [], "commits": [], "pr_url": report.pr_url}
         ),
+        blocked_tickets=runsummary.blocked(store) if store is not None else [],
+        notes=runsummary.notes(report.details),
     )
 
 
@@ -479,10 +491,10 @@ def _block_unsatisfiable(cfg: RunnerConfig, store: TicketStore, report: RunRepor
             # a true cycle has no root cause; label every member the same way
             reasons = [(t, store.unsatisfiable_reason(t)) for t in remaining]
             for ticket, reason in reasons:
-                _block(store, ticket, report, reason, cfg)
+                _block(store, ticket, report, reason, cfg, stage="dependencies")
             return
         for ticket, reason in nameable:
-            _block(store, ticket, report, reason, cfg)
+            _block(store, ticket, report, reason, cfg, stage="dependencies")
 
 
 def _process_ticket(
@@ -866,10 +878,16 @@ def _finish_ticket(
 
 
 def _block(
-    store: TicketStore, ticket: Ticket, report: RunReport, reason: str, cfg: RunnerConfig = None
+    store: TicketStore,
+    ticket: Ticket,
+    report: RunReport,
+    reason: str,
+    cfg: RunnerConfig = None,
+    stage: str | None = None,
 ) -> None:
     ticket.status = "blocked"
     ticket.blocked_reason = reason
+    ticket.blocked_stage = stage or ticket.phase
     if cfg is not None and ticket.base_commit and not devops.changed_paths(cfg.repo_dir):
         ticket.base_commit = None
     store.save()

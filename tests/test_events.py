@@ -138,3 +138,28 @@ def test_run_finished_carries_state_dir(git_repo, cfg):  # noqa: F811
     assert report.done == 1
 
     assert payload_of_kind(events, "run_finished")["state_dir"].endswith(".state")
+
+
+def test_run_finished_explains_blocked_tickets(git_repo, cfg):  # noqa: F811
+    from issue_runner.copilot import CopilotError
+
+    class ExplodingClient(FakeClient):
+        def run(self, prompt, role, read_only=False, session_name=None):
+            if role == "builder.tester":
+                raise CopilotError("copilot timed out")
+            return super().run(prompt, role, read_only, session_name)
+
+    bus = EventBus()
+    events = []
+    bus.subscribe(lambda e: events.append(e))
+    cfg.events = bus
+    report = run_issue(
+        cfg, ExplodingClient([(plan_reply(), None)]), ISSUE, state_dir=git_repo / ".state"
+    )
+    assert report.blocked == 1
+
+    finished = payload_of_kind(events, "run_finished")
+    assert [b["id"] for b in finished["blocked_tickets"]] == [1]
+    assert "copilot timed out" in finished["blocked_tickets"][0]["reason"]
+    assert finished["blocked_tickets"][0]["stage"] == "writing the ticket's test"
+    assert not any(note.startswith("ticket 1 BLOCKED") for note in finished["notes"])
