@@ -145,6 +145,9 @@ class GiteaTickets:
         self._update_line(parent_number, ticket, done=False, note=f"blocked: {short}")
         self._comment(parent_number, f"Sub-task {ticket.id} ({ticket.title}) BLOCKED: {reason}")
 
+    def comment_issue(self, number: int, body: str) -> None:
+        self._comment(number, body)
+
     def _comment(self, parent_number: int, body: str) -> None:
         self.requester(
             "POST",

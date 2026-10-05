@@ -547,3 +547,153 @@ class _StubUsage:
 
 class _StubClient:
     usage = _StubUsage()
+
+
+def _agent_repo(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    monkeypatch.setattr(
+        cli, "fetch_issue", lambda ref, repo=None: {"number": 7, "title": "T", "body": "b"}
+    )
+    posted = []
+    monkeypatch.setattr(
+        cli, "comment_issue", lambda repo, number, body: posted.append((repo, number, body))
+    )
+    return repo, posted
+
+
+def test_agent_mode_posts_the_summary_instead_of_printing_it(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+    report = RunReport(
+        branch="issue-7-t", done=1, pr_url="https://github.com/o/n/pull/9", details=["d1"]
+    )
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: report)
+
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "branch:" not in out and "pull request" not in out
+    assert len(posted) == 1
+    target_repo, number, body = posted[0]
+    assert (target_repo, number) == ("o/n", 7)
+    assert "branch: issue-7-t" in body
+    assert "pull request: https://github.com/o/n/pull/9" in body
+    assert "  - d1" in body
+
+
+def test_agent_mode_falls_back_to_printing_when_the_post_fails(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.github_io import GithubError
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _agent_repo(tmp_path, monkeypatch)
+
+    def refuse(repo, number, body):
+        raise GithubError("gh issue comment failed: offline")
+
+    monkeypatch.setattr(cli, "comment_issue", refuse)
+    monkeypatch.setattr(
+        cli, "run_issue", lambda *a, **k: RunReport(branch="issue-7-t", done=0, blocked=1)
+    )
+
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent"])
+
+    assert rc == 3
+    captured = capsys.readouterr()
+    assert "branch: issue-7-t" in captured.out
+    assert "could not post the run summary" in captured.err
+
+
+def test_agent_mode_posts_an_aborted_run_with_its_error(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+    from issue_runner.phases.build import BuildError
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+
+    def abort(*a, **k):
+        error = BuildError("tests exploded")
+        error.report = RunReport(branch="issue-7-t", worktree="/w", done=1)
+        raise error
+
+    monkeypatch.setattr(cli, "run_issue", abort)
+
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent"])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "error: tests exploded" in captured.err
+    assert "branch:" not in captured.out and "branch:" not in captured.err
+    body = posted[0][2]
+    assert "error: tests exploded" in body
+    assert "branch: issue-7-t" in body and "worktree: /w" in body
+
+
+def test_agent_mode_posts_to_a_gitea_issue(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "http://gitea.local:3000/Org/thing.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    posted = []
+
+    class FakeGitea:
+        def __init__(self, api_base, owner_repo):
+            self.where = (api_base, owner_repo)
+
+        def comment_issue(self, number, body):
+            posted.append((self.where, number, body))
+
+    monkeypatch.setattr(cli, "GiteaTickets", FakeGitea)
+    monkeypatch.setattr(
+        cli, "fetch_gitea_issue", lambda *a, **k: {"number": 3, "title": "T", "body": "b"}
+    )
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: RunReport(branch="issue-3-t", done=1))
+
+    rc = cli.main(["3", "--dir", str(repo), "--no-github-tickets", "--agent"])
+
+    assert rc == 0
+    assert "branch:" not in capsys.readouterr().out
+    assert posted[0][:2] == (("http://gitea.local:3000", "Org/thing"), 3)
+    assert "branch: issue-3-t" in posted[0][2]
+
+
+@pytest.mark.parametrize("extra", [["--issue-file", "issue.md"], ["7", "--visual"]])
+def test_agent_mode_rejects_incompatible_options(tmp_path, monkeypatch, capsys, extra):
+    from issue_runner import cli
+
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
+    rc = cli.main([*extra, "--dir", str(tmp_path), "--agent"])
+    assert rc == 2
+    assert "--agent" in capsys.readouterr().err
+
+
+def test_agent_mode_turns_off_a_configured_visual(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _agent_repo(tmp_path, monkeypatch)
+    (repo / "runner.toml").write_text("visual = true\n")
+    seen = {}
+
+    def capture(cfg, *a, **k):
+        seen["visual"] = cfg.visual
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent"])
+    assert seen["visual"] is False

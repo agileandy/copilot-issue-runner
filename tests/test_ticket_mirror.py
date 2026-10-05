@@ -89,6 +89,12 @@ def test_close_ticks_line_and_comments():
     assert api.comments == ["Sub-task 1 (first task): Done in abc123 on issue-1-x"]
 
 
+def test_comment_issue_posts_the_body_unchanged():
+    api = FakeGiteaApi()
+    GiteaTickets("http://g:3000", "Org/repo", requester=api).comment_issue(1, "run summary")
+    assert api.comments == ["run summary"]
+
+
 def test_create_uses_bot_token():
     api = FakeGiteaApi()
     backend = GiteaTickets("http://g:3000", "Org/repo", requester=api)
