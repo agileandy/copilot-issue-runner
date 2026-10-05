@@ -103,6 +103,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="post the run summary as a comment on the issue instead of printing it",
     )
+    p.add_argument(
+        "--comment-issue",
+        type=int,
+        metavar="NUMBER",
+        help="with --agent, post the run summary to this issue (required with --issue-file)",
+    )
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
     p.add_argument("--effort", help="default reasoning effort for all roles")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
@@ -183,12 +189,15 @@ def main(argv=None) -> int:
         print("error: use --demo without an issue number or --issue-file", file=sys.stderr)
         return 2
 
-    if args.agent and args.issue_file:
-        print("error: --agent needs an issue to comment on; not --issue-file", file=sys.stderr)
+    if args.comment_issue is not None and not args.agent:
+        print("error: --comment-issue only applies with --agent", file=sys.stderr)
         return 2
 
-    if args.agent and args.visual:
-        print("error: use --agent without --visual", file=sys.stderr)
+    if args.agent and args.issue_file and args.comment_issue is None:
+        print(
+            "error: --agent with --issue-file needs --comment-issue NUMBER to post to",
+            file=sys.stderr,
+        )
         return 2
 
     repo_dir = args.dir.resolve()
@@ -218,8 +227,9 @@ def main(argv=None) -> int:
         cfg.retry_blocked = True
     if args.visual:
         cfg.visual = True
-    if args.agent:
-        # a visual mode set in runner.toml would draw to the terminal
+    if args.agent and not args.visual:
+        # a visual mode set in runner.toml would draw to the terminal; an
+        # explicit --visual is the caller asking for the display
         cfg.visual = False
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
@@ -253,7 +263,7 @@ def main(argv=None) -> int:
 
     post = None
     if args.agent and not args.dry_run:
-        post = _summary_poster(cfg, repo_dir, issue)
+        post = _summary_poster(cfg, repo_dir, issue, args.comment_issue)
         if post is None:
             print(
                 "error: --agent cannot comment on this issue: no GitHub repo or Gitea API base "
@@ -287,9 +297,9 @@ def main(argv=None) -> int:
         return _execute(cfg, client, issue, args.plan_only, resume, post)
 
 
-def _summary_poster(cfg, repo_dir: Path, issue: dict):
+def _summary_poster(cfg, repo_dir: Path, issue: dict, comment_on: int | None = None):
     """A callable that posts a body as a comment on the run's issue, or None."""
-    number = issue.get("number")
+    number = comment_on or issue.get("number")
     if not number:
         return None
     if cfg.repo:

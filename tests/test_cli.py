@@ -672,14 +672,74 @@ def test_agent_mode_posts_to_a_gitea_issue(tmp_path, monkeypatch, capsys):
     assert "branch: issue-3-t" in posted[0][2]
 
 
-@pytest.mark.parametrize("extra", [["--issue-file", "issue.md"], ["7", "--visual"]])
-def test_agent_mode_rejects_incompatible_options(tmp_path, monkeypatch, capsys, extra):
+def test_agent_mode_rejects_an_issue_file_without_an_issue_to_comment_on(
+    tmp_path, monkeypatch, capsys
+):
     from issue_runner import cli
 
     monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
-    rc = cli.main([*extra, "--dir", str(tmp_path), "--agent"])
+    rc = cli.main(["--issue-file", "issue.md", "--dir", str(tmp_path), "--agent"])
+    assert rc == 2
+    assert "--comment-issue" in capsys.readouterr().err
+
+
+def test_comment_issue_needs_agent_mode(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
+    rc = cli.main(["7", "--dir", str(tmp_path), "--comment-issue", "7"])
     assert rc == 2
     assert "--agent" in capsys.readouterr().err
+
+
+def test_agent_mode_keeps_an_explicit_visual_and_still_posts(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+    seen = {}
+
+    def capture(cfg, *a, **k):
+        seen["visual"] = cfg.visual
+        return RunReport(branch="issue-7-t", done=1)
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    rc = cli.main(
+        ["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent", "--visual"]
+    )
+    assert rc == 0
+    assert seen["visual"] is True
+    assert [(r, n) for r, n, _ in posted] == [("o/n", 7)]
+    assert "branch:" not in capsys.readouterr().out
+
+
+def test_agent_mode_posts_an_issue_file_run_to_the_comment_issue(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+    issue_file = tmp_path / "review.md"
+    issue_file.write_text("# r1-pr9-review\n\nfix the review findings\n")
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: RunReport(branch="issue-r1", done=1))
+
+    rc = cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--repo",
+            "o/n",
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--no-pr",
+            "--agent",
+            "--comment-issue",
+            "7",
+        ]
+    )
+    assert rc == 0
+    assert [(r, n) for r, n, _ in posted] == [("o/n", 7)]
+    assert "branch: issue-r1" in posted[0][2]
 
 
 def test_agent_mode_turns_off_a_configured_visual(tmp_path, monkeypatch):

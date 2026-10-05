@@ -103,7 +103,7 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
-`--retry-blocked` · `--visual` · `--agent` · `--demo` ·
+`--retry-blocked` · `--visual` · `--agent` · `--comment-issue N` · `--demo` ·
 `--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
@@ -195,8 +195,11 @@ reported, not fatal — the commits are already on the branch.
 not printed; it is posted as a comment on the issue (GitHub via `gh`, Gitea via
 its API). An aborted run posts its error and partial summary the same way. If
 the comment cannot be posted, the summary is printed instead and the exit code
-is unchanged. `--agent` refuses `--issue-file` (no issue to comment on) and
-`--visual`, and overrides `visual = true` in `runner.toml`.
+is unchanged. `--agent` overrides `visual = true` in `runner.toml`, but an
+explicit `--visual` keeps the display: the summary still goes to the issue.
+With `--issue-file` there is no issue of its own, so `--comment-issue NUMBER`
+names the issue to post to; without it `--agent` refuses `--issue-file`.
+`--comment-issue` also redirects a numbered issue's summary.
 
 ### Exit codes
 
