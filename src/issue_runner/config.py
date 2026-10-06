@@ -23,6 +23,7 @@ ROLES = (
     "acceptor",
     "acceptance.tester",
     "reviser",
+    "resolver",
 )
 
 log = logging.getLogger("issue_runner")

@@ -125,6 +125,13 @@ class GitHubFlow:
     def resolve_thread(self, thread_id: str) -> None:
         self.graphql(_RESOLVE_MUTATION, thread=thread_id)
 
+    def merge_pull(self, number: int, method: str, sha: str, title: str | None = None) -> dict:
+        """Merge only if the PR head is still `sha`; GitHub answers 409 otherwise."""
+        body = {"merge_method": method, "sha": sha}
+        if title:
+            body["commit_title"] = title
+        return self.api(f"repos/{{repo}}/pulls/{number}/merge", "PUT", body)
+
     def comment(self, number: int, body: str) -> None:
         self.api(f"repos/{{repo}}/issues/{number}/comments", "POST", {"body": body})
 

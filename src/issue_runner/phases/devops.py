@@ -317,6 +317,97 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     return head_commit(repo_dir)
 
 
+def fetch(repo_dir: Path) -> None:
+    _git(repo_dir, "fetch", "--quiet", "origin")
+
+
+def merge_in(repo_dir: Path, ref: str, message: str) -> list[str]:
+    """Start merging `ref` into the current branch without committing.
+
+    Returns the conflicted paths ([] for a clean merge). The merge stays in
+    progress either way, so the runner can check it before `finish_merge`.
+    """
+    result = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", "-m", message, ref],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
+    )
+    conflicted = unmerged_paths(repo_dir)
+    if result.returncode != 0 and not conflicted:
+        raise DevopsError(
+            f"git merge {ref} failed: {(result.stderr or result.stdout).strip()[:400]}"
+        )
+    if not merge_in_progress(repo_dir):
+        raise DevopsError(f"{ref} is already merged; there is nothing to update")
+    return conflicted
+
+
+def unmerged_paths(repo_dir: Path) -> list[str]:
+    out = _git(repo_dir, "diff", "--name-only", "--diff-filter=U", "-z").stdout
+    return sorted({p for p in out.split("\0") if p})
+
+
+def merge_in_progress(repo_dir: Path) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def leftover_markers(repo_dir: Path, paths: list[str]) -> list[str]:
+    """Conflict markers git itself still sees in `paths`."""
+    if not paths:
+        return []
+    result = subprocess.run(
+        ["git", "diff", "--check", "HEAD", "--", *paths],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = (result.stdout or "").splitlines()
+    return [line for line in lines if "conflict marker" in line]
+
+
+def finish_merge(repo_dir: Path, expected_branch: str) -> str:
+    """Commit the in-progress merge with the message given to `merge_in`."""
+    if current_branch(repo_dir) != expected_branch:
+        raise DevopsError(f"refusing to finish a merge outside {expected_branch}")
+    if not merge_in_progress(repo_dir):
+        raise DevopsError("no merge is in progress")
+    paths = changed_paths(repo_dir)
+    _validate_paths(repo_dir, paths)
+    _git(repo_dir, "add", "-A", "--", *paths)
+    _git(repo_dir, "commit", "--no-edit")
+    require_clean(repo_dir)
+    return head_commit(repo_dir)
+
+
+def abort_merge(repo_dir: Path) -> None:
+    """Undo the runner's own in-progress merge; nothing else is discarded."""
+    if merge_in_progress(repo_dir):
+        _git(repo_dir, "merge", "--abort")
+
+
+def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     """Keep runner state out of the target repo's commits without touching .gitignore."""
     raw = _git(repo_dir, "rev-parse", "--git-path", "info/exclude").stdout.strip()

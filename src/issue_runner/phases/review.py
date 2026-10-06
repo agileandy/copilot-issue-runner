@@ -237,7 +237,7 @@ def revise(
             raise ReviewError("the reviser changed the run branch")
         if devops.head_commit(cfg.repo_dir) != head:
             raise ReviewError("the reviser moved HEAD; only the runner commits")
-        _require_frozen_checks(store)
+        require_frozen_checks(store)
         restored = _restore_changed_tests(cfg, tests)
         if restored:
             last_error = (
@@ -296,6 +296,11 @@ def _verify_change(cfg, tests, changed, actions, labels) -> str | None:
         if any(f.kind != "thread" for f in labels.values()):
             return "failing checks or review verdicts need a change, but no file changed"
         return None
+    return green_problem(cfg, tests)
+
+
+def green_problem(cfg, tests) -> str | None:
+    """Why the working tree is not green: a ticket test or the regression suite fails."""
     for ticket in tests:
         try:
             passed, output = run_tests(cfg, ticket.test_path)
@@ -327,7 +332,7 @@ def _restore_changed_tests(cfg, tests) -> list[str]:
     return restored
 
 
-def _require_frozen_checks(store: TicketStore) -> None:
+def require_frozen_checks(store: TicketStore) -> None:
     for criterion in store.delivery.criteria if store.delivery else []:
         if criterion.get("check_hash"):
             try:

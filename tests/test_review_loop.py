@@ -237,7 +237,7 @@ def test_a_clean_first_review_passes_and_opens_a_proper_pr(env, git_repo):  # no
     fake, _, cfg = env
     report, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     assert store.delivery.gates["review"] == "pass"
-    assert report.dod_failed_gate == "merge" and _exit_code(report) == 7  # merge comes next
+    assert report.dod_failed_gate == "deploy" and _exit_code(report) == 8  # deploy comes next
     pr = fake.pulls[store.delivery.pr_number]
     assert pr["title"] == "feat: Add subtract" and pr["draft"] is False
     assert pr["body"].startswith("Refs #17") and "Closes" not in pr["body"]

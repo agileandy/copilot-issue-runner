@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -559,7 +559,7 @@ sequenceDiagram
 
     <!-- Phase 5 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 5: Merge with conflict resolution</h3>
+      <h3><code class="status">[x]</code> Phase 5: Merge with conflict resolution</h3>
       <p>Merge only a head that passed the review gate. If the base moved and the PR is behind or conflicted, merge the base in, resolve, re-gate and try again.</p>
 
       <figure class="diagram">
@@ -581,21 +581,21 @@ flowchart LR
 
       <h4>1. Base merge and resolver</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Read <code>mergeable</code> and <code>mergeable_state</code> (poll while <code>UNKNOWN</code>). On <code>behind</code> or <code>dirty</code>: <code>git fetch origin</code>, then <code>git merge origin/&lt;base&gt; -m "chore: merge origin/&lt;base&gt; into &lt;branch&gt;"</code> in the worktree.</li>
-        <li><code class="status">[]</code> On conflicts, the <code>resolver</code> agent gets the conflicted paths, both sides and the issue and ticket context. Checked in code afterwards: <code>git diff --name-only --diff-filter=U</code> is empty, no <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>, <code>=======</code> or <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code> lines remain in changed files, every ticket test passes, and the regression gate passes. Commit the merge and push. Never rebase or force.</li>
-        <li><code class="status">[]</code> If the resolver fails within its retries, abort the merge with <code>git merge --abort</code>. That only discards the runner's own merge attempt. The <code>merge</code> gate fails with exit 7.</li>
+        <li><code class="status">[x]</code> Read <code>mergeable</code> and <code>mergeable_state</code> (poll while <code>UNKNOWN</code>). On <code>behind</code> or <code>dirty</code>: <code>git fetch origin</code>, then <code>git merge origin/&lt;base&gt; -m "chore: merge origin/&lt;base&gt; into &lt;branch&gt;"</code> in the worktree.</li>
+        <li><code class="status">[x]</code> On conflicts, the <code>resolver</code> agent gets the conflicted paths, both sides and the issue and ticket context. Checked in code afterwards: <code>git diff --name-only --diff-filter=U</code> is empty, no <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>, <code>=======</code> or <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code> lines remain in changed files, every ticket test passes, and the regression gate passes. Commit the merge and push. Never rebase or force.</li>
+        <li><code class="status">[x]</code> If the resolver fails within its retries, abort the merge with <code>git merge --abort</code>. That only discards the runner's own merge attempt. The <code>merge</code> gate fails with exit 7.</li>
       </ul>
 
       <h4>2. Merge</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>gh pr merge &lt;n&gt; --&lt;method&gt; --match-head-commit &lt;head_sha&gt;</code>. Never <code>--admin</code> and never <code>--auto</code>. The runner merges only after it has seen the gate pass.</li>
-        <li><code class="status">[]</code> Confirm <code>state == MERGED</code> and save <code>mergeCommit.oid</code> as <code>merge_sha</code>. A head mismatch (someone pushed) sends the run back to the review gate. <code>max_merge_attempts</code> bounds the loop.</li>
+        <li><code class="status">[x]</code> <code>gh pr merge &lt;n&gt; --&lt;method&gt; --match-head-commit &lt;head_sha&gt;</code>. Never <code>--admin</code> and never <code>--auto</code>. The runner merges only after it has seen the gate pass.</li>
+        <li><code class="status">[x]</code> Confirm <code>state == MERGED</code> and save <code>mergeCommit.oid</code> as <code>merge_sha</code>. A head mismatch (someone pushed) sends the run back to the review gate. <code>max_merge_attempts</code> bounds the loop.</li>
       </ul>
 
       <h4>3. Testing Strategy</h4>
       <p>Real git conflicts in a temporary bare <code>origin</code> with a diverging <code>main</code>. GitHub merge responses come from the fake.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_merge_step.py -q</code>: a clean merge saves <code>merge_sha</code>. A behind branch is updated and re-gated. A conflict is resolved and checked for markers. A resolver that leaves a marker is rejected. A resolver that breaks a ticket test is rejected. Exhausted attempts give exit 7. A head mismatch goes back to review. No call ever uses <code>--admin</code> or a force push.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_merge_step.py -q</code>: a clean merge saves <code>merge_sha</code>. A behind branch is updated and re-gated. A conflict is resolved and checked for markers. A resolver that leaves a marker is rejected. A resolver that breaks a ticket test is rejected. Exhausted attempts give exit 7. A head mismatch goes back to review. No call ever uses <code>--admin</code> or a force push.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -848,6 +848,16 @@ flowchart LR
         <li>A new <code>[deploy] pr_title</code> setting (default <code>feat: {title}</code>) controls the title, which becomes the squash commit subject. The PR tests live in <code>tests/test_review_loop.py</code> rather than a separate <code>test_delivery_pr.py</code>.</li>
         <li>The PR merged or closed outside the runner, or its head moved, fails the review gate. A GitHub read error is treated as still waiting, up to the timeout. If findings exist when the timeout hits, the reviser acts on them instead of failing.</li>
         <li>Re-requesting the review uses <code>POST /pulls/{n}/requested_reviewers</code> with <code>copilot-pull-request-reviewer[bot]</code>. That call is only proven against the fake. The Phase 8 live run must confirm GitHub accepts it.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T14:20:00+08:00: Phase 5 built, with five differences from the plan</summary>
+      <ol>
+        <li>The base is merged with <code>--no-commit</code>, so a clean merge is also checked (markers, frozen tests, Dev checks, ticket tests, regression) before the runner commits it. Upstream code that breaks this issue's tests also goes to the resolver.</li>
+        <li>The runner acts only on the <code>mergeable_state</code> GitHub reports. "behind" appears only when branch protection requires up-to-date branches, which Woodside/ai-maint does not, so there a merely-behind PR merges as it is. "dirty" (a conflict) always triggers the base merge.</li>
+        <li>A test file that was itself in conflict is re-frozen at its merged content once every check passes. Other frozen tests are restored if touched.</li>
+        <li>A 405 "not mergeable" from GitHub is retried after a poll, within <code>max_merge_attempts</code>. A 409 head mismatch fails the gate. A PR merged outside the runner counts only if its head is the reviewed head. Merging requires the saved review gate to be <code>pass</code>, and any base merge resets it.</li>
+        <li>The fake GitHub merges for real in the bare remote (<code>git merge-tree --write-tree</code> plus <code>commit-tree</code>). <code>test_session_controls.py::test_completion_while_detached_returns_to_the_shell</code> flaked once in a full run under load and passed 3 times out of 3 alone. It is unrelated to this work.</li>
       </ol>
     </details>
   </section>

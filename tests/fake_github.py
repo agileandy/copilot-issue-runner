@@ -29,6 +29,10 @@ class _NotFound(Exception):
     pass
 
 
+class _HttpError(Exception):
+    """Any other error status, reported the way gh prints it."""
+
+
 BOT = "copilot-pull-request-reviewer[bot]"
 APPROVE = "🟢 Approval recommended"
 CHANGES = "🟡 Changes recommended"
@@ -85,6 +89,10 @@ class FakeGitHub:
         self.review_requests: list[tuple[int, str]] = []
         self.pr_comments: list[tuple[int, str]] = []
         self.external_push = None  # set to a SHA to make the PR head move outside the runner
+        self.require_up_to_date = False  # branch protection "require branches to be up to date"
+        self.merge_calls: list[dict] = []
+        self.refuse_merges = 0  # answer 405 to this many merge attempts
+        self.on_review_request = None  # called after each review request, e.g. to move main
 
     # --- subprocess.run stand-in ---
 
@@ -100,6 +108,8 @@ class FakeGitHub:
             result = self._route(method, path, body)
         except _NotFound:
             return subprocess.CompletedProcess(argv, 1, "", "gh: Not Found (HTTP 404)")
+        except _HttpError as e:
+            return subprocess.CompletedProcess(argv, 1, "", f"gh: {e}")
         out = "" if result is None else json.dumps(result)
         return subprocess.CompletedProcess(argv, 0, out, "")
 
@@ -136,6 +146,7 @@ class FakeGitHub:
             (r"/pulls/(\d+)", ("GET", self._pull)),
             (r"/pulls/(\d+)/reviews", ("GET", self._reviews)),
             (r"/pulls/(\d+)/requested_reviewers", ("POST", self._request_review)),
+            (r"/pulls/(\d+)/merge", ("PUT", self._merge)),
             (r"/commits/([0-9a-f]+)/check-runs", ("GET", self._check_runs)),
             (r"/commits/([0-9a-f]+)/status", ("GET", self._status)),
             (r"/issues/(\d+)/comments", ("POST", self._comment)),
@@ -252,8 +263,12 @@ class FakeGitHub:
         if number not in self.pulls:
             raise _NotFound
         pr = self.pulls[number]
+        if pr["merged"]:
+            return dict(pr)
         sha = self.remote_head(pr["head"]["ref"])
         pr["head"]["sha"] = sha
+        pr["mergeable_state"] = self._merge_state(pr["base"]["ref"], sha)
+        pr["mergeable"] = pr["mergeable_state"] != "dirty"
         if sha in self.heads or not self.external_push:
             seen = self._see(number, sha)
             seen["polls"] += 1 if count else 0
@@ -272,6 +287,8 @@ class FakeGitHub:
         if BOT in body["reviewers"]:
             seen["due"] = True
             self._settle(number, sha)
+        if self.on_review_request:
+            self.on_review_request()
         return {}
 
     def _check_runs(self, sha, **_):
@@ -317,3 +334,55 @@ class FakeGitHub:
             self.threads[variables["thread"]]["isResolved"] = True
             return {"data": {"resolveReviewThread": {"thread": {"id": variables["thread"]}}}}
         return {"errors": [{"message": "unsupported query"}]}
+
+    # --- merging ---
+
+    def _git(self, *args, check=True):
+        return subprocess.run(
+            ["git", "--git-dir", str(self.remote), *args],
+            capture_output=True,
+            text=True,
+            check=check,
+            env={
+                "GIT_AUTHOR_NAME": "gh",
+                "GIT_AUTHOR_EMAIL": "gh@x",
+                "GIT_COMMITTER_NAME": "gh",
+                "GIT_COMMITTER_EMAIL": "gh@x",
+                "PATH": "/usr/bin:/bin",
+            },
+        )
+
+    def _merge_state(self, base: str, head: str) -> str:
+        base_tip = self._tip(base)
+        if self._git("merge-base", "--is-ancestor", base_tip, head, check=False).returncode == 0:
+            return "clean"
+        trial = self._git("merge-tree", "--write-tree", base_tip, head, check=False)
+        if trial.returncode != 0:
+            return "dirty"
+        return "behind" if self.require_up_to_date else "clean"
+
+    def _tip(self, branch: str) -> str:
+        return self._git("rev-parse", f"refs/heads/{branch}").stdout.strip()
+
+    def _merge(self, number, body, **_):
+        number = int(number)
+        pr = self.pulls[number]
+        self.merge_calls.append(dict(body, number=number))
+        head = self._tip(pr["head"]["ref"])
+        if body.get("sha") != head:
+            raise _HttpError("Head branch was modified. Review and try the merge again. (HTTP 409)")
+        if self.refuse_merges:
+            self.refuse_merges -= 1
+            raise _HttpError("Pull Request is not mergeable (HTTP 405)")
+        base = pr["base"]["ref"]
+        state = self._merge_state(base, head)
+        if state != "clean":
+            raise _HttpError(f"Pull Request is not mergeable: {state} (HTTP 405)")
+        base_tip = self._tip(base)
+        tree = self._git("merge-tree", "--write-tree", base_tip, head).stdout.split()[0]
+        title = body.get("commit_title") or pr["title"]
+        parents = ["-p", base_tip] + (["-p", head] if body["merge_method"] == "merge" else [])
+        merged = self._git("commit-tree", tree, *parents, "-m", title).stdout.strip()
+        self._git("update-ref", f"refs/heads/{base}", merged, base_tip)
+        pr.update(merged=True, state="closed", merge_commit_sha=merged)
+        return {"merged": True, "sha": merged, "message": "Pull Request successfully merged"}

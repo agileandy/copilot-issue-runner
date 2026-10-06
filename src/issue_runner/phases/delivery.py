@@ -16,7 +16,7 @@ from ..copilot import CopilotError
 from ..events import emit
 from ..github_flow import GithubError, GitHubFlow
 from ..tickets import Delivery, Ticket, TicketStore
-from . import acceptance, devops, review
+from . import acceptance, devops, merge, review
 from .devops import DevopsError
 from .plan import PlanError, plan_extra
 
@@ -316,6 +316,99 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
     delivery.stage = "reviewing"
 
 
+def _merging(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Merge the reviewed head; bring the base in first if GitHub says it must."""
+    settings = cfg.deploy_settings
+    pre = cfg.preflight
+    flow = make_flow(cfg)
+    number = delivery.pr_number
+    if delivery.gates["review"] != "pass":
+        delivery.stage = "reviewing"
+        return
+    _sync_push(cfg, store, delivery)
+    pr = _settled_pull(cfg, flow, number)
+    head = (pr.get("head") or {}).get("sha")
+    if pr.get("merged"):
+        if head != delivery.head_sha:
+            raise GateFailed(f"PR #{number} was merged outside the runner at an unreviewed head")
+        _merged(cfg, delivery, pr.get("merge_commit_sha"))
+        return
+    if pr.get("state") != "open":
+        raise GateFailed(f"PR #{number} is {pr.get('state')}")
+    if head != delivery.head_sha:
+        raise GateFailed(f"PR #{number} head moved to {str(head)[:12]} outside the runner")
+
+    state = pr.get("mergeable_state")
+    if state in ("behind", "dirty"):
+        _update_branch(cfg, client, issue, store, delivery, flow, state)
+        return
+    title = f"{pr.get('title')} (#{number})" if pre.merge_method == "squash" else None
+    try:
+        flow.merge_pull(number, pre.merge_method, delivery.head_sha, title)
+    except GithubError as e:
+        if "HTTP 409" in str(e):
+            raise GateFailed(f"PR #{number} head changed before the merge") from e
+        if "HTTP 405" in str(e) and delivery.merge_attempts < settings.max_merge_attempts:
+            # not mergeable right now (the base just moved): look again shortly
+            delivery.merge_attempts += 1
+            log.info("PR #%s is not mergeable yet: %s", number, e)
+            _wait(cfg, settings.poll_seconds)
+            return
+        raise GateFailed(f"could not merge PR #{number}: {e}") from e
+    merged = flow.pull(number)
+    if not merged.get("merged"):
+        raise GateFailed(f"GitHub accepted the merge but PR #{number} is not merged")
+    _merged(cfg, delivery, merged.get("merge_commit_sha"))
+
+
+def _update_branch(cfg, client, issue, store, delivery: Delivery, flow, state: str) -> None:
+    settings = cfg.deploy_settings
+    if delivery.merge_attempts >= settings.max_merge_attempts:
+        raise GateFailed(
+            f"PR #{delivery.pr_number} is still {state} after {delivery.merge_attempts} "
+            f"update(s) from {cfg.preflight.default_branch}"
+        )
+    delivery.merge_attempts += 1
+    store.save()
+    try:
+        sha = merge.update_branch(client, cfg, issue, store, cfg.preflight.default_branch)
+    except (merge.MergeError, CopilotError, DevopsError) as e:
+        raise GateFailed(str(e)) from e
+    delivery.head_sha = sha
+    store.save()
+    try:
+        devops.push_branch(cfg.repo_dir, store.branch)
+        if not cfg.preflight.review_on_push:
+            flow.request_review(delivery.pr_number, _reviewer(cfg))
+    except (DevopsError, GithubError) as e:
+        raise GateFailed(f"could not publish the updated branch: {e}") from e
+    # a new head is new code: it has to pass review again before it may merge
+    delivery.gates["review"] = None
+    delivery.waiting_since = _now()
+    delivery.stage = "reviewing"
+
+
+def _merged(cfg, delivery: Delivery, merge_sha: str | None) -> None:
+    if not merge_sha:
+        raise GateFailed(f"PR #{delivery.pr_number} is merged but GitHub reports no merge commit")
+    delivery.merge_sha = merge_sha
+    _pass(cfg, delivery, "merge")
+    delivery.stage = "deploying"
+
+
+def _settled_pull(cfg, flow: GitHubFlow, number: int) -> dict:
+    """The PR once GitHub has computed whether it can merge (mergeable is null until then)."""
+    try:
+        for _ in range(10):
+            pr = flow.pull(number)
+            if pr.get("merged") or pr.get("mergeable") is not None:
+                return pr
+            _wait(cfg, min(cfg.deploy_settings.poll_seconds, 10))
+        return pr
+    except GithubError as e:
+        raise GateFailed(f"could not read PR #{number}: {e}") from e
+
+
 def _review_status(flow: GitHubFlow, cfg, delivery: Delivery) -> review.ReviewStatus:
     number = delivery.pr_number
     try:
@@ -416,3 +509,4 @@ _HANDLERS["dev_checks"] = _dev_checks
 _HANDLERS["accepted"] = _accepted
 _HANDLERS["reviewing"] = _reviewing
 _HANDLERS["revising"] = _revising
+_HANDLERS["merging"] = _merging
