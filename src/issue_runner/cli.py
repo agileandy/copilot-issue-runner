@@ -17,9 +17,12 @@ from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
 from .demo.seed import DemoCleanIncomplete, clean_demo_clone, is_seed, load_demo_issue
+from .github_flow import GitHubFlow
 from .github_io import GithubError, comment_issue, fetch_issue, issue_from_file
 from .orchestrator import run_issue
+from .phases import preflight
 from .phases.build import BuildError
+from .phases.delivery import GATE_EXIT
 from .phases.devops import DevopsError
 from .phases.plan import PLAN_PROMPT, PlanError
 from .phases.verify import VerifyError
@@ -74,6 +77,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "--no-pr",
         action="store_true",
         help="do not open a pull request when the run finishes clean",
+    )
+    p.add_argument(
+        "--deploy",
+        action="store_true",
+        help="take the issue through code review, merge and the Dev deployment; "
+        "exit 0 only when its Definition of Done is met",
     )
     p.add_argument(
         "--retry-blocked",
@@ -189,6 +198,22 @@ def main(argv=None) -> int:
         print("error: use --demo without an issue number or --issue-file", file=sys.stderr)
         return 2
 
+    if args.deploy:
+        conflicts = [
+            flag
+            for flag, value in (
+                ("--no-pr", args.no_pr),
+                ("--plan-only", args.plan_only),
+                ("--issue-file", args.issue_file),
+                ("--demo", args.demo),
+                ("--in-place", args.in_place),
+            )
+            if value
+        ]
+        if conflicts:
+            print(f"error: --deploy cannot be used with {', '.join(conflicts)}", file=sys.stderr)
+            return 2
+
     if args.comment_issue is not None and not args.agent:
         print("error: --comment-issue only applies with --agent", file=sys.stderr)
         return 2
@@ -223,6 +248,9 @@ def main(argv=None) -> int:
         cfg.github_tickets = False
     if args.no_pr:
         cfg.open_pr = False
+    if args.deploy:
+        cfg.deploy = True
+        cfg.open_pr = True
     if args.retry_blocked:
         cfg.retry_blocked = True
     if args.visual:
@@ -271,6 +299,24 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+    if args.deploy:
+        if not cfg.repo:
+            print(
+                "error: --deploy needs a GitHub repository (--repo or a github.com origin)",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            cfg.preflight = preflight.run(cfg, issue, GitHubFlow(cfg.repo))
+        except preflight.PreflightError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        for line in cfg.preflight.lines():
+            if args.dry_run:
+                print(line)
+            else:
+                logging.getLogger("issue_runner").info(line)
 
     client = CopilotClient(cfg)
     if args.dry_run:
@@ -341,9 +387,7 @@ def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> in
             report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
         except VisualUnavailable as e:
             cfg.events = None
-            logging.getLogger("issue_runner").warning(
-                "%s — falling back to the text visual", e
-            )
+            logging.getLogger("issue_runner").warning("%s — falling back to the text visual", e)
         else:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
@@ -407,7 +451,12 @@ def _exit_code(report) -> int:
         return 130
     if report.budget_exhausted:
         return 4
-    return 0 if report.blocked == 0 else 3
+    if report.blocked:
+        return 3
+    if getattr(report, "deploy", False) and not report.dod_met:
+        # 5 criteria, 6 review, 7 merge, 8 deploy: anything short of done is a fail
+        return GATE_EXIT.get(report.dod_failed_gate, 1)
+    return 0
 
 
 def _summary_lines(report, resume: str | None = None) -> list[str]:

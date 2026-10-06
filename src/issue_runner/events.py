@@ -6,7 +6,8 @@ nothing changes. A failing subscriber never breaks the pipeline.
 
 Event kinds and payloads:
     run_started         issue_ref, title
-    phase               name ("plan"|"branch"|"build"|"finished"), detail?
+    phase               name ("plan"|"branch"|"build"|"finished", or a --deploy
+                        delivery stage such as "reviewing"), detail?
     tickets_updated     tickets=[{id,title,status,rounds,blocked_reason}]
     ticket_started      ticket_id, title
     agent_call_started  role, ticket_id?, model?
@@ -15,12 +16,14 @@ Event kinds and payloads:
     verdict             ticket_id, verdict, reasons
     ticket_done         ticket_id, note
     ticket_blocked      ticket_id, reason
+    gate                name (a Definition of Done gate), result ("pass"|"fail"), reason?
     stop_requested     message
     run_finished      done, blocked, branch, worktree?, pr_url?, usage?, budget?,
                       budget_exhausted?, plan_only?, stopped?,
                       state_dir (where a saved summary may be written),
                       worktree_state={path,branch,head,dirty,uncommitted},
-                      artefacts={files,commits,pr_url}
+                      artefacts={files,commits,pr_url},
+                      deploy, dod_met, dod_failed_gate, gates={gate: "pass"|"fail"|None}
 """
 
 import logging

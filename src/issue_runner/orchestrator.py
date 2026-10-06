@@ -25,7 +25,7 @@ from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .journal import Journal
-from .phases import devops
+from .phases import delivery, devops
 from .phases.build import (
     BuildError,
     CoderFailure,
@@ -60,6 +60,9 @@ class RunReport:
     stopped: bool = False
     parent_in_progress: int | None = None
     details: list[str] = field(default_factory=list)
+    deploy: bool = False  # a --deploy run, judged by its Definition of Done
+    dod_met: bool = False
+    dod_failed_gate: str | None = None
 
 
 class RegressionFailure(BuildError):
@@ -366,7 +369,14 @@ def _run_issue(
             or devops.current_branch(cfg.repo_dir) != store.branch
         ):
             raise DevopsError("regression command changed the run branch; refusing publication")
-        _open_pull_request(cfg, issue, store, report)
+        if cfg.deploy:
+            delivery.run(cfg, client, issue, store, report)
+        else:
+            _open_pull_request(cfg, issue, store, report)
+    elif cfg.deploy:
+        report.deploy = True
+        report.dod_failed_gate = "tickets"
+        report.details.append("definition of done FAILED at tickets: not every ticket is done")
     _emit_finished(cfg, client, report, store)
     return report
 
@@ -460,6 +470,10 @@ def _emit_finished(
         usage=report.usage_summary,
         budget=report.budget_summary,
         budget_exhausted=report.budget_exhausted,
+        deploy=report.deploy,
+        dod_met=report.dod_met,
+        dod_failed_gate=report.dod_failed_gate,
+        gates=dict(store.delivery.gates) if store is not None and store.delivery else {},
         plan_only=report.plan_only,
         stopped=report.stopped,
         state_dir=str(store.state_dir) if store is not None else "",
