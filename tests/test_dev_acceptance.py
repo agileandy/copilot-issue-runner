@@ -184,7 +184,7 @@ def test_pre_pr_unmet_criteria_with_no_rounds_left_fail_with_exit_5(git_repo, cf
     )
     report = run_issue(deploy_cfg(cfg), client, ISSUE, state_dir=git_repo / ".state")
     assert report.dod_failed_gate == "criteria_tests" and _exit_code(report) == 5
-    assert "AC1 (cited test test_missing.py does not exist)" in report.details[-1]
+    assert any("AC1 (cited test test_missing.py does not exist)" in d for d in report.details)
     assert [c["role"] for c in client.calls].count("planner") == 1
     store = TicketStore(git_repo / ".state", issue_ref="17")
     store.load()

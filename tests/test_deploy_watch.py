@@ -19,7 +19,7 @@ def test_a_successful_deployment_of_the_merge_passes_the_gate(env, git_repo):  #
     fake, _, cfg = env
     _, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     d = store.delivery
-    assert d.gates["deploy"] == "pass" and d.stage == "verifying"
+    assert d.gates["deploy"] == "pass"
     assert d.deployed_sha == d.merge_sha
     assert d.deployment_id == fake.deployment_list[0]["id"]
     assert d.deploy_run_ids == [fake.runs[0]["id"]]

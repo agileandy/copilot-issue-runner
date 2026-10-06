@@ -10,6 +10,7 @@ re-running the same command.
 import logging
 import time
 
+from .. import criteria as criteria_mod
 from ..budget import BudgetExhausted
 from ..config import RunnerConfig
 from ..copilot import CopilotError
@@ -30,6 +31,10 @@ _sleep = time.sleep
 def make_flow(cfg: RunnerConfig) -> GitHubFlow:
     return GitHubFlow(cfg.preflight.repo)
 
+
+# a Dev check that fails right after deployment is retried: caches and CDNs lag
+DEV_CHECK_ATTEMPTS = 3
+DEV_CHECK_RETRY_SEC = 150
 
 # exit code per failed gate; tickets keeps the existing 1/3/4 codes
 GATE_EXIT = {"criteria_tests": 5, "review": 6, "merge": 7, "deploy": 8, "criteria_dev": 5}
@@ -115,8 +120,11 @@ def run(cfg: RunnerConfig, client, issue: dict, store: TicketStore, report) -> s
             report.dod_failed_gate = gate
             report.details.append(f"definition of done FAILED at {gate}: {e}")
             emit(cfg.events, "gate", name=gate, result="fail", reason=str(e))
+            _close_out(cfg, issue, store, delivery, report)
             return None
         store.save()
+    if not delivery.closed_out:
+        _close_out(cfg, issue, store, delivery, report)
     report.dod_met = True
     report.details.append("definition of done met: every gate passed")
     return None
@@ -535,6 +543,115 @@ def _fail_deploy(flow, delivery: Delivery, reason: str) -> None:
     raise GateFailed(reason)
 
 
+def _verifying(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """criteria_dev: every frozen Dev check now passes against the deployed Dev."""
+    failures = []
+    for c in delivery.criteria:
+        if c["where"] != "dev" or c.get("dev") == "pass":
+            continue
+        cfg.control.check()
+        try:
+            path = acceptance.frozen_check(c)
+        except acceptance.AcceptError as e:
+            c["dev"], c["reason"] = "fail", str(e)
+            failures.append(c)
+            store.save()
+            continue
+        for attempt in range(1, DEV_CHECK_ATTEMPTS + 1):
+            result = acceptance.run_check(cfg, path, c["id"])
+            if result.verdict == "pass" or attempt == DEV_CHECK_ATTEMPTS:
+                break
+            log.info("%s Dev check attempt %d: %s", c["id"], attempt, result.reason)
+            _wait(cfg, DEV_CHECK_RETRY_SEC)
+        c["dev"] = "pass" if result.verdict == "pass" else "fail"
+        c["reason"] = "passed in Dev" if c["dev"] == "pass" else result.reason or "no verdict"
+        c["evidence"] = [*c.get("evidence", []), f"Dev check {path.name}: {c['dev']}"]
+        store.save()
+        if c["dev"] != "pass":
+            failures.append(c)
+    if failures:
+        raise GateFailed(
+            "not met in Dev: " + "; ".join(f"{c['id']} ({c['reason']})" for c in failures)
+        )
+    _pass(cfg, delivery, "criteria_dev")
+    delivery.stage = "done"
+
+
+def _criterion_passed(c: dict, delivery: Delivery) -> bool:
+    """Tick a criterion only when it holds where the issue will see it: on main, or in Dev."""
+    if c["where"] == "dev":
+        return c.get("dev") == "pass"
+    return c.get("pre_merge") == "met" and delivery.gates["merge"] == "pass"
+
+
+def _close_out(cfg, issue, store: TicketStore, delivery: Delivery, report) -> None:
+    """Tick what passed, record the Definition of Done, and close the issue only if met."""
+    met = all(result == "pass" for result in delivery.gates.values())
+    number = issue["number"]
+    flow = make_flow(cfg)
+    try:
+        passed = {c["text"] for c in delivery.criteria if _criterion_passed(c, delivery)}
+        body = flow.issue(number).get("body") or ""
+        found = criteria_mod.parse(body)
+        ticked = criteria_mod.tick(body, found, {f.id for f in found if f.text in passed})
+        if ticked != body:
+            flow.update_issue_body(number, ticked)
+        flow.comment(number, dod_comment(cfg, store, delivery))
+        if met:
+            flow.close_issue(number)
+            delivery.closed_out = True
+    except GithubError as e:
+        log.warning("could not update issue #%s: %s", number, e)
+        report.details.append(f"issue #{number} was not updated: {e}")
+    store.save()
+
+
+def dod_comment(cfg, store: TicketStore, delivery: Delivery) -> str:
+    """The Definition of Done as the issue records it: every gate, its result, its evidence."""
+    met = all(result == "pass" for result in delivery.gates.values())
+    done = [t for t in store.tickets if t.status == "done"]
+    tests_met = [c["id"] for c in delivery.criteria if c["where"] == "tests"]
+    dev = [c["id"] for c in delivery.criteria if c["where"] == "dev"]
+    evidence = {
+        "tickets": f"{len(done)} ticket(s) committed on `{store.branch}`",
+        "criteria_tests": ", ".join(tests_met) or "none proven by tests",
+        "review": (
+            f"PR #{delivery.pr_number}, {delivery.review_round} fix round(s)"
+            if delivery.pr_number
+            else ""
+        ),
+        "merge": f"`{delivery.merge_sha[:12]}`" if delivery.merge_sha else "",
+        "deploy": (
+            f"deployment {delivery.deployment_id} of `{delivery.deployed_sha[:12]}` to "
+            f"{cfg.preflight.environment}"
+            if delivery.deployed_sha
+            else ""
+        ),
+        "criteria_dev": ", ".join(dev) or "none checked in Dev",
+    }
+    if met:
+        lines = ["## Definition of Done: met", ""]
+    else:
+        lines = [f"## Definition of Done: FAILED at {delivery.failed_gate}", ""]
+        if delivery.failed_reason:
+            lines += [f"> {delivery.failed_reason.splitlines()[0]}", ""]
+    lines += ["| Gate | Result | Evidence |", "|---|---|---|"]
+    for gate, result in delivery.gates.items():
+        shown = {"pass": "pass", "fail": "FAILED", None: "not reached"}[result]
+        lines.append(f"| {gate} | {shown} | {evidence[gate] if result else ''} |")
+    lines += ["", "### Acceptance criteria", ""]
+    for c in delivery.criteria:
+        box = "x" if _criterion_passed(c, delivery) else " "
+        how = (
+            "tests: " + (", ".join(c.get("evidence") or []) or "none")
+            if c["where"] == "tests"
+            else (f"Dev check: {c.get('dev') or 'not run'}")
+        )
+        lines.append(f"- [{box}] {c['id']} {c['text']} ({how})")
+    lines += ["", "Posted by issue-runner `--deploy`."]
+    return "\n".join(lines)
+
+
 def _settled_pull(cfg, flow: GitHubFlow, number: int) -> dict:
     """The PR once GitHub has computed whether it can merge (mergeable is null until then)."""
     try:
@@ -638,15 +755,13 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     return "\n".join(lines)
 
 
-def _not_implemented(cfg, client, issue, store, delivery) -> None:
-    raise GateFailed(f"delivery stage {delivery.stage!r} is not implemented yet")
-
-
-_HANDLERS = dict.fromkeys(STAGE_GATE, _not_implemented)
-_HANDLERS["built"] = _built
-_HANDLERS["dev_checks"] = _dev_checks
-_HANDLERS["accepted"] = _accepted
-_HANDLERS["reviewing"] = _reviewing
-_HANDLERS["revising"] = _revising
-_HANDLERS["merging"] = _merging
-_HANDLERS["deploying"] = _deploying
+_HANDLERS = {
+    "built": _built,
+    "dev_checks": _dev_checks,
+    "accepted": _accepted,
+    "reviewing": _reviewing,
+    "revising": _revising,
+    "merging": _merging,
+    "deploying": _deploying,
+    "verifying": _verifying,
+}

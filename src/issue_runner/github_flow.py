@@ -155,6 +155,21 @@ class GitHubFlow:
         """Newest first, as GitHub returns them."""
         return self.api(f"repos/{{repo}}/deployments/{deployment_id}/statuses?per_page=10") or []
 
+    # --- the issue ---
+
+    def issue(self, number: int) -> dict:
+        return self.api(f"repos/{{repo}}/issues/{number}")
+
+    def update_issue_body(self, number: int, body: str) -> None:
+        self.api(f"repos/{{repo}}/issues/{number}", "PATCH", {"body": body})
+
+    def close_issue(self, number: int) -> None:
+        self.api(
+            f"repos/{{repo}}/issues/{number}",
+            "PATCH",
+            {"state": "closed", "state_reason": "completed"},
+        )
+
     def comment(self, number: int, body: str) -> None:
         self.api(f"repos/{{repo}}/issues/{number}/comments", "POST", {"body": body})
 

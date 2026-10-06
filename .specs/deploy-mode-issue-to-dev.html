@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00, 2026-10-06T16:40:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -666,25 +666,25 @@ sequenceDiagram
 
     <!-- Phase 7 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 7: Dev acceptance and close-out</h3>
+      <h3><code class="status">[x]</code> Phase 7: Dev acceptance and close-out</h3>
       <p>Run the frozen Dev checks against the deployed environment, then record the verdict on the issue.</p>
 
       <h4>1. Dev checks (green)</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Check each frozen Dev check's hash, then run it with <code>dev_check_cmd</code>. Every one must print <code>ACCEPT-PASS</code>, retrying up to 3 times over 5 minutes because CDNs and caches lag. Save the output and any screenshots as evidence on the criterion.</li>
-        <li><code class="status">[]</code> Any failure fails the <code>criteria_dev</code> gate with exit 5. No automatic revert happens. The summary names the criterion, the check and its output.</li>
+        <li><code class="status">[x]</code> Check each frozen Dev check's hash, then run it with <code>dev_check_cmd</code>. Every one must print <code>ACCEPT-PASS</code>, retrying up to 3 times over 5 minutes because CDNs and caches lag. Save the output and any screenshots as evidence on the criterion.</li>
+        <li><code class="status">[x]</code> Any failure fails the <code>criteria_dev</code> gate with exit 5. No automatic revert happens. The summary names the criterion, the check and its output.</li>
       </ul>
 
       <h4>2. Close-out</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Tick each passed criterion in the issue body by rewriting only its <code>- [ ]</code> line to <code>- [x]</code>, reading the body fresh first to avoid a lost update.</li>
-        <li><code class="status">[]</code> Post the DoD comment: a table of all six gates with pass or fail, PR, merge SHA, deployment and run links, and evidence per criterion. In <code>--agent</code> mode this replaces the printed summary.</li>
-        <li><code class="status">[]</code> Close the issue as <code>completed</code> only if all six gates passed. Otherwise leave it open. Sub-issues close as today.</li>
+        <li><code class="status">[x]</code> Tick each passed criterion in the issue body by rewriting only its <code>- [ ]</code> line to <code>- [x]</code>, reading the body fresh first to avoid a lost update.</li>
+        <li><code class="status">[x]</code> Post the DoD comment: a table of all six gates with pass or fail, PR, merge SHA, deployment and run links, and evidence per criterion. In <code>--agent</code> mode this replaces the printed summary.</li>
+        <li><code class="status">[x]</code> Close the issue as <code>completed</code> only if all six gates passed. Otherwise leave it open. Sub-issues close as today.</li>
       </ul>
 
       <h4>3. Testing Strategy</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_dev_acceptance.py tests/test_criteria.py -q</code>: a green run ticks exactly the passed lines and leaves other text alone. A tampered check fails. A flaky check passes on retry. Any failure leaves the issue open with exit 5.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py tests/test_criteria.py -q</code>: a green run ticks exactly the passed lines and leaves other text alone. A tampered check fails. A flaky check passes on retry. Any failure leaves the issue open with exit 5.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -867,6 +867,16 @@ flowchart LR
         <li>Ancestry is checked with git in the run worktree (<code>devops.contains</code>), fetching once when a SHA is unknown. The paths-filter explanation uses the files the merge changed against its first parent (<code>devops.files_in_commit</code>).</li>
         <li>A failed deploy also comments on the PR. Retrying a failed stage resets its wait start, so a re-run gets the full grace and timeout again. That applies to the review wait too.</li>
         <li>Earlier stage tests now assert only their own gate, so they stay valid as later stages are built.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T16:40:00+08:00: Phase 7 built, with five differences from the plan</summary>
+      <ol>
+        <li>The DoD comment is posted on every finished outcome, failures at any gate included, not only after Dev checks. The issue therefore always records which gate stopped the run. A budget pause or stop request posts nothing, because those runs are resumable rather than finished.</li>
+        <li>A tests criterion is ticked only once the merge gate has passed, and a Dev criterion only once its check passed in Dev. The issue never claims code that is not on <code>main</code>. Ticking re-reads the issue body and matches criteria by text, so lines edited or inserted since planning are never ticked by mistake.</li>
+        <li>Closing the issue is bookkeeping, not a gate. A GitHub error there is reported in the run details, and <code>closed_out</code> lets a re-run finish it.</li>
+        <li>Dev checks are tried 3 times, 150 s apart (<code>DEV_CHECK_ATTEMPTS</code>, <code>DEV_CHECK_RETRY_SEC</code>), before the criterion fails.</li>
+        <li>Tests: <code>tests/test_closeout.py</code> runs the whole Definition of Done end to end to exit 0 against the fake GitHub. An autouse fixture in <code>tests/conftest.py</code> makes every delivery talk to a fake GitHub, so no test can reach the real API.</li>
       </ol>
     </details>
   </section>

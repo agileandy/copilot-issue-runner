@@ -110,6 +110,8 @@ class FakeGitHub:
         self.runs: list[dict] = []
         self.deployment_list: list[dict] = []
         self.dispatches: list[dict] = []
+        self.on_deployed = None  # called when a deployment succeeds, e.g. to make "Dev" change
+        self.issues: dict[int, dict] = {}  # number -> {"body", "state", "state_reason"}
 
     # --- subprocess.run stand-in ---
 
@@ -145,7 +147,7 @@ class FakeGitHub:
             raise _NotFound
         rest = bare[len(prefix) :]
         for pattern, handler in self._handlers():
-            match = re.fullmatch(pattern.removesuffix("#post"), rest)
+            match = re.fullmatch(pattern.split("#")[0], rest)
             if match and handler[0] == method:
                 return handler[1](*match.groups(), params=params, body=body)
         raise _NotFound
@@ -167,6 +169,8 @@ class FakeGitHub:
             (r"/commits/([0-9a-f]+)/check-runs", ("GET", self._check_runs)),
             (r"/commits/([0-9a-f]+)/status", ("GET", self._status)),
             (r"/issues/(\d+)/comments", ("POST", self._comment)),
+            (r"/issues/(\d+)", ("GET", self._issue)),
+            (r"/issues/(\d+)#patch", ("PATCH", self._update_issue)),
             (r"/actions/workflows/([^/]+)/runs", ("GET", self._runs)),
             (r"/actions/workflows/([^/]+)/dispatches", ("POST", self._dispatch)),
             (r"/actions/runs/(\d+)/jobs", ("GET", self._jobs)),
@@ -462,6 +466,8 @@ class FakeGitHub:
                     ],
                 },
             )
+            if spec.deployment_state == "success" and self.on_deployed:
+                self.on_deployed()
         if spec.run_conclusion == "cancelled" and spec.supersede is not None:
             tip = self._tip("main")
             tree = self._git("rev-parse", f"{tip}^{{tree}}").stdout.strip()
@@ -496,3 +502,19 @@ class FakeGitHub:
     def _deployment_statuses(self, deployment_id, **_):
         d = next(d for d in self.deployment_list if d["id"] == int(deployment_id))
         return list(d["_statuses"])
+
+    # --- the issue ---
+
+    def _issue(self, number, **_):
+        number = int(number)
+        if number not in self.issues:
+            raise _NotFound
+        return {"number": number, **self.issues[number]}
+
+    def _update_issue(self, number, body, **_):
+        issue = self.issues[int(number)]
+        issue.update(body)
+        return {"number": int(number), **issue}
+
+    def issue_comments(self, number: int) -> list[str]:
+        return [body for n, body in self.pr_comments if n == number]

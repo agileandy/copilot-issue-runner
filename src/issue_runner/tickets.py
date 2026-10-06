@@ -58,6 +58,7 @@ class Delivery:
     dispatched: bool = False
     deployed_sha: str | None = None
     deployment_id: int | None = None
+    closed_out: bool = False  # the issue is ticked, commented and closed
 
     def __post_init__(self) -> None:
         if self.stage not in DELIVERY_STAGES:
