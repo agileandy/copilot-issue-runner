@@ -742,6 +742,48 @@ def test_agent_mode_posts_an_issue_file_run_to_the_comment_issue(tmp_path, monke
     assert "branch: issue-r1" in posted[0][2]
 
 
+def test_agent_mode_finds_the_github_repo_of_an_issue_file_run_from_origin(
+    tmp_path, monkeypatch, capsys
+):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/o/n.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    issue_file = tmp_path / "review.md"
+    issue_file.write_text("# r1\n\nb\n")
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: RunReport(done=1))
+
+    rc = cli.main(
+        ["--issue-file", str(issue_file), "--dir", str(repo), "--no-github-tickets"]
+        + ["--agent", "--comment-issue", "9"]
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert [(r, n) for r, n, _ in posted] == [("o/n", 9)]
+
+
+def test_agent_mode_without_an_origin_is_a_clean_error(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    repo, _ = _agent_repo(tmp_path, monkeypatch)
+    issue_file = tmp_path / "review.md"
+    issue_file.write_text("# r1\n\nb\n")
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
+
+    rc = cli.main(
+        ["--issue-file", str(issue_file), "--dir", str(repo), "--no-github-tickets"]
+        + ["--agent", "--comment-issue", "9"]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "cannot comment" in err and "Traceback" not in err
+
+
 def test_agent_mode_turns_off_a_configured_visual(tmp_path, monkeypatch):
     from issue_runner import cli
     from issue_runner.orchestrator import RunReport

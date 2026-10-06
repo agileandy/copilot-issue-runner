@@ -306,9 +306,15 @@ def _summary_poster(cfg, repo_dir: Path, issue: dict, comment_on: int | None = N
         return lambda body: comment_issue(cfg.repo, number, body)
     import os
 
-    info = resolve(repo_dir)
+    try:
+        info = resolve(repo_dir)
+    except TrackerError:
+        return None
+    if info.kind == "github":
+        # an --issue-file run never sets cfg.repo, but its origin still names it
+        return lambda body: comment_issue(info.owner_repo, number, body)
     api_base = info.api_base or os.environ.get("GITEA_URL")
-    if info.kind != "gitea" or not api_base:
+    if not api_base:
         return None
     tracker = GiteaTickets(api_base, info.owner_repo)
     return lambda body: tracker.comment_issue(number, body)
