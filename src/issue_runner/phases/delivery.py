@@ -87,6 +87,7 @@ def run(cfg: RunnerConfig, client, issue: dict, store: TicketStore, report) -> s
         log.info("retrying %s after: %s", delivery.stage, delivery.failed_reason)
         delivery.gates[delivery.failed_gate] = None
         delivery.failed_gate = delivery.failed_reason = None
+        delivery.waiting_since = None  # a retried wait gets its full time again
     store.save()
     report.deploy = True
 
@@ -396,6 +397,144 @@ def _merged(cfg, delivery: Delivery, merge_sha: str | None) -> None:
     delivery.stage = "deploying"
 
 
+def _deploying(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Follow the deployment the merge triggered until Dev reports it live."""
+    settings = cfg.deploy_settings
+    pre = cfg.preflight
+    flow = make_flow(cfg)
+    workflow = pre.workflow_path.rsplit("/", 1)[-1]
+    if delivery.waiting_since is None:
+        delivery.waiting_since = _now()
+        store.save()
+    try:
+        devops.fetch(cfg.repo_dir)
+    except DevopsError as e:
+        raise GateFailed(f"could not fetch {pre.default_branch}: {e}") from e
+    while True:
+        cfg.control.check()
+        waited = _now() - delivery.waiting_since
+        try:
+            deployment, state, url = _deployment_for(cfg, flow, delivery)
+            runs = _runs_for(cfg, flow, delivery, workflow)
+        except GithubError as e:
+            log.warning("could not read the deployment of %s: %s", delivery.merge_sha[:12], e)
+            deployment, runs = None, None
+        if deployment is not None and state == "success":
+            delivery.deployed_sha = deployment["sha"]
+            delivery.deployment_id = deployment["id"]
+            _pass(cfg, delivery, "deploy")
+            delivery.waiting_since = None
+            delivery.stage = "verifying"
+            return
+        if deployment is not None and state in ("failure", "error"):
+            _fail_deploy(
+                flow,
+                delivery,
+                f"deployment {deployment['id']} to {pre.environment} "
+                f"reported {state}: {url or 'no log'}",
+            )
+        if runs is not None:
+            delivery.deploy_run_ids = sorted({*delivery.deploy_run_ids, *(r["id"] for r in runs)})
+            newest = runs[0] if runs else None
+            # a cancelled run was superseded by a newer push: keep waiting for that one
+            failed = (
+                newest
+                and newest.get("status") == "completed"
+                and newest.get("conclusion") not in ("success", "cancelled", "skipped")
+            )
+            if failed:
+                _fail_deploy(flow, delivery, _failed_run(flow, newest))
+            if not runs and waited >= settings.deploy_start_grace_min * 60:
+                _no_run(cfg, flow, delivery, workflow)
+        if waited >= settings.deploy_timeout_min * 60:
+            _fail_deploy(
+                flow,
+                delivery,
+                f"no successful deployment of {delivery.merge_sha[:12]} to {pre.environment} "
+                f"within {settings.deploy_timeout_min} min (runs: "
+                f"{', '.join(map(str, delivery.deploy_run_ids)) or 'none'})",
+            )
+        store.save()
+        _wait(cfg, settings.poll_seconds)
+
+
+def _contains_merge(cfg, delivery: Delivery, sha: str) -> bool:
+    found = devops.contains(cfg.repo_dir, delivery.merge_sha, sha)
+    if found is None:
+        try:
+            devops.fetch(cfg.repo_dir)
+        except DevopsError:
+            return False
+        found = devops.contains(cfg.repo_dir, delivery.merge_sha, sha)
+    return bool(found)
+
+
+def _deployment_for(cfg, flow, delivery: Delivery):
+    """The newest deployment to the environment that contains the merge, and its state."""
+    for deployment in flow.deployments(cfg.preflight.environment):
+        if not _contains_merge(cfg, delivery, deployment.get("sha", "")):
+            continue
+        statuses = flow.deployment_statuses(deployment["id"])
+        latest = statuses[0] if statuses else {}
+        return deployment, latest.get("state"), latest.get("log_url") or latest.get("target_url")
+    return None, None, None
+
+
+def _runs_for(cfg, flow, delivery: Delivery, workflow: str) -> list[dict]:
+    """Runs of the deploy workflow on the base branch that contain the merge, newest first."""
+    runs = flow.workflow_runs(workflow, cfg.preflight.default_branch)
+    return [r for r in runs if _contains_merge(cfg, delivery, r.get("head_sha", ""))]
+
+
+def _no_run(cfg, flow, delivery: Delivery, workflow: str) -> None:
+    pre = cfg.preflight
+    files = devops.files_in_commit(cfg.repo_dir, delivery.merge_sha)
+    why = (
+        ""
+        if pre.trigger.fires_for(files)
+        else f"; the merge changed none of the workflow's paths ({', '.join(files[:5])})"
+    )
+    if cfg.deploy_settings.dispatch_if_not_triggered and not delivery.dispatched:
+        try:
+            flow.dispatch(workflow, pre.default_branch)
+        except GithubError as e:
+            _fail_deploy(flow, delivery, f"could not dispatch {workflow}: {e}")
+        delivery.dispatched = True
+        delivery.waiting_since = _now()
+        log.info("dispatched %s on %s%s", workflow, pre.default_branch, why)
+        return
+    _fail_deploy(
+        flow,
+        delivery,
+        f"the merge did not start {workflow} within "
+        f"{cfg.deploy_settings.deploy_start_grace_min} min{why}",
+    )
+
+
+def _failed_run(flow, run: dict) -> str:
+    try:
+        jobs = flow.run_jobs(run["id"])
+    except GithubError:
+        jobs = []
+    failed = [j for j in jobs if j.get("conclusion") not in ("success", "skipped", None)]
+    detail = ""
+    if failed:
+        try:
+            detail = "\n" + flow.job_log(failed[0]["id"])[-1500:]
+        except GithubError:
+            detail = ""
+    names = ", ".join(j["name"] for j in failed) or "no job detail"
+    return (
+        f"deploy run {run['id']} {run.get('conclusion')} ({names}): {run.get('html_url', '')}"
+        + detail
+    )
+
+
+def _fail_deploy(flow, delivery: Delivery, reason: str) -> None:
+    _comment(flow, delivery, f"issue-runner: the Dev deployment failed. {reason.splitlines()[0]}")
+    raise GateFailed(reason)
+
+
 def _settled_pull(cfg, flow: GitHubFlow, number: int) -> dict:
     """The PR once GitHub has computed whether it can merge (mergeable is null until then)."""
     try:
@@ -510,3 +649,4 @@ _HANDLERS["accepted"] = _accepted
 _HANDLERS["reviewing"] = _reviewing
 _HANDLERS["revising"] = _revising
 _HANDLERS["merging"] = _merging
+_HANDLERS["deploying"] = _deploying

@@ -235,9 +235,8 @@ def log_subjects(repo):
 
 def test_a_clean_first_review_passes_and_opens_a_proper_pr(env, git_repo):  # noqa: F811
     fake, _, cfg = env
-    report, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
+    _, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     assert store.delivery.gates["review"] == "pass"
-    assert report.dod_failed_gate == "deploy" and _exit_code(report) == 8  # deploy comes next
     pr = fake.pulls[store.delivery.pr_number]
     assert pr["title"] == "feat: Add subtract" and pr["draft"] is False
     assert pr["body"].startswith("Refs #17") and "Closes" not in pr["body"]
@@ -351,11 +350,12 @@ def test_no_review_within_the_timeout_fails_the_gate(env, git_repo):  # noqa: F8
 
 
 def test_a_slow_review_is_waited_for(env, git_repo):  # noqa: F811
-    fake, clock, cfg = env
+    fake, _, cfg = env
     fake.scenarios = [Head(polls_until_done=4)]
     _, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     assert store.delivery.gates["review"] == "pass"
-    assert clock[0] - 1000.0 == 3 * cfg.deploy_settings.poll_seconds
+    [seen] = fake.heads.values()
+    assert seen["polls"] >= 4  # the review was only there on the fourth look
 
 
 def test_a_head_pushed_by_someone_else_stops_the_run(env, git_repo):  # noqa: F811

@@ -397,6 +397,26 @@ def abort_merge(repo_dir: Path) -> None:
         _git(repo_dir, "merge", "--abort")
 
 
+def contains(repo_dir: Path, commit: str, tip: str) -> bool | None:
+    """Whether `tip` contains `commit`; None when either is not known locally."""
+    if commit == tip:
+        return True
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, tip],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {0: True, 1: False}.get(result.returncode)
+
+
+def files_in_commit(repo_dir: Path, commit: str) -> list[str]:
+    """Paths a commit changed against its first parent (what a push of it delivers)."""
+    out = _git(repo_dir, "diff", "--name-only", "--no-renames", "-z", f"{commit}^1", commit).stdout
+    return sorted(p for p in out.split("\0") if p)
+
+
 def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", ancestor, descendant],

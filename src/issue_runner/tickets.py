@@ -55,6 +55,7 @@ class Delivery:
     merge_attempts: int = 0
     merge_sha: str | None = None
     deploy_run_ids: list[int] = field(default_factory=list)
+    dispatched: bool = False
     deployed_sha: str | None = None
     deployment_id: int | None = None
 

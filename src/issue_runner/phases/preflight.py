@@ -42,6 +42,14 @@ class PushTrigger:
             return not any(_glob(branch, p) for p in self.branches_ignore)
         return True
 
+    def fires_for(self, files: list[str]) -> bool:
+        """Whether a push changing `files` passes the workflow's paths filters."""
+        if self.paths is not None:
+            return any(_glob(f, p) for f in files for p in self.paths)
+        if self.paths_ignore is not None:
+            return any(not any(_glob(f, p) for p in self.paths_ignore) for f in files)
+        return True
+
 
 @dataclass
 class Preflight:

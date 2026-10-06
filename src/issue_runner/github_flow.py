@@ -132,6 +132,29 @@ class GitHubFlow:
             body["commit_title"] = title
         return self.api(f"repos/{{repo}}/pulls/{number}/merge", "PUT", body)
 
+    # --- deployment ---
+
+    def workflow_runs(self, workflow: str, branch: str) -> list[dict]:
+        data = self.api(
+            f"repos/{{repo}}/actions/workflows/{workflow}/runs?branch={branch}&per_page=30"
+        )
+        return (data or {}).get("workflow_runs", [])
+
+    def run_jobs(self, run_id: int) -> list[dict]:
+        data = self.api(f"repos/{{repo}}/actions/runs/{run_id}/jobs?per_page=100")
+        return (data or {}).get("jobs", [])
+
+    def dispatch(self, workflow: str, ref: str) -> None:
+        self.api(f"repos/{{repo}}/actions/workflows/{workflow}/dispatches", "POST", {"ref": ref})
+
+    def deployments(self, environment: str) -> list[dict]:
+        """Newest first, as GitHub returns them."""
+        return self.api(f"repos/{{repo}}/deployments?environment={environment}&per_page=30") or []
+
+    def deployment_statuses(self, deployment_id: int) -> list[dict]:
+        """Newest first, as GitHub returns them."""
+        return self.api(f"repos/{{repo}}/deployments/{deployment_id}/statuses?per_page=10") or []
+
     def comment(self, number: int, body: str) -> None:
         self.api(f"repos/{{repo}}/issues/{number}/comments", "POST", {"body": body})
 

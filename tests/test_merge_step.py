@@ -35,10 +35,9 @@ def remote_subject(fake, ref="main"):
 
 def test_a_clean_pr_squash_merges_pinned_to_the_reviewed_head(env, git_repo):  # noqa: F811
     fake, _, cfg = env
-    report, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
+    _, store, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     d = store.delivery
-    assert d.gates["merge"] == "pass" and d.stage == "deploying"
-    assert report.dod_failed_gate == "deploy" and _exit_code(report) == 8
+    assert d.gates["merge"] == "pass"
     [call] = fake.merge_calls
     assert call == {
         "number": d.pr_number,

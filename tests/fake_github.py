@@ -50,6 +50,18 @@ class Head:
     polls_until_done: int = 0  # pull() calls before checks finish and the review lands
 
 
+@dataclass
+class Deploy:
+    """What the deploy workflow does when a push to the base (or a dispatch) starts it."""
+
+    run_conclusion: str = "success"
+    deployment_state: str | None = "success"  # None: the run records no deployment
+    polls: int = 1  # reads of the run list before the run completes
+    failed_job: str = "Deploy to Development / Deploy Application"
+    supersede: "Deploy | None" = None  # when cancelled, a newer main commit gets this deploy
+    triggered: bool = True  # False: the push does not start the workflow (paths filter)
+
+
 class FakeGitHub:
     def __init__(self, repo: str = "o/n"):
         self.repo = repo
@@ -93,6 +105,11 @@ class FakeGitHub:
         self.merge_calls: list[dict] = []
         self.refuse_merges = 0  # answer 405 to this many merge attempts
         self.on_review_request = None  # called after each review request, e.g. to move main
+        # deployment
+        self.deploys: list[Deploy] = []  # consumed, in order, by each push to main or dispatch
+        self.runs: list[dict] = []
+        self.deployment_list: list[dict] = []
+        self.dispatches: list[dict] = []
 
     # --- subprocess.run stand-in ---
 
@@ -110,7 +127,7 @@ class FakeGitHub:
             return subprocess.CompletedProcess(argv, 1, "", "gh: Not Found (HTTP 404)")
         except _HttpError as e:
             return subprocess.CompletedProcess(argv, 1, "", f"gh: {e}")
-        out = "" if result is None else json.dumps(result)
+        out = "" if result is None else result if isinstance(result, str) else json.dumps(result)
         return subprocess.CompletedProcess(argv, 0, out, "")
 
     def paths(self, method: str = "GET") -> list[str]:
@@ -150,6 +167,12 @@ class FakeGitHub:
             (r"/commits/([0-9a-f]+)/check-runs", ("GET", self._check_runs)),
             (r"/commits/([0-9a-f]+)/status", ("GET", self._status)),
             (r"/issues/(\d+)/comments", ("POST", self._comment)),
+            (r"/actions/workflows/([^/]+)/runs", ("GET", self._runs)),
+            (r"/actions/workflows/([^/]+)/dispatches", ("POST", self._dispatch)),
+            (r"/actions/runs/(\d+)/jobs", ("GET", self._jobs)),
+            (r"/actions/jobs/(\d+)/logs", ("GET", self._job_log)),
+            (r"/deployments", ("GET", self._deployments)),
+            (r"/deployments/(\d+)/statuses", ("GET", self._deployment_statuses)),
         ]
 
     def _protection(self, branch, **_):
@@ -385,4 +408,91 @@ class FakeGitHub:
         merged = self._git("commit-tree", tree, *parents, "-m", title).stdout.strip()
         self._git("update-ref", f"refs/heads/{base}", merged, base_tip)
         pr.update(merged=True, state="closed", merge_commit_sha=merged)
+        self._start_deploy(merged, "push")
         return {"merged": True, "sha": merged, "message": "Pull Request successfully merged"}
+
+    # --- deployment ---
+
+    def _start_deploy(self, sha: str, event: str) -> None:
+        spec = self.deploys.pop(0) if self.deploys else Deploy()
+        if event == "push" and not spec.triggered:
+            return
+        run_id = 9000 + len(self.runs) + 1
+        self.runs.insert(
+            0,
+            {
+                "id": run_id,
+                "head_sha": sha,
+                "event": event,
+                "status": "queued",
+                "conclusion": None,
+                "html_url": f"https://github.com/{self.repo}/actions/runs/{run_id}",
+                "_spec": spec,
+                "_reads": 0,
+            },
+        )
+
+    def _runs(self, workflow, **_):
+        for run in list(self.runs):
+            if run["status"] == "completed":
+                continue
+            run["_reads"] += 1
+            if run["_reads"] >= run["_spec"].polls:
+                self._finish_run(run)
+        return {
+            "workflow_runs": [
+                {k: v for k, v in r.items() if not k.startswith("_")} for r in self.runs
+            ]
+        }
+
+    def _finish_run(self, run: dict) -> None:
+        spec = run["_spec"]
+        run.update(status="completed", conclusion=spec.run_conclusion)
+        if spec.run_conclusion == "success" and spec.deployment_state:
+            deployment_id = 7000 + len(self.deployment_list) + 1
+            self.deployment_list.insert(
+                0,
+                {
+                    "id": deployment_id,
+                    "sha": run["head_sha"],
+                    "environment": "development",
+                    "_statuses": [
+                        {"state": spec.deployment_state, "log_url": run["html_url"]},
+                        {"state": "in_progress", "log_url": run["html_url"]},
+                    ],
+                },
+            )
+        if spec.run_conclusion == "cancelled" and spec.supersede is not None:
+            tip = self._tip("main")
+            tree = self._git("rev-parse", f"{tip}^{{tree}}").stdout.strip()
+            newer = self._git("commit-tree", tree, "-p", tip, "-m", "feat: teammate").stdout.strip()
+            self._git("update-ref", "refs/heads/main", newer, tip)
+            self.deploys.insert(0, spec.supersede)
+            self._start_deploy(newer, "push")
+
+    def _dispatch(self, workflow, body, **_):
+        self.dispatches.append({"workflow": workflow, **body})
+        self._start_deploy(self._tip(body["ref"]), "workflow_dispatch")
+
+    def _jobs(self, run_id, **_):
+        run = next(r for r in self.runs if r["id"] == int(run_id))
+        spec = run["_spec"]
+        jobs = [{"id": 1, "name": "CI / CI", "conclusion": "success"}]
+        if run["conclusion"] == "failure":
+            jobs.append({"id": 2, "name": spec.failed_job, "conclusion": "failure"})
+        return {"jobs": jobs}
+
+    def _job_log(self, job_id, **_):
+        return "step 1 ok\nError: the stack update failed\n"
+
+    def _deployments(self, params, **_):
+        env = params.get("environment")
+        return [
+            {k: v for k, v in d.items() if not k.startswith("_")}
+            for d in self.deployment_list
+            if d["environment"] == env
+        ]
+
+    def _deployment_statuses(self, deployment_id, **_):
+        d = next(d for d in self.deployment_list if d["id"] == int(deployment_id))
+        return list(d["_statuses"])

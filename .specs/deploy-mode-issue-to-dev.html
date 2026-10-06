@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -605,7 +605,7 @@ flowchart LR
 
     <!-- Phase 6 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 6: Deploy watch</h3>
+      <h3><code class="status">[x]</code> Phase 6: Deploy watch</h3>
       <p>Follow the deployment the merge triggers until a GitHub deployment to the configured environment succeeds for a SHA that contains <code>merge_sha</code>.</p>
 
       <figure class="diagram">
@@ -633,9 +633,9 @@ sequenceDiagram
 
       <h4>1. Find and follow the run</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>GET /actions/workflows/{workflow}/runs?event=push&amp;branch=&lt;base&gt;&amp;head_sha=&lt;merge_sha&gt;</code>, polled for <code>deploy_start_grace_min</code>.</li>
-        <li><code class="status">[]</code> No run found: compare the merged files with the <code>on.push.paths</code> filter. If nothing matched, the deploy was never going to start. With <code>dispatch_if_not_triggered</code>, dispatch the workflow on the base branch and follow that run. Otherwise fail the <code>deploy</code> gate with exit 8 and the reason "merge did not trigger a deployment".</li>
-        <li><code class="status">[]</code> Follow the run until it completes, up to <code>deploy_timeout_min</code>. On <code>cancelled</code>, look for newer runs of the same workflow on the base branch whose <code>head_sha</code> contains <code>merge_sha</code> (<code>devops.is_ancestor</code> after a fetch) and follow the newest. On <code>failure</code>, fail with the failed job names and log tail.</li>
+        <li><code class="status">[x]</code> <code>GET /actions/workflows/{workflow}/runs?event=push&amp;branch=&lt;base&gt;&amp;head_sha=&lt;merge_sha&gt;</code>, polled for <code>deploy_start_grace_min</code>.</li>
+        <li><code class="status">[x]</code> No run found: compare the merged files with the <code>on.push.paths</code> filter. If nothing matched, the deploy was never going to start. With <code>dispatch_if_not_triggered</code>, dispatch the workflow on the base branch and follow that run. Otherwise fail the <code>deploy</code> gate with exit 8 and the reason "merge did not trigger a deployment".</li>
+        <li><code class="status">[x]</code> Follow the run until it completes, up to <code>deploy_timeout_min</code>. On <code>cancelled</code>, look for newer runs of the same workflow on the base branch whose <code>head_sha</code> contains <code>merge_sha</code> (<code>devops.is_ancestor</code> after a fetch) and follow the newest. On <code>failure</code>, fail with the failed job names and log tail.</li>
       </ul>
 
       <h4>2. Deployment success rule</h4>
@@ -650,13 +650,13 @@ sequenceDiagram
             return None                  # caller fails the gate
     return None                          # keep polling until timeout</code></pre>
       <ul class="checklist">
-        <li><code class="status">[]</code> Save <code>deploy_run_ids</code>, <code>deployed_sha</code> and <code>deployment_id</code>. Resume continues polling from saved state and never dispatches twice.</li>
+        <li><code class="status">[x]</code> Save <code>deploy_run_ids</code>, <code>deployed_sha</code> and <code>deployment_id</code>. Resume continues polling from saved state and never dispatches twice.</li>
       </ul>
 
       <h4>3. Testing Strategy</h4>
       <p>Fake GitHub scenarios for runs and deployments. Ancestry comes from the local bare repo.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_deploy_watch.py -q</code>: covers a normal success, a run cancelled then superseded by a later success, a workflow that succeeded with a failing deployment status (exit 8), a run that never appears with no paths match (exit 8, or a dispatch when enabled), a timeout (exit 8), and a resume that does not dispatch twice.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_deploy_watch.py -q</code>: covers a normal success, a run cancelled then superseded by a later success, a workflow that succeeded with a failing deployment status (exit 8), a run that never appears with no paths match (exit 8, or a dispatch when enabled), a timeout (exit 8), and a resume that does not dispatch twice.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -858,6 +858,15 @@ flowchart LR
         <li>A test file that was itself in conflict is re-frozen at its merged content once every check passes. Other frozen tests are restored if touched.</li>
         <li>A 405 "not mergeable" from GitHub is retried after a poll, within <code>max_merge_attempts</code>. A 409 head mismatch fails the gate. A PR merged outside the runner counts only if its head is the reviewed head. Merging requires the saved review gate to be <code>pass</code>, and any base merge resets it.</li>
         <li>The fake GitHub merges for real in the bare remote (<code>git merge-tree --write-tree</code> plus <code>commit-tree</code>). <code>test_session_controls.py::test_completion_while_detached_returns_to_the_shell</code> flaked once in a full run under load and passed 3 times out of 3 alone. It is unrelated to this work.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T15:30:00+08:00: Phase 6 built, with four differences from the plan</summary>
+      <ol>
+        <li>The newest deployment to the environment whose SHA contains the merge decides the gate: <code>success</code> passes, <code>failure</code> or <code>error</code> fails, anything else waits. Run state supports this, and a failed newest run fails with its failed jobs and log tail. A cancelled run counts as superseded, so the watch keeps waiting for the newer run. Live on Woodside/ai-maint, the #344 merge <code>9a17d7f0</code> resolves to deployment 6878920105 of the later <code>6719f78e</code>, state <code>success</code>.</li>
+        <li>Ancestry is checked with git in the run worktree (<code>devops.contains</code>), fetching once when a SHA is unknown. The paths-filter explanation uses the files the merge changed against its first parent (<code>devops.files_in_commit</code>).</li>
+        <li>A failed deploy also comments on the PR. Retrying a failed stage resets its wait start, so a re-run gets the full grace and timeout again. That applies to the review wait too.</li>
+        <li>Earlier stage tests now assert only their own gate, so they stay valid as later stages are built.</li>
       </ol>
     </details>
   </section>
