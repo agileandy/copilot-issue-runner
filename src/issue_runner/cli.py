@@ -27,7 +27,7 @@ from .phases.devops import DevopsError
 from .phases.plan import PlanError, build_plan_prompt
 from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
-from .tickets import StateError
+from .tickets import DOD_GATES, StateError
 from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 # failures that abort a whole run: report them, never traceback at the user
@@ -462,6 +462,8 @@ def _summary_lines(report, resume: str | None = None) -> list[str]:
     if report.worktree:
         lines.append(f"worktree: {report.worktree}")
     lines.append(f"tickets done: {report.done}, blocked: {report.blocked}")
+    if getattr(report, "deploy", False):
+        lines += _dod_lines(report)
     if report.stopped:
         lines.append("Run stopped. State and worktree preserved.")
         if resume is None:
@@ -476,6 +478,14 @@ def _summary_lines(report, resume: str | None = None) -> list[str]:
         lines.append(f"pull request: {report.pr_url}")
     lines += [f"  - {line}" for line in report.details]
     return lines + _demo_resume_lines(resume)
+
+
+def _dod_lines(report) -> list[str]:
+    verdict = "met" if report.dod_met else f"FAILED at {report.dod_failed_gate or 'tickets'}"
+    shown = {"pass": "pass", "fail": "FAILED", None: "not reached"}
+    return [f"definition of done: {verdict}"] + [
+        f"  {gate:<15} {shown[report.gates.get(gate)]}" for gate in DOD_GATES
+    ]
 
 
 def _demo_resume_lines(resume: str | None) -> list[str]:

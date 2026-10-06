@@ -929,3 +929,23 @@ def test_deploy_settings_load_from_runner_toml(tmp_path):
         (tmp_path / "runner.toml").write_text(bad)
         with pytest.raises(ConfigError, match=message):
             validate_config(load_config(tmp_path))
+
+
+def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _deploy_repo(tmp_path, monkeypatch)
+    gates = {"tickets": "pass", "criteria_tests": "pass", "review": "pass", "merge": "fail"}
+    monkeypatch.setattr(
+        cli,
+        "run_issue",
+        lambda *a, **k: RunReport(deploy=True, done=1, dod_failed_gate="merge", gates=gates),
+    )
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    out = capsys.readouterr().out
+    assert rc == 7
+    assert "definition of done: FAILED at merge" in out
+    assert "  review          pass\n" in out
+    assert "  merge           FAILED\n" in out
+    assert "  criteria_dev    not reached\n" in out

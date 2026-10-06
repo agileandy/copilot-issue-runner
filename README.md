@@ -105,7 +105,7 @@ Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
 `--retry-blocked` · `--visual` · `--agent` · `--comment-issue N` · `--demo` ·
 `--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
-`--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
+`--no-github-tickets` · `--no-pr` · `--deploy` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
 
 Without a global install, prefix any of these with `uv run` from the runner's
@@ -201,15 +201,68 @@ With `--issue-file` there is no issue of its own, so `--comment-issue NUMBER`
 names the issue to post to; without it `--agent` refuses `--issue-file`.
 `--comment-issue` also redirects a numbered issue's summary.
 
+### Deploy mode
+
+`--deploy` takes an issue all the way to Dev. After the tickets are built the
+runner opens a pull request, gets it through code review, merges it, and waits
+until the merge is deployed to Dev. The run succeeds only when the issue's
+**Definition of Done** is met. Every other outcome is a failure that names the
+gate where it stopped.
+
+| Gate | Passes when |
+|---|---|
+| `tickets` | every ticket is done and the full suite passes |
+| `criteria_tests` | every acceptance criterion the planner marked "tests" is judged met by a read-only acceptor, citing tests the runner then runs and sees pass |
+| `review` | on the PR's current head every check and status is green, the Copilot review recommends approval, no review thread is open, nobody requests changes, and required approvals exist |
+| `merge` | the PR merged at exactly the reviewed commit |
+| `deploy` | a GitHub deployment to the Dev environment reports `success` for a commit that contains the merge |
+| `criteria_dev` | every criterion the planner marked "dev" passes its check against Dev |
+
+How each gate is reached:
+
+- **Acceptance criteria** come from the issue's `Acceptance criteria` section.
+  The planner must map every one to "tests" (named by the tickets that prove
+  it) or "dev". An issue without criteria is refused before any credit is spent.
+- **Dev checks** are written before the PR opens, one per "dev" criterion, and
+  saved outside the worktree. Run with `dev_check_cmd` they must print
+  `ACCEPT-FAIL` against Dev first, and `ACCEPT-PASS` after the deployment.
+  Only the last line of output counts.
+- **Review findings** (open threads, failing checks, a Copilot verdict other
+  than "Approval recommended", requested changes) go to a reviser agent. It is
+  held to the same guards as the coder: frozen tests, ticket tests and the
+  regression suite. The runner commits `fix(review): ...`, pushes, replies on
+  and resolves each thread, and requests the review again. Declining a comment
+  needs a second agent to agree.
+- **Merging** uses the repository's one allowed merge method. When GitHub says
+  the PR is conflicted (or behind, if up-to-date branches are required), the
+  runner merges the base in. It never rebases or force-pushes. A resolver
+  agent fixes conflicts, and the new head is reviewed again before it may merge.
+- **The issue** gets a Definition of Done comment for every finished outcome.
+  Criteria are ticked once they hold (tested criteria once merged, Dev criteria
+  once checked in Dev). The issue closes only when every gate passes. The PR
+  says `Refs #n`, so merging alone never closes it.
+
+A read-only preflight runs first, before any model call. It checks write
+access, the merge method, the review rules, the deploy workflow's push trigger,
+the environment and the criteria. `--deploy --dry-run` prints it. `--deploy`
+refuses `--no-pr`, `--plan-only`, `--issue-file`, `--demo`, `--in-place` and
+non-GitHub repositories. Configure it under `[deploy]` in `runner.toml` (see
+`runner.example.toml`). Every wait is bounded, and a stopped or failed run
+resumes at its saved stage when re-run.
+
 ### Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | all tickets done |
+| `0` | all tickets done (with `--deploy`: the Definition of Done is met) |
 | `1` | the run aborted (planner failure, copilot transport failure, git failure) |
-| `2` | bad invocation |
+| `2` | bad invocation, or a failed `--deploy` preflight |
 | `3` | some tickets blocked |
 | `4` | stopped on the run credit budget |
+| `5` | `--deploy`: acceptance criteria not met (in tests or in Dev) |
+| `6` | `--deploy`: code review did not pass |
+| `7` | `--deploy`: the merge failed |
+| `8` | `--deploy`: the Dev deployment failed |
 | `130` | stopped by the user; saved work is resumable |
 
 ### Ticket dependencies

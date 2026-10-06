@@ -95,7 +95,14 @@ def run(cfg: RunnerConfig, client, issue: dict, store: TicketStore, report) -> s
         delivery.waiting_since = None  # a retried wait gets its full time again
     store.save()
     report.deploy = True
+    try:
+        return _advance(cfg, client, issue, store, delivery, report)
+    finally:
+        report.gates = dict(delivery.gates)
+        report.pr_url = store.pr_url or report.pr_url
 
+
+def _advance(cfg, client, issue, store: TicketStore, delivery: Delivery, report) -> str | None:
     while delivery.stage != "done":
         cfg.control.check()
         stage = delivery.stage

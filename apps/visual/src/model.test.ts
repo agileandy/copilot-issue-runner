@@ -363,3 +363,60 @@ test("the why section lists each blocked ticket, its causes and run notes", () =
     "## worktree",
   ])
 })
+
+test("a --deploy run shows its delivery stages in the pipeline", () => {
+  const state = initialState()
+  applyEvent(state, { kind: "phase", payload: { name: "reviewing" } })
+  expect(state.deploy).toBe(true)
+  expect(pipelineChips(state).map((c) => `${c.label}:${c.state}`)).toEqual([
+    "plan:done",
+    "branch:done",
+    "build:done",
+    "criteria:done",
+    "pr:done",
+    "review:current",
+    "merge:todo",
+    "deploy:todo",
+    "verify:todo",
+    "finished:todo",
+  ])
+})
+
+test("a --deploy run is judged by its Definition of Done", () => {
+  const state = initialState()
+  applyEvent(state, {
+    kind: "run_finished",
+    payload: {
+      done: 2,
+      blocked: 0,
+      deploy: true,
+      dod_met: false,
+      dod_failed_gate: "review",
+      gates: { tickets: "pass", criteria_tests: "pass", review: "fail" },
+    },
+  })
+  const summary = state.summary!
+  expect(summaryOutcome(summary)).toEqual({ text: "definition of done FAILED at review", tone: "bad" })
+  expect(model.gateLines(summary)).toEqual([
+    "gate tickets pass",
+    "gate criteria_tests pass",
+    "gate review FAILED",
+    "gate merge not reached",
+    "gate deploy not reached",
+    "gate criteria_dev not reached",
+  ])
+  expect(model.summaryReport(state, 1_000)).toContain("## definition of done\ngate tickets pass")
+  expect(model.metricsLines(state, 1_000)).toContain(
+    "phases plan → branch → build → criteria → pr → review → merge → deploy → verify → finished",
+  )
+
+  summary.dodMet = true
+  expect(summaryOutcome(summary)).toEqual({ text: "definition of done met", tone: "ok" })
+})
+
+test("a run without --deploy has no gate lines", () => {
+  const state = initialState()
+  applyEvent(state, { kind: "run_finished", payload: { done: 1, blocked: 0 } })
+  expect(model.gateLines(state.summary!)).toEqual([])
+  expect(state.deploy).toBe(false)
+})

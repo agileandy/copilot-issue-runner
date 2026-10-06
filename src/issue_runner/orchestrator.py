@@ -40,7 +40,7 @@ from .phases.devops import DevopsError
 from .phases.plan import plan_step, plan_with_criteria
 from .phases.verify import VerifyError, verify_step
 from .testcmd import detect_regression_cmd
-from .tickets import Delivery, StateError, Ticket, TicketStore
+from .tickets import DOD_GATES, Delivery, StateError, Ticket, TicketStore
 from .visual import render_flow
 
 log = logging.getLogger("issue_runner")
@@ -63,6 +63,7 @@ class RunReport:
     deploy: bool = False  # a --deploy run, judged by its Definition of Done
     dod_met: bool = False
     dod_failed_gate: str | None = None
+    gates: dict = field(default_factory=dict)  # Definition of Done gate -> "pass"|"fail"|None
 
 
 class RegressionFailure(BuildError):
@@ -307,6 +308,7 @@ def _run_issue(
             # fail before any ticket spends credits: Dev criteria could never be checked
             report.deploy = True
             report.dod_failed_gate = "criteria_dev"
+            report.gates = {**dict.fromkeys(DOD_GATES), "criteria_dev": "fail"}
             report.details.append(f"definition of done FAILED at criteria_dev: {problem}")
             _emit_finished(cfg, client, report, store)
             return report
@@ -370,6 +372,7 @@ def _run_issue(
         elif cfg.deploy:
             report.deploy = True
             report.dod_failed_gate = "tickets"
+            report.gates = {**dict.fromkeys(DOD_GATES), "tickets": "fail"}
             report.details.append("definition of done FAILED at tickets: not every ticket is done")
         break
     _emit_finished(cfg, client, report, store)

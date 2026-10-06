@@ -31,3 +31,26 @@ timeout = 1800        # seconds per model call
 [roles.verifier]
 # model = "gpt-5-mini"
 # effort = "low"
+
+# --deploy: review, merge and the Dev deployment. Every key is optional.
+[deploy]
+# review_bot = "copilot-pull-request-reviewer"
+# pr_title = "feat: {title}"     # becomes the commit subject under squash merge
+# review_timeout_min = 30        # wait for a review of each new head
+# max_review_rounds = 3          # reviser rounds before exit 6
+# merge_method = "auto"          # auto picks the repository's only allowed method
+# max_merge_attempts = 3         # base merges / merge retries before exit 7
+# workflow = "dev-deployment.yaml"
+# environment = "development"
+# deploy_start_grace_min = 10    # how long a merge may take to start the workflow
+# deploy_timeout_min = 60
+# dispatch_if_not_triggered = false  # dispatch once when the paths filter skipped the merge
+# max_acceptance_rounds = 1      # extra-ticket rounds for criteria judged unmet
+# poll_seconds = 30
+# Dev checks, for criteria only Dev can show. The command runs one check and
+# must print ACCEPT-PASS or ACCEPT-FAIL <reason> as its last line.
+# dev_url = "https://dev.example.com"
+# dev_check_cmd = "sh {check_path} {dev_url}"   # placeholders: {check_path}, {dev_url}, {criterion}
+# dev_check_ext = ".sh"
+# dev_check_guide = "A POSIX sh script. Dev's base URL is $1; use curl against it."
+# dev_check_timeout_sec = 300

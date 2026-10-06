@@ -81,6 +81,8 @@ def test_the_definition_of_done_is_met_end_to_end(dod, git_repo):  # noqa: F811
     report, store, _ = run(cfg, git_repo, script(git_repo, check_source(flag)))
     d = store.delivery
     assert report.dod_met and _exit_code(report) == 0
+    assert report.gates == dict.fromkeys(report.gates, "pass") and len(report.gates) == 6
+    assert report.pr_url.endswith(f"/pull/{store.delivery.pr_number}")
     assert set(d.gates.values()) == {"pass"} and d.stage == "done" and d.closed_out
     assert d.criteria[1]["dev"] == "pass"
     issue = fake.issues[17]
