@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -459,21 +459,21 @@ flowchart LR
 
     <!-- Phase 3 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 3: Dev checks written before merge (red)</h3>
+      <h3><code class="status">[x]</code> Phase 3: Dev checks written before merge (red)</h3>
       <p>Each <code>dev</code> criterion gets an executable check before the PR opens. The check must fail against Dev now. A check that already passes proves nothing about this change, the same rule the tester follows.</p>
 
       <h4>1. Check writer</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> The <code>acceptance.tester</code> role writes one check per <code>dev</code> criterion to <code>&lt;state_dir&gt;/acceptance/&lt;issue&gt;/AC&lt;n&gt;.*</code>, outside the worktree so it is never committed. Its prompt names <code>dev_url</code> and the harness that <code>dev_check_cmd</code> runs.</li>
-        <li><code class="status">[]</code> Run the check with <code>dev_check_cmd</code>, for example <code>"pw-win -s=accept run-code --filename {check_path}"</code>, with <code>{check_path}</code> and <code>{dev_url}</code> substituted. The command must print a final line <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL &lt;reason&gt;</code>. Only that last line is read; grepping the whole output gives false passes.</li>
-        <li><code class="status">[]</code> Red rule: before the PR opens, every check must print <code>ACCEPT-FAIL</code>. A check that passes is rejected back to the writer with the output, bounded like <code>tester_retries</code>. Snapshot and hash each accepted check so it is frozen, as ticket tests are.</li>
-        <li><code class="status">[]</code> If <code>dev_check_cmd</code> is empty while <code>dev</code> criteria exist, preflight fails with exit 2. A criterion that cannot be checked cannot meet the DoD.</li>
+        <li><code class="status">[x]</code> The <code>acceptance.tester</code> role writes one check per <code>dev</code> criterion to <code>&lt;state_dir&gt;/acceptance/&lt;issue&gt;/AC&lt;n&gt;.*</code>, outside the worktree so it is never committed. Its prompt names <code>dev_url</code> and the harness that <code>dev_check_cmd</code> runs.</li>
+        <li><code class="status">[x]</code> Run the check with <code>dev_check_cmd</code>, for example <code>"pw-win -s=accept run-code --filename {check_path}"</code>, with <code>{check_path}</code> and <code>{dev_url}</code> substituted. The command must print a final line <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL &lt;reason&gt;</code>. Only that last line is read; grepping the whole output gives false passes.</li>
+        <li><code class="status">[x]</code> Red rule: before the PR opens, every check must print <code>ACCEPT-FAIL</code>. A check that passes is rejected back to the writer with the output, bounded like <code>tester_retries</code>. Snapshot and hash each accepted check so it is frozen, as ticket tests are.</li>
+        <li><code class="status">[x]</code> If <code>dev_check_cmd</code> is empty while <code>dev</code> criteria exist, preflight fails with exit 2. A criterion that cannot be checked cannot meet the DoD.</li>
       </ul>
 
       <h4>2. Testing Strategy</h4>
       <p>A stub <code>dev_check_cmd</code> script reads a fixture file that says whether "Dev" has the feature. That covers red and green without a real environment.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k red</code>: a check that passes before merge is rejected. A check edited after acceptance is detected by its hash. Only the last output line counts, so <code>ACCEPT-PASS</code> elsewhere in the output is ignored.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k red</code>: a check that passes before merge is rejected. A check edited after acceptance is detected by its hash. Only the last output line counts, so <code>ACCEPT-PASS</code> elsewhere in the output is ignored.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -828,6 +828,15 @@ flowchart LR
         <li>An extra-ticket round goes back through the normal build loop. <code>orchestrator._build_tickets</code> was moved out unchanged, and the delivery returns <code>MORE_TICKETS</code> to send new tickets round again. The round is counted only after the new tickets are saved, so a budget pause does not use it up.</li>
         <li><code>max_acceptance_rounds</code> may be 0 (no extra round). <code>acceptor</code> joined <code>ROLES</code>, so <code>--model</code> and <code>--effort</code> apply to it.</li>
         <li>The planner prompt is unchanged when there are no criteria. In deploy mode it gains a criteria block, and <code>--dry-run</code> shows it.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T11:30:00+08:00: Phase 3 built, with four differences from the plan</summary>
+      <ol>
+        <li><code>acceptance.tester</code> is read-only and replies with the check's content. The runner writes it to <code>&lt;state_dir&gt;/acceptance/issue-&lt;n&gt;/&lt;AC&gt;&lt;dev_check_ext&gt;</code>, so the agent never writes files and the check is never committed.</li>
+        <li>New <code>[deploy]</code> settings: <code>dev_check_ext</code> (default <code>.sh</code>), <code>dev_check_guide</code> (how checks are written for the repository, shown to the agent), and <code>dev_check_timeout_sec</code> (default 300). <code>dev_check_cmd</code> accepts <code>{check_path}</code>, <code>{dev_url}</code> and <code>{criterion}</code>. The verdict is the last non-empty line of stdout only.</li>
+        <li>The missing-harness check runs right after planning instead of in preflight, since only the plan says which criteria are Dev criteria. It fails before any ticket is built (exit 5), and fixing the config resumes from the saved plan.</li>
+        <li>The delivery gained a <code>dev_checks</code> stage (gate <code>criteria_dev</code>) between <code>built</code> and <code>accepted</code>. A check that still passes against Dev after all retries fails the gate. The plan treats that as "already met or a weak check" and the runner never guesses which.</li>
       </ol>
     </details>
   </section>

@@ -25,7 +25,7 @@ from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .journal import Journal
-from .phases import delivery, devops
+from .phases import acceptance, delivery, devops
 from .phases.build import (
     BuildError,
     CoderFailure,
@@ -300,6 +300,16 @@ def _run_issue(
     cfg.control.check()
 
     _mirror_tickets(cfg, issue, store)
+
+    if cfg.deploy and store.delivery and not plan_only:
+        problem = acceptance.harness_problem(cfg, store.delivery.criteria)
+        if problem:
+            # fail before any ticket spends credits: Dev criteria could never be checked
+            report.deploy = True
+            report.dod_failed_gate = "criteria_dev"
+            report.details.append(f"definition of done FAILED at criteria_dev: {problem}")
+            _emit_finished(cfg, client, report, store)
+            return report
 
     report.done = sum(1 for t in store.tickets if t.status == "done")
     report.blocked = sum(1 for t in store.tickets if t.status == "blocked")

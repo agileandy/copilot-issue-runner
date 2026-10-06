@@ -17,6 +17,7 @@ PHASES = ("tester", "refine_test", "coder", "verifier", "regression", "commit")
 
 DELIVERY_STAGES = (
     "built",
+    "dev_checks",
     "accepted",
     "reviewing",
     "revising",

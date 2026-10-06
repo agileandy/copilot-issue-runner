@@ -25,6 +25,7 @@ GATE_EXIT = {"criteria_tests": 5, "review": 6, "merge": 7, "deploy": 8, "criteri
 # the gate each stage decides; a stage that fails records this gate
 STAGE_GATE = {
     "built": "criteria_tests",
+    "dev_checks": "criteria_dev",
     "accepted": "review",
     "reviewing": "review",
     "revising": "review",
@@ -140,6 +141,23 @@ def _built(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
                 + "; ".join(f"{c['id']} ({c['reason']})" for c in unmet)
             )
     _pass(cfg, delivery, "criteria_tests")
+    delivery.stage = "dev_checks"
+
+
+def _dev_checks(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Write a failing-first Dev check for every criterion only Dev can show."""
+    problem = acceptance.harness_problem(cfg, delivery.criteria)
+    if problem:
+        raise GateFailed(problem)
+    for c in delivery.criteria:
+        if c["where"] != "dev" or c.get("check_hash"):
+            continue
+        cfg.control.check()
+        try:
+            c.update(acceptance.write_red_check(client, cfg, issue, store, c))
+        except (acceptance.AcceptError, CopilotError) as e:
+            raise GateFailed(str(e)) from e
+        store.save()
     delivery.stage = "accepted"
 
 
@@ -168,3 +186,4 @@ def _not_implemented(cfg, client, issue, store, delivery) -> None:
 
 _HANDLERS = dict.fromkeys(STAGE_GATE, _not_implemented)
 _HANDLERS["built"] = _built
+_HANDLERS["dev_checks"] = _dev_checks

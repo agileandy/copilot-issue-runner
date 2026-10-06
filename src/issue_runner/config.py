@@ -15,7 +15,7 @@ from pathlib import Path
 from .control import RunControl
 from .testcmd import DEFAULT_TEST_CMD, detect_test_cmd
 
-ROLES = ("planner", "builder.tester", "builder.coder", "verifier", "acceptor")
+ROLES = ("planner", "builder.tester", "builder.coder", "verifier", "acceptor", "acceptance.tester")
 
 log = logging.getLogger("issue_runner")
 
@@ -48,7 +48,10 @@ class DeployConfig:
     deploy_timeout_min: int = 60
     dispatch_if_not_triggered: bool = False
     dev_url: str = ""
-    dev_check_cmd: str = ""
+    dev_check_cmd: str = ""  # runs one Dev check: {check_path}, {dev_url}, {criterion}
+    dev_check_ext: str = ".sh"  # file extension of a written check
+    dev_check_guide: str = ""  # how checks are written for this repository
+    dev_check_timeout_sec: int = 300
     poll_seconds: int = 30
     max_acceptance_rounds: int = 1
 
@@ -60,8 +63,17 @@ _DEPLOY_INTS = (
     "deploy_start_grace_min",
     "deploy_timeout_min",
     "poll_seconds",
+    "dev_check_timeout_sec",
 )
-_DEPLOY_STRS = ("review_bot", "workflow", "environment", "dev_url", "dev_check_cmd")
+_DEPLOY_STRS = (
+    "review_bot",
+    "workflow",
+    "environment",
+    "dev_url",
+    "dev_check_cmd",
+    "dev_check_ext",
+    "dev_check_guide",
+)
 
 
 @dataclass
@@ -210,6 +222,8 @@ def _validate_deploy(d: DeployConfig) -> None:
     for name in ("review_bot", "workflow", "environment"):
         if not getattr(d, name).strip():
             raise ConfigError(f"[deploy] {name} must not be empty")
+    if not d.dev_check_ext.startswith(".") or "/" in d.dev_check_ext:
+        raise ConfigError("[deploy] dev_check_ext must be a file extension such as '.sh'")
     if d.merge_method not in MERGE_METHODS:
         raise ConfigError(f"[deploy] merge_method must be one of {', '.join(MERGE_METHODS)}")
     if type(d.dispatch_if_not_triggered) is not bool:
