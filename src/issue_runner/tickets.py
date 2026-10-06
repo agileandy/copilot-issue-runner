@@ -45,6 +45,7 @@ class Delivery:
     failed_reason: str | None = None
     gates: dict = field(default_factory=lambda: dict.fromkeys(DOD_GATES))
     criteria: list[dict] = field(default_factory=list)
+    acceptance_round: int = 0
     pr_number: int | None = None
     head_sha: str | None = None
     review_round: int = 0
@@ -79,6 +80,7 @@ class Ticket:
     test_assertion: str
     files_hint: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
+    criteria: list[str] = field(default_factory=list)  # acceptance criteria it proves
     _status: str = field(default="pending", repr=False)
     rounds: int = 0
     test_path: str | None = None

@@ -171,12 +171,12 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
-        <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on)</dd>
+        <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
     </details>
   </header>
@@ -406,7 +406,7 @@ poll_seconds = 30</code></pre></li>
 
     <!-- Phase 2 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 2: Acceptance criteria traceability</h3>
+      <h3><code class="status">[x]</code> Phase 2: Acceptance criteria traceability</h3>
       <p>Every criterion becomes an ID that the plan must cover. Before the PR opens, the runner proves that each criterion checked in tests has passing tests that a read-only agent agrees cover it.</p>
 
       <figure class="diagram">
@@ -428,28 +428,28 @@ flowchart LR
       <h4>1. Parse criteria</h4>
       <ul class="checklist">
         <li><code class="status">[x]</code> <code>criteria.parse(body)</code>: find the first heading or bold line matching <code>acceptance criteria</code> (any case). Take each top-level list item until the next heading. Accept <code>- [ ]</code>, <code>- [x]</code>, <code>-</code>, <code>*</code> and numbered items. Keep the original line so it can be ticked later.</li>
-        <li><code class="status">[]</code> Assign <code>AC1..ACn</code> in order. Mark a criterion <code>where = "dev"</code> when the planner says it can only be observed in a deployed environment. The parser stays neutral and the planner decides.</li>
+        <li><code class="status">[x]</code> Assign <code>AC1..ACn</code> in order. Mark a criterion <code>where = "dev"</code> when the planner says it can only be observed in a deployed environment. The parser stays neutral and the planner decides.</li>
       </ul>
 
       <h4>2. Planner maps criteria</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Add the criteria list to <code>PLAN_PROMPT</code>. The reply adds <code>"criteria": [{"id": "AC1", "where": "tests|dev"}]</code> and <code>"criteria": ["AC1"]</code> on each ticket.</li>
-        <li><code class="status">[]</code> <code>_validate</code>: every <code>tests</code> criterion is named by at least one ticket. Every <code>dev</code> criterion is listed. No unknown IDs. Ticket <code>depends_on</code> IDs exist (this also closes the earlier gap R4). A failure is fed back to the planner on its existing retry.</li>
+        <li><code class="status">[x]</code> Add the criteria list to <code>PLAN_PROMPT</code>. The reply adds <code>"criteria": [{"id": "AC1", "where": "tests|dev"}]</code> and <code>"criteria": ["AC1"]</code> on each ticket.</li>
+        <li><code class="status">[x]</code> <code>_validate</code>: every <code>tests</code> criterion is named by at least one ticket. Every <code>dev</code> criterion is listed. No unknown IDs. Ticket <code>depends_on</code> IDs exist (this also closes the earlier gap R4). A failure is fed back to the planner on its existing retry.</li>
       </ul>
 
       <h4>3. Pre-PR acceptor</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> After the final regression gate, a read-only <code>acceptor</code> agent receives the issue, the criteria, the full diff against <code>initial_head</code> and the list of accepted test files. It replies with <code>{"criteria": [{"id", "verdict": "met|unmet", "tests": ["path::name"], "reason"}]}</code>.</li>
-        <li><code class="status">[]</code> Checked in code: one verdict per <code>tests</code> criterion. Every cited test file is an accepted ticket test or an existing file. The cited tests pass when run with <code>test_cmd</code>. A <code>met</code> verdict that cites no test counts as <code>unmet</code>.</li>
-        <li><code class="status">[]</code> For <code>unmet</code> criteria, ask the planner for extra tickets limited to those criteria (at most <code>max_acceptance_rounds</code>, default 1), build them and run the acceptor again. If any are still unmet, the <code>criteria_tests</code> gate fails with exit 5 and no PR opens.</li>
+        <li><code class="status">[x]</code> After the final regression gate, a read-only <code>acceptor</code> agent receives the issue, the criteria, the full diff against <code>initial_head</code> and the list of accepted test files. It replies with <code>{"criteria": [{"id", "verdict": "met|unmet", "tests": ["path::name"], "reason"}]}</code>.</li>
+        <li><code class="status">[x]</code> Checked in code: one verdict per <code>tests</code> criterion. Every cited test file is an accepted ticket test or an existing file. The cited tests pass when run with <code>test_cmd</code>. A <code>met</code> verdict that cites no test counts as <code>unmet</code>.</li>
+        <li><code class="status">[x]</code> For <code>unmet</code> criteria, ask the planner for extra tickets limited to those criteria (at most <code>max_acceptance_rounds</code>, default 1), build them and run the acceptor again. If any are still unmet, the <code>criteria_tests</code> gate fails with exit 5 and no PR opens.</li>
       </ul>
 
       <h4>4. Testing Strategy</h4>
       <p>Parser tests use real issue bodies (Woodside/ai-maint#337, #110), checkbox and plain lists, missing sections and nested lists. Planner and acceptor tests use canned fake-Copilot replies.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_criteria.py -q</code>: the parser takes exactly the 3 criteria from the #337 body and the 3 from #110, and ignores the "Required behaviour" list.</li>
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_plan_verify.py -q</code>: a plan missing a criterion, citing an unknown ID or naming an unknown dependency is rejected and retried.</li>
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k pre_pr</code>: an acceptor reply that cites a missing or failing test is treated as unmet. An unmet criterion triggers one extra-ticket round and then exit 5.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_criteria.py -q</code>: the parser takes exactly the 3 criteria from the #337 body and the 3 from #110, and ignores the "Required behaviour" list.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_plan_verify.py -q</code>: a plan missing a criterion, citing an unknown ID or naming an unknown dependency is rejected and retried.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k pre_pr</code>: an acceptor reply that cites a missing or failing test is treated as unmet. An unmet criterion triggers one extra-ticket round and then exit 5.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -818,6 +818,16 @@ flowchart LR
         <li>The preflight lives in a new <code>phases/preflight.py</code>. It reads review, approval and required-check rules through <code>GET /repos/{r}/rules/branches/{branch}</code>, which covers repo and org rulesets with read access only. Classic protection is added when readable, and a 403 is ignored. It reads the workflow's <code>on.push</code> with a small built-in reader rather than a YAML library.</li>
         <li>The delivery stages start at <code>built</code>, which decides the <code>criteria_tests</code> gate. A failed stage keeps its stage, so re-running the same command retries it. A budget stop pauses delivery without failing a gate.</li>
         <li>The check that <code>dev_check_cmd</code> is set when Dev criteria exist moved to Phase 3, because the planner decides which criteria are Dev criteria after preflight has run.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T10:50:00+08:00: Phase 2 built, with five differences from the plan</summary>
+      <ol>
+        <li>Dependency checks reject only unknown or self dependencies. A dependency on a later ticket stays allowed, because the runner already orders tickets by dependency and blocks cycles at run time (<code>tests/test_dependencies.py</code>). That closes the unknown-ID part of R4.</li>
+        <li>The acceptor runs each cited test file with <code>test_cmd</code>, not the single test named after <code>::</code>, so the check works for every supported test framework. A file that fails, does not run or does not exist makes the criterion unmet.</li>
+        <li>An extra-ticket round goes back through the normal build loop. <code>orchestrator._build_tickets</code> was moved out unchanged, and the delivery returns <code>MORE_TICKETS</code> to send new tickets round again. The round is counted only after the new tickets are saved, so a budget pause does not use it up.</li>
+        <li><code>max_acceptance_rounds</code> may be 0 (no extra round). <code>acceptor</code> joined <code>ROLES</code>, so <code>--model</code> and <code>--effort</code> apply to it.</li>
+        <li>The planner prompt is unchanged when there are no criteria. In deploy mode it gains a criteria block, and <code>--dry-run</code> shows it.</li>
       </ol>
     </details>
   </section>

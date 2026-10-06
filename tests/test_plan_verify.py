@@ -104,3 +104,127 @@ def test_plan_step_reports_a_persistent_non_object_as_a_plan_error(cfg):
     with pytest.raises(PlanError) as excinfo:
         plan_step(client, cfg, ISSUE)
     assert "attribute" not in str(excinfo.value).lower()
+
+
+# --- acceptance criteria coverage (--deploy) ---------------------------------
+
+CRITERIA_ISSUE = dict(ISSUE, body="x\n\n## Acceptance criteria\n\n- [ ] works\n- [ ] in Dev\n")
+
+
+def criteria_plan(criteria=None, ticket_criteria=("AC1",), depends_on=()):
+    return json.dumps(
+        {
+            "summary": "s",
+            "criteria": criteria
+            if criteria is not None
+            else [{"id": "AC1", "where": "tests"}, {"id": "AC2", "where": "dev"}],
+            "tickets": [
+                {
+                    "title": "t",
+                    "description": "d",
+                    "test_assertion": "a",
+                    "criteria": list(ticket_criteria),
+                    "depends_on": list(depends_on),
+                }
+            ],
+        }
+    )
+
+
+def plan_criteria(cfg, *replies):
+    from issue_runner.criteria import parse
+    from issue_runner.phases.plan import plan_with_criteria
+
+    client = FakeClient([(r, None) for r in replies])
+    return plan_with_criteria(client, cfg, CRITERIA_ISSUE, parse(CRITERIA_ISSUE["body"])), client
+
+
+def test_plan_with_criteria_maps_every_criterion(cfg):
+    (_, tickets, where), client = plan_criteria(cfg, criteria_plan())
+    assert where == {"AC1": "tests", "AC2": "dev"}
+    assert tickets[0].criteria == ["AC1"]
+    prompt = client.calls[0]["prompt"]
+    assert "AC1: works" in prompt and "AC2: in Dev" in prompt and '"where"' in prompt
+
+
+@pytest.mark.parametrize(
+    "reply, message",
+    [
+        (criteria_plan(criteria=[{"id": "AC1", "where": "tests"}]), "does not cover criteria AC2"),
+        (criteria_plan(ticket_criteria=()), "no ticket names them"),
+        (criteria_plan(ticket_criteria=("AC9",)), "unknown criteria AC9"),
+        (
+            criteria_plan(criteria=[{"id": "AC1", "where": "tests"}] * 2),
+            "listed twice",
+        ),
+        (
+            criteria_plan(criteria=[{"id": "AC1", "where": "prod"}, {"id": "AC2", "where": "dev"}]),
+            '"tests" or "dev"',
+        ),
+        (
+            json.dumps(
+                {
+                    "summary": "s",
+                    "tickets": [{"title": "t", "description": "d", "test_assertion": "a"}],
+                }
+            ),
+            'no top-level "criteria"',
+        ),
+    ],
+)
+def test_plan_with_criteria_rejects_gaps_and_retries(cfg, reply, message):
+    with pytest.raises(PlanError, match=message):
+        plan_criteria(cfg, reply, reply)
+
+    _, client = plan_criteria(cfg, reply, criteria_plan())
+    assert len(client.calls) == 2
+    retry = client.calls[1]["prompt"].split("YOUR PREVIOUS REPLY WAS INVALID")[1]
+    assert message in retry
+
+
+@pytest.mark.parametrize("depends_on", [[9], [1]])
+def test_plan_rejects_dependencies_on_tickets_that_do_not_exist(cfg, depends_on):
+    reply = criteria_plan(depends_on=depends_on)
+    with pytest.raises(PlanError, match="not another ticket"):
+        plan_criteria(cfg, reply, reply)
+
+
+def test_plan_prompt_without_criteria_is_unchanged(cfg):
+    from issue_runner.phases.plan import build_plan_prompt
+
+    prompt = build_plan_prompt(ISSUE)
+    assert "Acceptance criteria" not in prompt
+    assert "Planning only.\n\nReply with ONLY this JSON" in prompt
+
+
+def test_plan_extra_numbers_new_tickets_after_the_built_ones(cfg):
+    from issue_runner.phases.plan import plan_extra
+
+    built = [
+        Ticket(id=1, title="a", description="d", test_assertion="x", criteria=["AC1"]),
+        Ticket(id=2, title="b", description="d", test_assertion="y"),
+    ]
+    unmet = [{"id": "AC1", "text": "works", "reason": "edge case missing"}]
+    reply = json.dumps(
+        {
+            "summary": "more",
+            "tickets": [
+                {
+                    "title": "c",
+                    "description": "d",
+                    "test_assertion": "z",
+                    "criteria": ["AC1"],
+                    "depends_on": [2],
+                }
+            ],
+        }
+    )
+    client = FakeClient([(reply, None)])
+    _, tickets = plan_extra(client, cfg, CRITERIA_ISSUE, unmet, built, ["AC1", "AC2"])
+    assert [(t.id, t.depends_on, t.criteria) for t in tickets] == [(3, [2], ["AC1"])]
+    assert "AC1: works — edge case missing" in client.calls[0]["prompt"]
+
+    no_cover = reply.replace('"criteria": ["AC1"]', '"criteria": []')
+    client = FakeClient([(no_cover, None), (no_cover, None)])
+    with pytest.raises(PlanError, match="no new ticket names criteria AC1"):
+        plan_extra(client, cfg, CRITERIA_ISSUE, unmet, built, ["AC1", "AC2"])

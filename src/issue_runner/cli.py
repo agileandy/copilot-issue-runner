@@ -24,7 +24,7 @@ from .phases import preflight
 from .phases.build import BuildError
 from .phases.delivery import GATE_EXIT
 from .phases.devops import DevopsError
-from .phases.plan import PLAN_PROMPT, PlanError
+from .phases.plan import PlanError, build_plan_prompt
 from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
 from .tickets import StateError
@@ -320,11 +320,9 @@ def main(argv=None) -> int:
 
     client = CopilotClient(cfg)
     if args.dry_run:
-        prompt = PLAN_PROMPT.format(
-            number="<new clone>" if args.demo else issue["number"],
-            title=issue["title"],
-            body=issue["body"],
-            feedback="",
+        preview = dict(issue, number="<new clone>") if args.demo else issue
+        prompt = build_plan_prompt(
+            preview, cfg.preflight.criteria if cfg.preflight is not None else None
         )
         argv_preview = client._build_argv(
             prompt, role="planner", read_only=True, session_name="planner"

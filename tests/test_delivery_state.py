@@ -68,7 +68,7 @@ def test_a_failed_stage_records_its_gate_and_maps_to_its_exit_code(cfg, tmp_path
     assert report.dod_failed_gate == "criteria_tests"
     assert store.delivery.gates["tickets"] == "pass"
     assert store.delivery.gates["criteria_tests"] == "fail"
-    assert "not implemented" in store.delivery.failed_reason
+    assert "without acceptance criteria" in store.delivery.failed_reason
     assert _exit_code(report) == 5
 
 

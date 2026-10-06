@@ -37,10 +37,10 @@ from .phases.build import (
     tester_step,
 )
 from .phases.devops import DevopsError
-from .phases.plan import plan_step
+from .phases.plan import plan_step, plan_with_criteria
 from .phases.verify import VerifyError, verify_step
 from .testcmd import detect_regression_cmd
-from .tickets import StateError, Ticket, TicketStore
+from .tickets import Delivery, StateError, Ticket, TicketStore
 from .visual import render_flow
 
 log = logging.getLogger("issue_runner")
@@ -269,8 +269,14 @@ def _run_issue(
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
     else:
         _render_visual(cfg, plan="pending", branch="pending", tickets=[])
+        where = None
         try:
-            summary, tickets = plan_step(client, cfg, issue)
+            if cfg.deploy and cfg.preflight is not None:
+                summary, tickets, where = plan_with_criteria(
+                    client, cfg, issue, cfg.preflight.criteria
+                )
+            else:
+                summary, tickets = plan_step(client, cfg, issue)
         except BudgetExhausted as e:
             report.budget_exhausted = True
             report.details.append(f"planning did not start: {e}")
@@ -278,6 +284,10 @@ def _run_issue(
             return report
         store.plan_summary = summary
         store.set_tickets(tickets)
+        if where is not None:
+            store.delivery = Delivery(
+                criteria=delivery.criteria_records(cfg.preflight.criteria, where, tickets)
+            )
         store.save()
         _render_visual(cfg, plan="done", branch="pending", tickets=store.tickets)
         log.info("plan: %d tickets — %s", len(tickets), summary)
@@ -289,16 +299,7 @@ def _run_issue(
     )
     cfg.control.check()
 
-    # mirror tickets to the tracker; also backfills runs planned without a backend
-    if cfg.tickets_backend and issue["number"]:
-        for ticket in store.tickets:
-            cfg.control.check()
-            if ticket.github_issue is None:
-                ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
-                store.save()
-                if ticket.status == "done":
-                    cfg.tickets_backend.close(ticket, "completed in an earlier run")
-        store.save()
+    _mirror_tickets(cfg, issue, store)
 
     report.done = sum(1 for t in store.tickets if t.status == "done")
     report.blocked = sum(1 for t in store.tickets if t.status == "blocked")
@@ -325,6 +326,48 @@ def _run_issue(
     emit(cfg.events, "phase", name="branch")
     _render_visual(cfg, plan="done", branch=store.branch, tickets=store.tickets)
 
+    while True:
+        _build_tickets(cfg, client, store, report)
+
+        if (
+            report.done
+            and not report.blocked
+            and not store.pending()
+            and not report.budget_exhausted
+        ):
+            devops.require_clean(cfg.repo_dir)
+            if store.last_commit and devops.head_commit(cfg.repo_dir) != store.last_commit:
+                raise DevopsError(
+                    "run branch moved after its last accepted commit; refusing publication"
+                )
+            approved_head = devops.head_commit(cfg.repo_dir)
+            _regression_gate(cfg)
+            cfg.control.check()
+            devops.require_clean(cfg.repo_dir)
+            if (
+                devops.head_commit(cfg.repo_dir) != approved_head
+                or devops.current_branch(cfg.repo_dir) != store.branch
+            ):
+                raise DevopsError("regression command changed the run branch; refusing publication")
+            if cfg.deploy:
+                if delivery.run(cfg, client, issue, store, report) == delivery.MORE_TICKETS:
+                    # acceptance planned tickets for unmet criteria: build them, then resume
+                    _mirror_tickets(cfg, issue, store)
+                    emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                    continue
+            else:
+                _open_pull_request(cfg, issue, store, report)
+        elif cfg.deploy:
+            report.deploy = True
+            report.dod_failed_gate = "tickets"
+            report.details.append("definition of done FAILED at tickets: not every ticket is done")
+        break
+    _emit_finished(cfg, client, report, store)
+    return report
+
+
+def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunReport) -> None:
+    """Run every ready ticket through test, code, verify, regression and commit."""
     emit(cfg.events, "phase", name="build")
     while True:
         cfg.control.check()
@@ -354,31 +397,19 @@ def _run_issue(
     if not report.budget_exhausted and not store.ready():
         _block_unsatisfiable(cfg, store, report)
 
-    if report.done and not report.blocked and not store.pending() and not report.budget_exhausted:
-        devops.require_clean(cfg.repo_dir)
-        if store.last_commit and devops.head_commit(cfg.repo_dir) != store.last_commit:
-            raise DevopsError(
-                "run branch moved after its last accepted commit; refusing publication"
-            )
-        approved_head = devops.head_commit(cfg.repo_dir)
-        _regression_gate(cfg)
+
+def _mirror_tickets(cfg: RunnerConfig, issue: dict, store: TicketStore) -> None:
+    """Mirror tickets to the tracker; also backfills runs planned without a backend."""
+    if not (cfg.tickets_backend and issue["number"]):
+        return
+    for ticket in store.tickets:
         cfg.control.check()
-        devops.require_clean(cfg.repo_dir)
-        if (
-            devops.head_commit(cfg.repo_dir) != approved_head
-            or devops.current_branch(cfg.repo_dir) != store.branch
-        ):
-            raise DevopsError("regression command changed the run branch; refusing publication")
-        if cfg.deploy:
-            delivery.run(cfg, client, issue, store, report)
-        else:
-            _open_pull_request(cfg, issue, store, report)
-    elif cfg.deploy:
-        report.deploy = True
-        report.dod_failed_gate = "tickets"
-        report.details.append("definition of done FAILED at tickets: not every ticket is done")
-    _emit_finished(cfg, client, report, store)
-    return report
+        if ticket.github_issue is None:
+            ticket.github_issue = cfg.tickets_backend.create(issue["number"], ticket)
+            store.save()
+            if ticket.status == "done":
+                cfg.tickets_backend.close(ticket, "completed in an earlier run")
+    store.save()
 
 
 def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:

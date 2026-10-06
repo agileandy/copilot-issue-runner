@@ -15,7 +15,7 @@ from pathlib import Path
 from .control import RunControl
 from .testcmd import DEFAULT_TEST_CMD, detect_test_cmd
 
-ROLES = ("planner", "builder.tester", "builder.coder", "verifier")
+ROLES = ("planner", "builder.tester", "builder.coder", "verifier", "acceptor")
 
 log = logging.getLogger("issue_runner")
 
@@ -60,7 +60,6 @@ _DEPLOY_INTS = (
     "deploy_start_grace_min",
     "deploy_timeout_min",
     "poll_seconds",
-    "max_acceptance_rounds",
 )
 _DEPLOY_STRS = ("review_bot", "workflow", "environment", "dev_url", "dev_check_cmd")
 
@@ -203,6 +202,8 @@ def _validate_deploy(d: DeployConfig) -> None:
         value = getattr(d, name)
         if type(value) is not int or value <= 0:
             raise ConfigError(f"[deploy] {name} must be a positive integer")
+    if type(d.max_acceptance_rounds) is not int or d.max_acceptance_rounds < 0:
+        raise ConfigError("[deploy] max_acceptance_rounds must be a non-negative integer")
     for name in _DEPLOY_STRS:
         if not isinstance(getattr(d, name), str):
             raise ConfigError(f"[deploy] {name} must be a string")

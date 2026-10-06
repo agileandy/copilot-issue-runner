@@ -56,6 +56,15 @@ def changed_paths(repo_dir: Path) -> list[str]:
     return sorted(paths)
 
 
+def diff_since(repo_dir: Path, base: str, max_chars: int = 60000) -> str:
+    """The committed change since `base`: a file summary, then as much patch as fits."""
+    stat = _git(repo_dir, "diff", "--stat", f"{base}..HEAD").stdout
+    patch = _git(repo_dir, "diff", "--no-color", f"{base}..HEAD").stdout
+    if len(patch) > max_chars:
+        patch = patch[:max_chars] + f"\n... (diff truncated at {max_chars} characters)\n"
+    return f"{stat}\n{patch}"
+
+
 def require_clean(repo_dir: Path) -> None:
     dirty = _git(repo_dir, "status", "--porcelain", "--untracked-files=all").stdout.strip()
     if dirty:
