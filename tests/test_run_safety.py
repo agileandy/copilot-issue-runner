@@ -75,7 +75,7 @@ def test_a_new_file_after_approval_is_not_staged(tmp_path):
     env, _ = sandbox(tmp_path)
     for pattern in devops.DEFAULT_EXCLUDES:
         devops.ensure_excluded(env.repo_dir, pattern)
-    branch = devops.create_branch(env.repo_dir, "17", "scope")
+    branch = devops.create_branch(env.repo_dir, "feature/17-scope")
     ticket = Ticket(id=1, title="change", description="d", test_assertion="a")
     ticket.base_commit = devops.head_commit(env.repo_dir)
     (env.repo_dir / "approved.py").write_text("VALUE = 1\n")

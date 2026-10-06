@@ -38,8 +38,15 @@ def _python_test_cmd(marker: Path) -> str:
         python = "uv run --no-sync python"
     else:
         relative = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-        project_python = repo / ".venv" / relative
-        python = shlex.quote(str(project_python)) if project_python.is_file() else "python"
+        # relative to the run directory: an absolute path would point every run
+        # worktree back at the source checkout's environment, outside the
+        # directory the agent is allowed to touch
+        project_python = Path(".venv") / relative
+        python = (
+            shlex.quote(project_python.as_posix())
+            if (repo / project_python).is_file()
+            else "python"
+        )
     return f"{python} -m pytest {{test_path}} -q"
 
 

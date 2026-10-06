@@ -92,6 +92,7 @@ def fetch_gitea_issue(
         "title": data["title"],
         "body": data.get("body") or "",
         "url": data.get("html_url", ""),
+        "labels": [label.get("name", "") for label in data.get("labels") or []],
     }
 
 
