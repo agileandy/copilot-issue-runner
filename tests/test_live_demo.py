@@ -147,7 +147,7 @@ def test_demo_clones_exact_content_and_runs_only_the_clone(live_demo):
     assert not (state_dir / "issue-54.json").exists()
     state = json.loads((state_dir / f"issue-{clone['number']}.json").read_text())
     assert state["issue_ref"] == str(clone["number"])
-    assert state["branch"].startswith(f"issue-{clone['number']}-")
+    assert state["branch"].startswith(f"feature/{clone['number']}-")
     assert all(ticket["status"] == "done" for ticket in state["tickets"])
     assert all(ticket["github_issue"] is not None for ticket in state["tickets"])
     assert git(fixture.repo_dir, "rev-parse", "HEAD") == source_head

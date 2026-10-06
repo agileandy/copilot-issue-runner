@@ -1,5 +1,6 @@
 """Plan phase: one read-only Copilot call turns issue + codebase into atomic tickets."""
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import Ticket
@@ -31,6 +32,7 @@ RULES for tickets:
 - Order tickets so earlier ones never depend on later ones.
 - Do NOT write any code or modify any file. Planning only.
 
+{rules}
 Reply with ONLY this JSON (no prose before or after):
 {{
   "summary": "<one-line plan summary>",
@@ -53,7 +55,11 @@ def plan_step(client, cfg: RunnerConfig, issue: dict) -> tuple[str, list[Ticket]
     last_error = "no attempt"
     for _ in range(2):
         prompt = PLAN_PROMPT.format(
-            number=issue["number"], title=issue["title"], body=issue["body"], feedback=extra
+            number=issue["number"],
+            title=issue["title"],
+            body=issue["body"],
+            rules=workspace_rules(cfg),
+            feedback=extra,
         )
         reply = client.run(prompt, role="planner", read_only=True, session_name="planner")
         try:
