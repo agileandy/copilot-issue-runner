@@ -15,7 +15,15 @@ from pathlib import Path
 from .control import RunControl
 from .testcmd import DEFAULT_TEST_CMD, detect_test_cmd
 
-ROLES = ("planner", "builder.tester", "builder.coder", "verifier", "acceptor", "acceptance.tester")
+ROLES = (
+    "planner",
+    "builder.tester",
+    "builder.coder",
+    "verifier",
+    "acceptor",
+    "acceptance.tester",
+    "reviser",
+)
 
 log = logging.getLogger("issue_runner")
 
@@ -38,6 +46,7 @@ class DeployConfig:
     """The `[deploy]` table: how a --deploy run reviews, merges and watches Dev."""
 
     review_bot: str = "copilot-pull-request-reviewer"
+    pr_title: str = "feat: {title}"  # under squash merge this becomes the commit subject
     review_timeout_min: int = 30
     max_review_rounds: int = 3
     merge_method: str = "auto"
@@ -67,6 +76,7 @@ _DEPLOY_INTS = (
 )
 _DEPLOY_STRS = (
     "review_bot",
+    "pr_title",
     "workflow",
     "environment",
     "dev_url",
@@ -224,6 +234,10 @@ def _validate_deploy(d: DeployConfig) -> None:
             raise ConfigError(f"[deploy] {name} must not be empty")
     if not d.dev_check_ext.startswith(".") or "/" in d.dev_check_ext:
         raise ConfigError("[deploy] dev_check_ext must be a file extension such as '.sh'")
+    try:
+        d.pr_title.format(title="t", number=1)
+    except (KeyError, IndexError, ValueError) as e:
+        raise ConfigError(f"[deploy] pr_title may use only {{title}} and {{number}}: {e}") from e
     if d.merge_method not in MERGE_METHODS:
         raise ConfigError(f"[deploy] merge_method must be one of {', '.join(MERGE_METHODS)}")
     if type(d.dispatch_if_not_triggered) is not bool:

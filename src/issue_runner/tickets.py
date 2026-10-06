@@ -50,6 +50,7 @@ class Delivery:
     pr_number: int | None = None
     head_sha: str | None = None
     review_round: int = 0
+    waiting_since: float | None = None  # when the wait for the current head began
     handled_threads: list[str] = field(default_factory=list)
     merge_attempts: int = 0
     merge_sha: str | None = None

@@ -8,16 +8,28 @@ re-running the same command.
 """
 
 import logging
+import time
 
 from ..budget import BudgetExhausted
 from ..config import RunnerConfig
 from ..copilot import CopilotError
 from ..events import emit
+from ..github_flow import GithubError, GitHubFlow
 from ..tickets import Delivery, Ticket, TicketStore
-from . import acceptance
+from . import acceptance, devops, review
+from .devops import DevopsError
 from .plan import PlanError, plan_extra
 
 log = logging.getLogger("issue_runner")
+
+# the clock and the GitHub client are module seams so tests can drive them
+_now = time.time
+_sleep = time.sleep
+
+
+def make_flow(cfg: RunnerConfig) -> GitHubFlow:
+    return GitHubFlow(cfg.preflight.repo)
+
 
 # exit code per failed gate; tickets keeps the existing 1/3/4 codes
 GATE_EXIT = {"criteria_tests": 5, "review": 6, "merge": 7, "deploy": 8, "criteria_dev": 5}
@@ -180,6 +192,220 @@ def _add_tickets_for(cfg, client, issue, store, delivery: Delivery, unmet: list[
     )
 
 
+def _accepted(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Push the branch and open (or find) the pull request."""
+    flow = make_flow(cfg)
+    pre = cfg.preflight
+    devops.require_clean(cfg.repo_dir)
+    head = devops.head_commit(cfg.repo_dir)
+    try:
+        devops.push_branch(cfg.repo_dir, store.branch)
+        pr = flow.open_pull(store.branch)
+        if pr is None:
+            title = cfg.deploy_settings.pr_title.format(
+                title=issue["title"], number=issue["number"]
+            )
+            pr = flow.create_pull(title, store.branch, pre.default_branch, pr_body(issue, store))
+        if pre.review_source == "request":
+            flow.request_review(pr["number"], _reviewer(cfg))
+    except (DevopsError, GithubError) as e:
+        raise GateFailed(f"could not open the pull request: {e}") from e
+    delivery.pr_number = pr["number"]
+    delivery.head_sha = head
+    delivery.waiting_since = _now()
+    store.pr_url = pr.get("html_url", "")
+    delivery.stage = "reviewing"
+    emit(cfg.events, "pull_request_opened", url=store.pr_url)
+
+
+def _reviewing(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Wait until the review passes, raises findings, or the wait times out."""
+    settings = cfg.deploy_settings
+    flow = make_flow(cfg)
+    _sync_push(cfg, store, delivery)
+    if delivery.waiting_since is None:
+        delivery.waiting_since = _now()
+        store.save()
+    while True:
+        cfg.control.check()
+        status = _review_status(flow, cfg, delivery)
+        if status.state == "pass":
+            _pass(cfg, delivery, "review")
+            delivery.waiting_since = None
+            delivery.stage = "merging"
+            return
+        if status.state == "findings":
+            delivery.stage = "revising"
+            return
+        if _now() - delivery.waiting_since >= settings.review_timeout_min * 60:
+            if status.findings:
+                delivery.stage = "revising"  # act on what is known rather than wait forever
+                return
+            raise GateFailed(
+                f"waited {settings.review_timeout_min} min for {', '.join(status.waiting_for)}"
+            )
+        log.debug("PR #%s waiting for %s", delivery.pr_number, ", ".join(status.waiting_for))
+        _wait(cfg, settings.poll_seconds)
+
+
+def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None:
+    """Hand the findings to the reviser, then push, reply, resolve and re-request."""
+    settings = cfg.deploy_settings
+    flow = make_flow(cfg)
+    _sync_push(cfg, store, delivery)
+    findings = _review_status(flow, cfg, delivery).findings
+    if not findings:
+        delivery.stage = "reviewing"
+        return
+    if delivery.review_round >= settings.max_review_rounds:
+        summary = "; ".join(f"{f.where}: {f.text[:120]}" for f in findings)
+        _comment(
+            flow,
+            delivery,
+            f"issue-runner stopped after {delivery.review_round} review round(s). "
+            "Open findings:\n\n" + "\n".join(f"- `{f.where}`: {f.text}" for f in findings),
+        )
+        raise GateFailed(
+            f"{len(findings)} finding(s) still open after {delivery.review_round} review "
+            f"round(s): {summary}"
+        )
+    try:
+        revision = review.revise(client, cfg, issue, store, delivery.pr_number, findings)
+    except (review.ReviewError, CopilotError, DevopsError) as e:
+        raise GateFailed(str(e)) from e
+
+    by_ref = {f.ref: f for f in findings}
+    replies: dict[str, str] = {}
+    for ref, (action, reason) in revision.actions.items():
+        finding = by_ref[ref]
+        if finding.kind != "thread":
+            continue
+        if action == "fixed" and revision.changed:
+            replies[ref] = f"Fixed: {reason}"
+        elif action == "not_applicable":
+            agreed, why = review.agrees(client, finding, reason)
+            if agreed:
+                replies[ref] = f"Not changed: {reason} (a second reviewer agreed: {why})"
+            else:
+                log.info("declining %s was not agreed: %s", finding.where, why)
+
+    try:
+        if revision.changed:
+            sha = devops.commit_changes(
+                cfg.repo_dir,
+                f"fix(review): address review round {delivery.review_round + 1}",
+                store.branch,
+            )
+            delivery.head_sha = store.last_commit = sha
+            store.save()
+            devops.push_branch(cfg.repo_dir, store.branch)
+            replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
+        for ref, body in replies.items():
+            if ref in delivery.handled_threads:
+                continue
+            flow.reply_to_thread(ref, body)
+            flow.resolve_thread(ref)
+            delivery.handled_threads.append(ref)
+            store.save()
+        if revision.changed and not cfg.preflight.review_on_push:
+            flow.request_review(delivery.pr_number, _reviewer(cfg))
+    except (DevopsError, GithubError) as e:
+        raise GateFailed(f"could not publish the review fixes: {e}") from e
+    delivery.review_round += 1
+    delivery.waiting_since = _now()
+    delivery.stage = "reviewing"
+
+
+def _review_status(flow: GitHubFlow, cfg, delivery: Delivery) -> review.ReviewStatus:
+    number = delivery.pr_number
+    try:
+        pr = flow.pull(number)
+        if pr.get("merged"):
+            raise GateFailed(f"PR #{number} was merged outside the runner before review passed")
+        if pr.get("state") != "open":
+            raise GateFailed(f"PR #{number} is {pr.get('state')}")
+        head = (pr.get("head") or {}).get("sha")
+        if head != delivery.head_sha:
+            raise GateFailed(f"PR #{number} head moved to {str(head)[:12]} outside the runner")
+        return review.evaluate(
+            head_sha=head,
+            checks=flow.check_runs(head),
+            statuses=flow.statuses(head),
+            reviews=flow.reviews(number),
+            threads=flow.review_threads(number),
+            bot=cfg.deploy_settings.review_bot,
+            required_approvals=cfg.preflight.required_approvals,
+        )
+    except GithubError as e:
+        # a GitHub hiccup is not a review result: keep waiting until the timeout
+        log.warning("could not read PR #%s: %s", number, e)
+        return review.ReviewStatus("pending", [f"GitHub ({e})"])
+
+
+def _sync_push(cfg, store: TicketStore, delivery: Delivery) -> None:
+    """Publish a committed head that a stopped run had not pushed yet."""
+    if delivery.head_sha and devops.head_commit(cfg.repo_dir) == delivery.head_sha:
+        try:
+            devops.push_branch(cfg.repo_dir, store.branch)
+        except DevopsError as e:
+            raise GateFailed(f"could not push {store.branch}: {e}") from e
+
+
+def _wait(cfg, seconds: float) -> None:
+    """Sleep in short steps so a stop request is honoured promptly."""
+    end = _now() + seconds
+    while _now() < end:
+        cfg.control.check()
+        _sleep(min(1.0, end - _now()))
+
+
+def _comment(flow: GitHubFlow, delivery: Delivery, body: str) -> None:
+    try:
+        flow.comment(delivery.pr_number, body)
+    except GithubError as e:
+        log.warning("could not comment on PR #%s: %s", delivery.pr_number, e)
+
+
+def _reviewer(cfg) -> str:
+    return cfg.deploy_settings.review_bot.removesuffix("[bot]") + "[bot]"
+
+
+def pr_body(issue: dict, store: TicketStore) -> str:
+    """Refs, not Closes: the issue closes only when the whole Definition of Done is met."""
+    lines = [f"Refs #{issue['number']}", ""]
+    if store.plan_summary:
+        lines += [store.plan_summary, ""]
+    criteria = store.delivery.criteria if store.delivery else []
+    if criteria:
+        lines += [
+            "### Acceptance criteria",
+            "",
+            "| | Criterion | Proven by | Before merge |",
+            "|---|---|---|---|",
+        ]
+        for c in criteria:
+            text = c["text"].replace("|", "\\|")
+            if c["where"] == "tests":
+                tickets = ", ".join(str(t) for t in c["tickets"]) or "none"
+                proven, before = f"tests in tickets {tickets}", c.get("pre_merge") or "not judged"
+            else:
+                proven, before = "a Dev check after deployment", "check fails on Dev today"
+            lines.append(f"| {c['id']} | {text} | {proven} | {before} |")
+        lines.append("")
+    lines.append("### Tickets")
+    for ticket in store.tickets:
+        if ticket.status == "done":
+            lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    lines += [
+        "",
+        (
+            "Opened by issue-runner `--deploy`. The issue closes only when its Definition of "
+            "Done is met: acceptance criteria, code review, merge and the Dev deployment."
+        ),
+    ]
+    return "\n".join(lines)
+
+
 def _not_implemented(cfg, client, issue, store, delivery) -> None:
     raise GateFailed(f"delivery stage {delivery.stage!r} is not implemented yet")
 
@@ -187,3 +413,6 @@ def _not_implemented(cfg, client, issue, store, delivery) -> None:
 _HANDLERS = dict.fromkeys(STAGE_GATE, _not_implemented)
 _HANDLERS["built"] = _built
 _HANDLERS["dev_checks"] = _dev_checks
+_HANDLERS["accepted"] = _accepted
+_HANDLERS["reviewing"] = _reviewing
+_HANDLERS["revising"] = _revising

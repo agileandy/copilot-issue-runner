@@ -302,6 +302,21 @@ def push_branch(repo_dir: Path, branch: str) -> None:
     _git(repo_dir, "push", "-u", "origin", branch)
 
 
+def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
+    """Commit every current change on the run branch, after the runner's own checks."""
+    branch = current_branch(repo_dir)
+    if branch != expected_branch or not branch.startswith("issue-"):
+        raise DevopsError(f"refusing to commit on {branch} — the run must be on {expected_branch}")
+    paths = changed_paths(repo_dir)
+    if not paths:
+        raise DevopsError("nothing to commit")
+    _validate_paths(repo_dir, paths)
+    _git(repo_dir, "add", "-A", "--", *paths)
+    _git(repo_dir, "commit", "-m", message)
+    require_clean(repo_dir)
+    return head_commit(repo_dir)
+
+
 def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     """Keep runner state out of the target repo's commits without touching .gitignore."""
     raw = _git(repo_dir, "rev-parse", "--git-path", "info/exclude").stdout.strip()

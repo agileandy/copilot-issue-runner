@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -483,7 +483,7 @@ flowchart LR
 
     <!-- Phase 4 -->
     <div class="phase">
-      <h3><code class="status">[]</code> Phase 4: PR, review watch and fix loop</h3>
+      <h3><code class="status">[x]</code> Phase 4: PR, review watch and fix loop</h3>
       <p>Open the PR, then poll until the review passes or the rounds run out. "Review passed" is a fixed rule over GitHub data, never an agent's opinion.</p>
 
       <figure class="diagram">
@@ -510,8 +510,8 @@ sequenceDiagram
 
       <h4>1. Open the PR for delivery</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Push and open a ready (non-draft) PR. In deploy mode the body uses <code>Refs #n</code> rather than <code>Closes #n</code> and lists each criterion with its tickets. Under squash merge the title becomes the commit subject, so build it as a Conventional Commit (<code>feat: &lt;issue title&gt;</code>, or a <code>pr_title</code> template from config).</li>
-        <li><code class="status">[]</code> Save <code>pr_number</code> and <code>head_sha</code>. On resume, find the existing PR for the branch and never open a second one.</li>
+        <li><code class="status">[x]</code> Push and open a ready (non-draft) PR. In deploy mode the body uses <code>Refs #n</code> rather than <code>Closes #n</code> and lists each criterion with its tickets. Under squash merge the title becomes the commit subject, so build it as a Conventional Commit (<code>feat: &lt;issue title&gt;</code>, or a <code>pr_title</code> template from config).</li>
+        <li><code class="status">[x]</code> Save <code>pr_number</code> and <code>head_sha</code>. On resume, find the existing PR for the branch and never open a second one.</li>
       </ul>
 
       <h4>2. Review gate rule</h4>
@@ -537,19 +537,19 @@ sequenceDiagram
 
       <h4>3. Collect findings and run the reviser</h4>
       <ul class="checklist">
-        <li><code class="status">[]</code> Findings are the unresolved review threads (GraphQL <code>reviewThreads</code>: path, line, body, thread id) and failing checks (name and the tail of the log from <code>gh run view --log-failed</code>), plus any <code>CHANGES_REQUESTED</code> body.</li>
-        <li><code class="status">[]</code> The <code>reviser</code> agent gets all current findings in one prompt and edits the worktree. Checked in code afterwards: no ticket test changed (hash), no Dev check changed, every ticket test passes, the regression gate passes, changed paths are safe, and HEAD and the branch are untouched by the agent.</li>
-        <li><code class="status">[]</code> The reviser replies per thread with <code>fixed</code> or <code>not_applicable</code> and a reason. A read-only verifier must agree to each <code>not_applicable</code>. Without that agreement the thread stays a finding.</li>
-        <li><code class="status">[]</code> The runner commits <code>fix(review): &lt;summary&gt;</code>, pushes (never with force), replies on each handled thread with the commit SHA or the agreed reason, resolves it, and saves its ID in <code>handled_threads</code>.</li>
-        <li><code class="status">[]</code> When <code>review_on_push</code> is false, request a new review with <code>POST /pulls/{n}/requested_reviewers</code> and the bot reviewer. <code>gh</code> 2.46 has no <code>--add-reviewer @copilot</code>.</li>
-        <li><code class="status">[]</code> Limits: <code>max_review_rounds</code>, and <code>review_timeout_min</code> per head without a review. Hitting either fails the <code>review</code> gate with exit 6. The PR stays open with a comment listing the open findings.</li>
+        <li><code class="status">[x]</code> Findings are the unresolved review threads (GraphQL <code>reviewThreads</code>: path, line, body, thread id) and failing checks (name and the tail of the log from <code>gh run view --log-failed</code>), plus any <code>CHANGES_REQUESTED</code> body.</li>
+        <li><code class="status">[x]</code> The <code>reviser</code> agent gets all current findings in one prompt and edits the worktree. Checked in code afterwards: no ticket test changed (hash), no Dev check changed, every ticket test passes, the regression gate passes, changed paths are safe, and HEAD and the branch are untouched by the agent.</li>
+        <li><code class="status">[x]</code> The reviser replies per thread with <code>fixed</code> or <code>not_applicable</code> and a reason. A read-only verifier must agree to each <code>not_applicable</code>. Without that agreement the thread stays a finding.</li>
+        <li><code class="status">[x]</code> The runner commits <code>fix(review): &lt;summary&gt;</code>, pushes (never with force), replies on each handled thread with the commit SHA or the agreed reason, resolves it, and saves its ID in <code>handled_threads</code>.</li>
+        <li><code class="status">[x]</code> When <code>review_on_push</code> is false, request a new review with <code>POST /pulls/{n}/requested_reviewers</code> and the bot reviewer. <code>gh</code> 2.46 has no <code>--add-reviewer @copilot</code>.</li>
+        <li><code class="status">[x]</code> Limits: <code>max_review_rounds</code>, and <code>review_timeout_min</code> per head without a review. Hitting either fails the <code>review</code> gate with exit 6. The PR stays open with a comment listing the open findings.</li>
       </ul>
 
       <h4>4. Testing Strategy</h4>
       <p>Fake GitHub scenarios plus a local bare repo as <code>origin</code>, so pushes are real git operations.</p>
       <ul class="checklist">
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_review_loop.py -q</code>: a clean first review passes at once. One finding is fixed, pushed, resolved and re-reviewed, then passes. A failing CI check is a finding. A reviser edit to a frozen test is rejected and restored. An unagreed <code>not_applicable</code> stays open. Exhausted rounds give exit 6. A review left on an old head does not count. Resume mid-loop does not repeat handled threads.</li>
-        <li><code class="status">[]</code> <code>uv run pytest tests/test_delivery_pr.py -q</code>: deploy-mode body has <code>Refs #n</code> and the criteria table. Resume reuses the existing PR.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_review_loop.py -q</code>: a clean first review passes at once. One finding is fixed, pushed, resolved and re-reviewed, then passes. A failing CI check is a finding. A reviser edit to a frozen test is rejected and restored. An unagreed <code>not_applicable</code> stays open. Exhausted rounds give exit 6. A review left on an old head does not count. Resume mid-loop does not repeat handled threads.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_delivery_pr.py -q</code>: deploy-mode body has <code>Refs #n</code> and the criteria table. Resume reuses the existing PR.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -837,6 +837,17 @@ flowchart LR
         <li>New <code>[deploy]</code> settings: <code>dev_check_ext</code> (default <code>.sh</code>), <code>dev_check_guide</code> (how checks are written for the repository, shown to the agent), and <code>dev_check_timeout_sec</code> (default 300). <code>dev_check_cmd</code> accepts <code>{check_path}</code>, <code>{dev_url}</code> and <code>{criterion}</code>. The verdict is the last non-empty line of stdout only.</li>
         <li>The missing-harness check runs right after planning instead of in preflight, since only the plan says which criteria are Dev criteria. It fails before any ticket is built (exit 5), and fixing the config resumes from the saved plan.</li>
         <li>The delivery gained a <code>dev_checks</code> stage (gate <code>criteria_dev</code>) between <code>built</code> and <code>accepted</code>. A check that still passes against Dev after all retries fails the gate. The plan treats that as "already met or a weak check" and the runner never guesses which.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T13:10:00+08:00: Phase 4 built, with six differences from the plan</summary>
+      <ol>
+        <li>Copilot's review always has the state <code>COMMENTED</code>, but its body starts with an overview verdict. On Woodside/ai-maint about 90 reviews show three verdicts: "🟢 Approval recommended", "🟡 Changes recommended" and "🔵 Needs a closer look". The review passes only on "Approval recommended". Any other verdict becomes a finding carrying the overview's summary sentence, so a 🔵 review with no inline comments still gives the reviser something to act on. A review without an overview heading falls back to its threads.</li>
+        <li>The review rule is the pure function <code>review.evaluate</code>. Live on Woodside/ai-maint it passes PR #344 and returns PR #347's verdict plus its 4 open threads.</li>
+        <li>Findings are numbered T1.. for the reviser: checks and statuses, then the review verdict, then threads. A new <code>reviser</code> role (write access) is held to the same guards as a ticket: frozen tests are restored, Dev checks must be unchanged, HEAD and the branch must not move, and every ticket test and the regression suite must pass. A "fixed" claim with no change is rejected.</li>
+        <li>A new <code>[deploy] pr_title</code> setting (default <code>feat: {title}</code>) controls the title, which becomes the squash commit subject. The PR tests live in <code>tests/test_review_loop.py</code> rather than a separate <code>test_delivery_pr.py</code>.</li>
+        <li>The PR merged or closed outside the runner, or its head moved, fails the review gate. A GitHub read error is treated as still waiting, up to the timeout. If findings exist when the timeout hits, the reviser acts on them instead of failing.</li>
+        <li>Re-requesting the review uses <code>POST /pulls/{n}/requested_reviewers</code> with <code>copilot-pull-request-reviewer[bot]</code>. That call is only proven against the fake. The Phase 8 live run must confirm GitHub accepts it.</li>
       </ol>
     </details>
   </section>
