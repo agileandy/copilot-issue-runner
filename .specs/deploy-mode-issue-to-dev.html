@@ -171,10 +171,10 @@ figcaption {
       <summary>Metadata</summary>
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
-        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00, 2026-10-06T16:40:00+08:00, 2026-10-06T17:30:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6), adc6de9 (Phase 7)</dd>
-        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
-        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00, 2026-10-06T16:40:00+08:00, 2026-10-06T17:30:00+08:00, 2026-10-06T18:10:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6), adc6de9 (Phase 7), 702190f (Phase 8 part 1), Woodside/issue-runner-sandbox 79c8fe6 (seed) and 2f92de0 (live run merge)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
         <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
         <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
@@ -707,17 +707,17 @@ sequenceDiagram
       <h4>2. Live sandbox</h4>
       <ul class="checklist">
         <li><code class="status">[x]</code> Sandbox repo <code>Woodside/issue-runner-sandbox</code> created 2026-10-06, private and empty, with the operator as admin. Woodside members cannot create internal repos or delete repos, so when the work is done, archive it (the operator can) or ask an org owner to delete it.</li>
-        <li><code class="status">[]</code> Set up the sandbox with an active <code>copilot_code_review</code> ruleset, a CI workflow, and a <code>dev-deployment.yaml</code> that creates a GitHub deployment to <code>development</code> and publishes a static page through GitHub Pages as "Dev".</li>
-        <li><code class="status">[]</code> Seed one issue whose criteria include one tested in code and one checked in Dev. Use a <code>dev_check_cmd</code> that fetches the Pages URL with <code>curl</code> and prints <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL</code>.</li>
-        <li><code class="status">[]</code> Run once clean, and once with a deliberate review finding and a conflicting commit pushed to <code>main</code> mid-run, to exercise the reviser and resolver live.</li>
+        <li><code class="status">[x]</code> Set up the sandbox with an active <code>copilot_code_review</code> ruleset, a CI workflow, and a <code>dev-deployment.yaml</code> that creates a GitHub deployment to <code>development</code> and publishes a static page through GitHub Pages as "Dev".</li>
+        <li><code class="status">[x]</code> Seed one issue whose criteria include one tested in code and one checked in Dev. Use a <code>dev_check_cmd</code> that fetches the Pages URL with <code>curl</code> and prints <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL</code>.</li>
+        <li><code class="status">[wip]</code> Run once clean, and once with a deliberate review finding and a conflicting commit pushed to <code>main</code> mid-run, to exercise the reviser and resolver live.</li>
       </ul>
 
       <h4>3. Testing Strategy</h4>
       <ul class="checklist">
         <li><code class="status">[x]</code> <code>cd apps/visual &amp;&amp; bun test</code>: the deploy phases and gate table render.</li>
         <li><code class="status">[]</code> <code>uv run pytest tests/test_deploy_e2e.py -q</code>: a full scenario on the fake GitHub from plan to DoD met, plus one failure scenario per gate with the correct exit code.</li>
-        <li><code class="status">[]</code> <code>gh-runner &lt;n&gt; --repo Woodside/issue-runner-sandbox --deploy --agent; echo $?</code>: prints <code>0</code>. The issue is closed with all criteria ticked and has a DoD comment showing six passes.</li>
-        <li><code class="status">[]</code> <code>gh api "repos/Woodside/issue-runner-sandbox/deployments?environment=development" --jq '.[0].sha'</code>: contains the PR's merge commit, and its latest status is <code>success</code>.</li>
+        <li><code class="status">[x]</code> <code>gh-runner &lt;n&gt; --repo Woodside/issue-runner-sandbox --deploy --agent; echo $?</code>: prints <code>0</code>. The issue is closed with all criteria ticked and has a DoD comment showing six passes.</li>
+        <li><code class="status">[x]</code> <code>gh api "repos/Woodside/issue-runner-sandbox/deployments?environment=development" --jq '.[0].sha'</code>: contains the PR's merge commit, and its latest status is <code>success</code>.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -736,7 +736,7 @@ sequenceDiagram
       <li><code class="status">[]</code> <code>uv run ruff format --check src tests</code>: no files to reformat beyond the 2 already on <code>main</code>.</li>
       <li><code class="status">[]</code> <code>cd apps/visual &amp;&amp; bun test</code>: the visual app tests pass.</li>
       <li><code class="status">[]</code> <code>gh-runner 17 --deploy --no-pr; echo $?</code>: prints <code>2</code> with a flag-conflict message and no model call.</li>
-      <li><code class="status">[]</code> Live sandbox run (Phase 8): exit <code>0</code>, the issue is closed, all criteria are ticked, and the DoD comment shows six passes.</li>
+      <li><code class="status">[x]</code> Live sandbox run (Phase 8): exit <code>0</code>, the issue is closed, all criteria are ticked, and the DoD comment shows six passes.</li>
       <li><code class="status">[]</code> Live sandbox failure run: a Dev check that cannot pass gives exit <code>5</code>, the issue stays open, and the DoD comment names the failing criterion.</li>
       <li><code class="status">[]</code> <code>gh repo archive Woodside/issue-runner-sandbox --yes</code>: run once the live proof is done. Deletion needs a Woodside org owner.</li>
     </ul>
@@ -884,9 +884,31 @@ flowchart LR
       <ol>
         <li>Pipeline chips group the delivery stages as criteria, pr, review, merge, deploy and verify, and appear once a delivery stage starts. The summary outcome reads "definition of done met" or "definition of done FAILED at &lt;gate&gt;". A "definition of done" section listing every gate leads the overlay and the saved report.</li>
         <li>The printed summary, and therefore the <code>--agent</code> comment, shows the Definition of Done verdict and a gate table. <code>RunReport.gates</code> carries it for every deploy outcome, including the tickets and missing-harness failures.</li>
-        <li>The README has a Deploy mode section (gates, how each is reached, preflight, resume) and exit codes 5–8. <code>runner.example.toml</code> documents every <code>[deploy</code>] key.</li>
+        <li>The README has a Deploy mode section (gates, how each is reached, preflight, resume) and exit codes 5–8. <code>runner.example.toml</code> documents every <code>[deploy]</code> key.</li>
         <li>The full scenario to exit 0 lives in <code>tests/test_closeout.py</code>, and the per-gate failure scenarios in each phase's suite, rather than a separate <code>test_deploy_e2e.py</code>.</li>
       </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T18:10:00+08:00: Phase 8 live proof, first run met the Definition of Done</summary>
+      <p>The sandbox <code>Woodside/issue-runner-sandbox</code> was seeded at <code>79c8fe6</code>:</p>
+      <ul>
+        <li>a <code>calc</code> module with tests,</li>
+        <li><code>site/build.py</code>, and a <code>dev-deployment</code> workflow (paths filter, environment <code>development</code>) that publishes the page to the <code>deployed/dev</code> branch,</li>
+        <li>CI, a squash-only merge policy and an active <code>copilot_code_review</code> ruleset,</li>
+        <li>a <code>runner.toml</code> whose Dev check reads <code>deployed/dev</code> through <code>gh api</code>.</li>
+      </ul>
+      <p>Dev is a branch rather than a Pages site, because Pages on a private Enterprise repository would not be readable by a plain <code>curl</code>.</p>
+      <p>Issue #1 has one criterion proven by tests and one checked in Dev. <code>issue-runner 1 --repo Woodside/issue-runner-sandbox --deploy --agent --max-run-credits 800</code> exited 0 and used about 122 AIU. Verified on GitHub:</p>
+      <ul>
+        <li>The plan had 2 tickets, mirrored as sub-issues #2 and #3, both closed.</li>
+        <li>The Dev check for AC2 was red before the PR: "Dev page does not show the line '5 - 3 = 2'".</li>
+        <li>PR #4 was titled "feat: Add subtract to the calculator and show it on Dev", with a body starting <code>Refs #1</code>.</li>
+        <li>The Copilot review of <code>78faacb</code> said "🟢 Approval recommended", and CI, CodeQL and Code Quality were green.</li>
+        <li>It squash-merged at <code>2f92de0</code>. <code>dev-deployment</code> ran on the push, and deployment 6880732137 of <code>2f92de0</code> reported <code>success</code>.</li>
+        <li>The Dev page lists <code>5 - 3 = 2</code>, and the AC2 check then passed.</li>
+        <li>Issue #1 was closed as completed, with both criteria ticked, a "Definition of Done: met" comment showing six passes, and the <code>--agent</code> summary comment.</li>
+      </ul>
+      <p>Not yet exercised live, because the first review approved straight away: the reviser loop, re-requesting the Copilot review (<code>POST /requested_reviewers</code>), the base merge with conflict resolution, and a failing run.</p>
     </details>
   </section>
 
