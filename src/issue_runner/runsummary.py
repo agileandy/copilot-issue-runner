@@ -30,6 +30,8 @@ _STAGES = {
 
 # Per-ticket details already shown as blocked tickets, commits or the plan.
 _TICKET_DETAIL = re.compile(r"^ticket \d+ (?:BLOCKED:|done @|\[)")
+# Details that report success; they never explain why a run stopped short.
+_SUCCESS_DETAIL = re.compile(r"^(?:pull request opened: |plan-only run; )")
 
 
 def artefacts(store: TicketStore) -> dict:
@@ -85,4 +87,8 @@ def blocked(store: TicketStore) -> list[dict]:
 
 def notes(details: list[str]) -> list[str]:
     """Run-level details: why the run stopped or what it could not do."""
-    return [d.splitlines()[0] for d in details if d and not _TICKET_DETAIL.match(d)]
+    return [
+        d.splitlines()[0]
+        for d in details
+        if d and not _TICKET_DETAIL.match(d) and not _SUCCESS_DETAIL.match(d)
+    ]
