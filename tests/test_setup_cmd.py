@@ -63,10 +63,31 @@ def test_a_failed_setup_cmd_stops_the_run_before_any_model_call(tmp_path):
     assert client.roles == []
 
 
-def test_a_setup_cmd_that_writes_a_tracked_path_is_refused(tmp_path):
-    _env, cfg = sandbox(tmp_path, isolated=True, setup_cmd=[_write_cmd("stray.txt")])
-    with pytest.raises(ProvisionError, match="stray.txt"):
+def test_a_setup_cmd_that_writes_a_tracked_path_is_refused_and_undone(tmp_path):
+    env, cfg = sandbox(tmp_path, isolated=True, setup_cmd=[_write_cmd("stray.txt")])
+    with pytest.raises(ProvisionError, match="stray.txt.*were undone"):
         run_issue(cfg, DemoClient(cfg), ISSUE)
+    workspace = min((env.repo_dir / ".issue-runner" / "worktrees").iterdir())
+    assert git(workspace, "status", "--porcelain") == ""
+
+
+def test_a_failing_setup_cmd_cannot_leave_code_behind_for_a_retry(tmp_path):
+    env, cfg = sandbox(tmp_path, isolated=True)
+    tracked = git(env.repo_dir, "ls-files").splitlines()[0]
+    careless = (
+        f"{PY} -c \"open('{tracked}', 'a').write('# setup was here\\n'); "
+        "open('stray.txt', 'w').write('x'); import sys; sys.exit('setup broke')\""
+    )
+    cfg.setup_cmd = [careless]
+    with pytest.raises(ProvisionError, match=f"setup broke[\\s\\S]*{tracked}, stray.txt"):
+        run_issue(cfg, DemoClient(cfg), ISSUE)
+    workspace = min((env.repo_dir / ".issue-runner" / "worktrees").iterdir())
+    assert git(workspace, "status", "--porcelain") == ""
+
+    cfg.setup_cmd = [_write_cmd(".venv/ran")]
+    report = run_issue(cfg, DemoClient(cfg), ISSUE)
+    assert (report.done, report.blocked) == (1, 0)
+    assert "setup was here" not in (Path(report.worktree) / tracked).read_text()
 
 
 def test_discovered_provisioning_that_writes_a_tracked_path_is_refused(tmp_path, monkeypatch):

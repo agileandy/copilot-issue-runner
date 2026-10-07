@@ -56,6 +56,23 @@ def changed_paths(repo_dir: Path) -> list[str]:
     return sorted(paths)
 
 
+def discard_paths(repo_dir: Path, paths: list[str]) -> None:
+    """Restore tracked paths to HEAD and delete untracked ones; nothing else is touched."""
+    _validate_paths(repo_dir, paths)
+    for name in paths:
+        tracked = subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{name}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            check=False,
+        )
+        if tracked.returncode == 0:
+            _git(repo_dir, "restore", "--source=HEAD", "--staged", "--worktree", "--", name)
+        else:
+            _git(repo_dir, "rm", "-q", "--cached", "--ignore-unmatch", "--", name)
+            (Path(repo_dir) / name).unlink(missing_ok=True)
+
+
 def require_clean(repo_dir: Path) -> None:
     dirty = _git(repo_dir, "status", "--porcelain", "--untracked-files=all").stdout.strip()
     if dirty:

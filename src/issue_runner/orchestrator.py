@@ -261,23 +261,50 @@ def _prepare_toolchain(cfg: RunnerConfig, source: Path) -> None:
             devops.ensure_excluded(source, pattern)
         before_paths = devops.changed_paths(workspace)
         before = devops.workspace_digest(workspace)
-        if cfg.setup_cmd:
-            toolchain.run_setup(workspace, cfg.setup_cmd, cfg.provision_timeout)
-        else:
-            commands = [cfg.test_cmd, cfg.regression_cmd or detect_regression_cmd(workspace) or ""]
-            toolchain.provision(workspace, commands, cfg.provision_timeout)
-        if devops.workspace_digest(workspace) != before:
-            changed = sorted(set(devops.changed_paths(workspace)) ^ set(before_paths))
-            named = ", ".join(changed[:10]) or "the contents of already-changed files"
-            raise toolchain.ProvisionError(
-                f"provisioning changed files in the run worktree: {named}; "
-                "it may only write ignored paths"
-            )
+        try:
+            if cfg.setup_cmd:
+                toolchain.run_setup(workspace, cfg.setup_cmd, cfg.provision_timeout)
+            else:
+                commands = [
+                    cfg.test_cmd,
+                    cfg.regression_cmd or detect_regression_cmd(workspace) or "",
+                ]
+                toolchain.provision(workspace, commands, cfg.provision_timeout)
+        except toolchain.ProvisionError as e:
+            # a step that wrote code and then failed must not leave that code behind
+            _refuse_provisioning_changes(workspace, before, before_paths, e)
+            raise
+        _refuse_provisioning_changes(workspace, before, before_paths)
     if cfg.test_cmd_detected:
         found = detect_test_cmd(workspace)
         if found.test_cmd != cfg.test_cmd:
             log.info("test_cmd for the run workspace: %s", found.test_cmd)
         cfg.test_cmd = found.test_cmd
+
+
+def _refuse_provisioning_changes(
+    workspace: Path, before: str, before_paths: list[str], error: Exception | None = None
+) -> None:
+    """Provisioning may only write ignored paths: undo anything else it wrote, then stop.
+
+    Only files that were clean before provisioning are restored. A file an
+    unfinished ticket had already changed cannot be told apart from setup's
+    edit, so it is named and left for the user.
+    """
+    if devops.workspace_digest(workspace) == before:
+        return
+    stray = sorted(set(devops.changed_paths(workspace)) - set(before_paths))
+    devops.discard_paths(workspace, stray)
+    message = (
+        f"provisioning changed files in the run worktree: {', '.join(stray[:10])}; "
+        "it may only write ignored paths, so those changes were undone"
+        if stray
+        else "provisioning changed files an unfinished ticket had already changed; "
+        "check them before re-running"
+    )
+    if error is not None:
+        message = f"{error}\n{message}"
+    raise toolchain.ProvisionError(message) from error
 
 
 def _run_issue(
@@ -628,7 +655,7 @@ def _process_ticket(
                             str(e),
                             "coder exhausted its retries — the spec may be wrong",
                         )
-                        if not _hand_back(cfg, store, ticket, report, str(e)):
+                        if not _hand_back(cfg, store, ticket, report, str(e), "coder"):
                             return
                         continue
                 _require_accepted_test(cfg, ticket)
@@ -684,7 +711,8 @@ def _process_ticket(
                     _verdict_body(verdict),
                     verdict.verdict,
                 )
-                if not _hand_back(cfg, store, ticket, report, f"last verdict {verdict.verdict}"):
+                reason = f"last verdict {verdict.verdict}"
+                if not _hand_back(cfg, store, ticket, report, reason, "verifier"):
                     return
                 continue
 
@@ -700,7 +728,7 @@ def _process_ticket(
                     journal.post(
                         ticket, "harness", "builder.coder", str(e), "regression suite failed"
                     )
-                    if not _hand_back(cfg, store, ticket, report, str(e)):
+                    if not _hand_back(cfg, store, ticket, report, str(e), "regression"):
                         return
                     continue
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
@@ -874,12 +902,23 @@ def _regression_gate(cfg: RunnerConfig) -> None:
 
 
 def _hand_back(
-    cfg: RunnerConfig, store: TicketStore, ticket: Ticket, report: RunReport, reason: str
+    cfg: RunnerConfig,
+    store: TicketStore,
+    ticket: Ticket,
+    report: RunReport,
+    reason: str,
+    failed_stage: str,
 ) -> bool:
+    """Count a hand-back; block the ticket once it exceeds max_rounds.
+
+    `failed_stage` is the stage that failed. The ticket's phase already names
+    the stage it was being sent back to, which is not where it stopped.
+    """
     ticket.rounds += 1
     store.save()
     if ticket.rounds > cfg.max_rounds:
-        _block(store, ticket, report, f"exceeded max_rounds={cfg.max_rounds}; {reason}", cfg)
+        reason = f"exceeded max_rounds={cfg.max_rounds}; {reason}"
+        _block(store, ticket, report, reason, cfg, stage=failed_stage)
         return False
     return True
 
