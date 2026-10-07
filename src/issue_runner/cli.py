@@ -28,6 +28,7 @@ from .phases.plan import PlanError, build_plan_prompt
 from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
 from .tickets import DOD_GATES, StateError
+from .toolchain import ProvisionError
 from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 # failures that abort a whole run: report them, never traceback at the user
@@ -40,6 +41,7 @@ PipelineError = (
     StateError,
     GithubError,
     TrackerError,
+    ProvisionError,
 )
 
 
@@ -322,7 +324,7 @@ def main(argv=None) -> int:
     if args.dry_run:
         preview = dict(issue, number="<new clone>") if args.demo else issue
         prompt = build_plan_prompt(
-            preview, cfg.preflight.criteria if cfg.preflight is not None else None
+            preview, cfg, cfg.preflight.criteria if cfg.preflight is not None else None
         )
         argv_preview = client._build_argv(
             prompt, role="planner", read_only=True, session_name="planner"
@@ -389,7 +391,11 @@ def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> in
         else:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
-                _output(_abort_lines(error, client, resume), post)
+                lines = _abort_lines(error, client, resume)
+                if post is not None:
+                    # stderr already has the error; the comment must carry it too
+                    lines = [f"error: {error}", *lines]
+                _output(lines, post)
                 return 1
             _output(_summary_lines(report, resume), post)
             return _exit_code(report)

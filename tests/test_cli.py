@@ -801,6 +801,26 @@ def test_agent_mode_turns_off_a_configured_visual(tmp_path, monkeypatch):
     assert seen["visual"] is False
 
 
+def test_agent_mode_visual_abort_posts_the_error(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli, visual_display
+
+    repo, posted = _agent_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True, raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+    monkeypatch.setattr(
+        visual_display,
+        "run_visual",
+        lambda *a, **k: (None, RuntimeError("planner blew up"), False),
+    )
+    rc = cli.main(
+        ["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--agent", "--visual"]
+    )
+    assert rc == 1
+    assert "error: planner blew up" in capsys.readouterr().err
+    [(_, number, body)] = posted
+    assert number == 7 and "error: planner blew up" in body
+
+
 DEPLOY_ISSUE = {
     "number": 7,
     "title": "T",

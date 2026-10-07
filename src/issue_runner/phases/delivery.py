@@ -299,7 +299,7 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
         if action == "fixed" and revision.changed:
             replies[ref] = f"Fixed: {reason}"
         elif action == "not_applicable":
-            agreed, why = review.agrees(client, finding, reason)
+            agreed, why = review.agrees(client, cfg, finding, reason)
             if agreed:
                 replies[ref] = f"Not changed: {reason} (a second reviewer agreed: {why})"
             else:

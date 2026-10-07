@@ -174,6 +174,9 @@ def test_max_rounds_blocks_ticket(git_repo, cfg):
     )
     report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
     assert report.done == 0 and report.blocked == 1
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets[0].blocked_stage == "verifier"  # not "coder", its next stop
 
 
 def test_resume_skips_planning(git_repo, cfg):

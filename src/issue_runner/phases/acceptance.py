@@ -19,6 +19,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import TicketStore
@@ -49,6 +50,7 @@ in this repository proves it and passes. Cite those tests by file path relative
 to the repository root. Never cite a test that does not exist. If no test
 proves a criterion, it is "unmet": say what is missing.
 
+{rules}
 Reply with ONLY this JSON (no prose):
 {{
   "criteria": [
@@ -80,6 +82,7 @@ def judge(client, cfg: RunnerConfig, issue: dict, store: TicketStore, criteria: 
             for t in store.tickets
         ),
         "criteria": "\n".join(f"{c['id']}: {c['text']}" for c in criteria),
+        "rules": workspace_rules(cfg),
     }
     extra = ""
     last_error = "no attempt"
@@ -187,6 +190,7 @@ HARD RULES:
   that passes now proves nothing about this change and will be rejected.
 - Do not modify any file.
 
+{rules}
 Reply with ONLY this JSON (no prose):
 {{"content": "<the complete check file>"}}
 {feedback}"""
@@ -277,6 +281,7 @@ def write_red_check(
         "ext": settings.dev_check_ext,
         "dev_url": settings.dev_url or "(see the command)",
         "guide": settings.dev_check_guide.strip() or "(no guide: follow the command above)",
+        "rules": workspace_rules(cfg),
     }
     extra = ""
     last_error = "no attempt"

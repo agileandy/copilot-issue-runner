@@ -5,9 +5,12 @@ import pytest
 from issue_runner.phases.devops import (
     DevopsError,
     approve_changes,
+    branch_kind,
+    branch_name,
     commit_ticket,
     create_branch,
     current_branch,
+    is_run_branch,
 )
 from issue_runner.tickets import Ticket
 
@@ -31,21 +34,21 @@ def _ticket():
 
 
 def test_create_branch_switches(git_repo):
-    branch = create_branch(git_repo, "17", "add-subtract")
-    assert branch == "issue-17-add-subtract"
-    assert current_branch(git_repo) == "issue-17-add-subtract"
+    branch = create_branch(git_repo, "feature/17-add-subtract")
+    assert branch == "feature/17-add-subtract"
+    assert current_branch(git_repo) == "feature/17-add-subtract"
 
 
 def test_create_branch_reuses_existing(git_repo):
-    create_branch(git_repo, "17", "add-subtract")
+    create_branch(git_repo, "feature/17-add-subtract")
     subprocess.run(["git", "switch", "main"], cwd=git_repo, check=True, capture_output=True)
-    branch = create_branch(git_repo, "17", "add-subtract")
-    assert branch == "issue-17-add-subtract"
-    assert current_branch(git_repo) == "issue-17-add-subtract"
+    branch = create_branch(git_repo, "feature/17-add-subtract")
+    assert branch == "feature/17-add-subtract"
+    assert current_branch(git_repo) == "feature/17-add-subtract"
 
 
 def test_commit_ticket_commits_changes(git_repo):
-    create_branch(git_repo, "17", "add-subtract")
+    create_branch(git_repo, "feature/17-add-subtract")
     (git_repo / "new.py").write_text("x = 1")
     ticket = _ticket()
     approve_changes(git_repo, ticket)
@@ -67,15 +70,57 @@ def test_commit_ticket_refuses_on_main(git_repo):
         commit_ticket(git_repo, _ticket())
 
 
-def test_create_branch_without_slug(git_repo):
-    branch = create_branch(git_repo, "add-subtract", "")
-    assert branch == "issue-add-subtract"
+def test_branch_name_without_slug():
+    assert branch_name("add-subtract", "") == "feature/add-subtract"
+
+
+def test_branch_names_follow_the_team_prefixes():
+    assert branch_name("17", "add-subtract") == "feature/17-add-subtract"
+    assert branch_name("17", "fix-crash", "bugfix") == "bugfix/17-fix-crash"
+    with pytest.raises(DevopsError):
+        branch_name("17", "x", "issue")
+
+
+@pytest.mark.parametrize(
+    ("labels", "kind"),
+    [
+        ([], "feature"),
+        ([{"name": "enhancement"}], "feature"),
+        ([{"name": "Bug"}], "bugfix"),
+        (["bug"], "bugfix"),
+        ([{"name": "bugfix-later"}], "feature"),
+    ],
+)
+def test_bug_label_selects_a_bugfix_branch(labels, kind):
+    assert branch_kind({"number": 1, "title": "t", "labels": labels}) == kind
+
+
+def test_issue_without_labels_is_a_feature():
+    assert branch_kind({"number": 1, "title": "t"}) == "feature"
+
+
+@pytest.mark.parametrize("branch", ["feature/17-x", "bugfix/17-x", "hotfix/17-x", "issue-17-x"])
+def test_run_branches_include_legacy_issue_branches(branch):
+    assert is_run_branch(branch)
+
+
+@pytest.mark.parametrize("branch", ["main", "master", "release/1", "issues"])
+def test_other_branches_are_not_run_branches(branch):
+    assert not is_run_branch(branch)
+
+
+def test_legacy_issue_branch_still_commits(git_repo):
+    create_branch(git_repo, "issue-17-legacy")
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    assert commit_ticket(git_repo, ticket, expected_branch="issue-17-legacy")
 
 
 def test_commit_ticket_skips_default_junk(git_repo):
     from issue_runner.phases.devops import DEFAULT_EXCLUDES, ensure_excluded
 
-    create_branch(git_repo, "17", "x")
+    create_branch(git_repo, "feature/17-x")
     for pattern in DEFAULT_EXCLUDES:
         ensure_excluded(git_repo, pattern)
     (git_repo / "__pycache__").mkdir()
@@ -92,7 +137,7 @@ def test_commit_ticket_skips_default_junk(git_repo):
 
 
 def test_commit_ticket_requires_explicit_approval(git_repo):
-    create_branch(git_repo, "17", "approval")
+    create_branch(git_repo, "feature/17-approval")
     (git_repo / "new.py").write_text("x = 1")
     with pytest.raises(DevopsError, match="no approved change set"):
         commit_ticket(git_repo, _ticket())

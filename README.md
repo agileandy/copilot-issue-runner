@@ -20,8 +20,10 @@ clean workspace -> plan -> per ticket: [ tester -> coder -> verifier -> regressi
    **single logical test assertion**. Tickets are stored locally
    (`.issue-runner/issue-<n>.json`, the source of truth) and optionally
    mirrored as GitHub sub-issues via `gh`.
-   The branch is `issue-<n>-<slug>`. All build work and commits stay in the run
-   workspace; `git push` is denied to the agent unconditionally.
+   The branch is `feature/<n>-<slug>`, or `bugfix/<n>-<slug>` when the issue is
+   labelled `bug`. Runs saved on an older `issue-<n>-<slug>` branch resume and
+   commit there. All build work and commits stay in the run workspace; `git push`
+   is denied to the agent unconditionally.
 3. **Build/verify loop** per ticket:
    - `builder.tester` writes the test first. The harness — not the model —
      requires evidence of actual test execution and a genuine failing result
@@ -133,10 +135,10 @@ the harness would misread as a passing test.
 
 Python detection uses the target project's environment for both focused tests and
 the regression suite: `uv run --no-sync python` when `uv.lock` exists, otherwise
-the project's `.venv` Python when present, then `python` from the caller's PATH.
-It never selects the globally installed runner's private interpreter. In a run
-worktree, detection happens after the worktree's environment is set up (below),
-so the focused test and the full suite always use the same environment.
+the project's `.venv/bin/python` when present, then `python` from the caller's
+PATH. The `.venv` path is relative, and a detected command is detected again in
+the run worktree, so tests never use the source checkout's environment. It never
+selects the globally installed runner's private interpreter.
 
 Test commands run non-interactively with colour disabled. Go reports each case
 and does not reuse cached results. Pytest keeps its result summary visible even
@@ -149,30 +151,57 @@ Override it with `regression_cmd` or `--regression-cmd`; it must not contain
 `{test_path}`. Unknown projects need an explicit regression command. Both commands
 must report actual test execution, not just exit successfully.
 
-### Run worktree environment
+### Worktree toolchain
 
-A new run worktree has none of the source checkout's ignored directories, so it
-starts without `.venv` or `node_modules`. Before any ticket work, on every run
-and resume, the runner prepares the worktree's dependencies:
+Before any model call, each run worktree gets its own dependencies, so agents
+never reach into the source checkout (which lies outside the directory Copilot
+may use). The steps come from the target repo's own manifests:
 
-| Project | Setup |
+| Found | Step, run in the worktree |
 |---|---|
-| Python with `uv.lock` | `uv sync --frozen` |
-| Python without a lock file | `uv venv --allow-existing .venv`, then `uv pip install` of the project (when it has a `[project]` table or `setup.py`), every root `requirements*.txt`, and `pytest` |
-| `package.json` with a lock file | `npm ci`, or the frozen install for `pnpm-lock.yaml`, `yarn.lock` or `bun.lock` |
-| `package.json` without a lock file, `go.mod`, `Cargo.toml` | nothing |
+| `uv.lock` with `pyproject.toml` at the root | `uv sync --frozen` |
+| `requirements*.txt` at the root or one directory down | `uv venv .venv`, then one `uv pip install -r <file>` per file, `requirements.txt` first. `pytest` is added when the test command uses it and no file names it |
+| `package-lock.json` up to two directories down | `npm ci --no-audit --no-fund --prefer-offline` in that directory |
+
+Each step logs a `toolchain:` line, uses uv's or npm's shared cache, and is
+skipped once a previous run finished it. A failing or slow step stops the run
+with exit 1 and names the step. `/.venv/` and `node_modules/` are added to the
+repository's `info/exclude`, so they never enter a commit. Configure it in
+`runner.toml`:
+
+```toml
+provision = true          # false: prepare the worktree yourself
+provision_timeout = 900   # seconds per step
+```
 
 `setup_cmd` in `runner.toml` (a command or a list of commands) or a repeated
-`--setup-cmd` replaces the detected setup. Use it when dependencies live
-somewhere detection cannot see, for example `backend/requirements.txt`.
-Automatic setup runs only when the test command was detected too: an explicit
-`test_cmd` or `--test-cmd` already names its environment. `--in-place` runs do
-no setup.
+`--setup-cmd` replaces the discovered steps. It runs even when `provision =
+false`. Use it for steps discovery cannot know, such as copying test helpers
+into the worktree. It shares `provision_timeout`, and a failing command stops the
+run with its output.
 
-If a setup command fails, the run stops before any model call and shows its
-output. Setup may only write ignored paths: `.venv/`, `node_modules/` and
-`*.egg-info/` are excluded for every run, and a setup that changes tracked or
-untracked files stops the run. The runner never deletes worktrees or branches.
+Provisioning may only write ignored paths. If the discovered steps or
+`setup_cmd` change any tracked or untracked file in the worktree, the run stops
+and names the files.
+
+`--in-place` runs are never provisioned: they use your own prepared checkout.
+The runner does not delete worktrees or branches.
+
+### Agent permissions
+
+Every Copilot call gets `-C <worktree> --add-dir <worktree>` and nothing
+broader. `--allow-all-tools` already approves the worktree's own test commands,
+so no per-command allow rule is added. `git push` is always denied. Read-only
+roles (planner, verifier) also have `write` and every repository-changing git
+subcommand denied (`commit`, `reset`, `checkout`, `switch`, `branch`, `stash`,
+`worktree`, `config` and others), and keep read-only git such as `status`,
+`diff`, `log` and `show`. Copilot matches git rules on the first subcommand
+only, so `git branch` is denied as a whole.
+
+Every prompt names the workspace and its exact test commands, and tells the
+agent to stay in the workspace, never call the source checkout's `.venv` or
+`node_modules`, use uv rather than pip, and, when a tool call is denied, try one
+different approach and then report the command instead of repeating it.
 
 For new runs, state records every accepted phase and its artifacts. Older state
 without worktree metadata can resume only from its original clean issue branch.

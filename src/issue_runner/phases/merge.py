@@ -18,6 +18,7 @@ the run branch exactly as it was.
 import base64
 import hashlib
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..tickets import TicketStore
 from . import devops
@@ -47,6 +48,7 @@ HARD RULES:
 {tests}
 - Keep the change minimal.
 
+{rules}
 When done, reply with ONLY this JSON: {{"notes": "<one line>"}}
 {feedback}"""
 
@@ -80,6 +82,7 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
                 base=base,
                 situation=f"{situation}\n\nWhat is wrong now:\n{problem}",
                 tests="\n".join(f"  - {t.test_path}" for t in tests) or "  (none)",
+                rules=workspace_rules(cfg),
                 feedback=feedback,
             ),
             role="resolver",

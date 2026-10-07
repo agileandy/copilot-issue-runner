@@ -22,6 +22,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json_object
 from ..testcmd import detect_regression_cmd
@@ -172,6 +173,7 @@ HARD RULES:
 - Do not commit, push, switch branches or rewrite history. The runner commits.
 - Keep the change minimal and focused on the findings.
 
+{rules}
 Reply with ONLY this JSON (no prose):
 {{
   "threads": [{{"ref": "T1", "action": "fixed" | "not_applicable", "reason": "<one line>"}}],
@@ -190,6 +192,7 @@ The author declined to change the code, saying:
 
 Read the code. Is declining right: is the comment wrong or not applicable here?
 
+{rules}
 Reply with ONLY this JSON: {{"agree": true | false, "reason": "<one line>"}}"""
 
 
@@ -223,6 +226,7 @@ def revise(
         "body": issue["body"],
         "findings": text,
         "tests": "\n".join(f"  - {t.test_path}" for t in tests) or "  (none)",
+        "rules": workspace_rules(cfg),
     }
     head = devops.head_commit(cfg.repo_dir)
     extra = ""
@@ -258,10 +262,12 @@ def revise(
     raise ReviewError(f"the reviser could not produce an acceptable change: {last_error}")
 
 
-def agrees(client, finding: Finding, reason: str) -> tuple[bool, str]:
+def agrees(client, cfg: RunnerConfig, finding: Finding, reason: str) -> tuple[bool, str]:
     """A read-only second opinion on declining a review comment."""
     reply = client.run(
-        AGREE_PROMPT.format(where=finding.where, comment=finding.text, reason=reason),
+        AGREE_PROMPT.format(
+            where=finding.where, comment=finding.text, reason=reason, rules=workspace_rules(cfg)
+        ),
         role="verifier",
         read_only=True,
         session_name="review-arbiter",

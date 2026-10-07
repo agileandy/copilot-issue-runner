@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..journal import Journal
 from ..jsonx import JsonExtractError, extract_json_object
@@ -25,13 +26,15 @@ class Verdict:
 VERIFY_PROMPT = """\
 You are the verifier in an automated TDD pipeline working on this repository.
 You have read-only access, but you MAY run the test suite via shell commands.
+Read-only git (`git status`, `git diff`, `git log`, `git show`) is allowed; git
+commands that change the repository are denied.
 
 Sub-task under review: {title}
 Description: {description}
 Required single logical assertion: {test_assertion}
 The test lives at: {test_path}
-The implementation is in the current working tree (inspect `git status` is
-denied — read the files directly).
+The implementation is the uncommitted change in the current working tree:
+`git status` and `git diff HEAD` show it.
 
 Earlier rounds of this sub-task, if any, are recorded on its own issue:
 {thread}
@@ -49,6 +52,7 @@ Choose exactly one verdict:
 - "rework_code"  -> the test is robust but the implementation is wrong or fails (explain in code_feedback)
 - "pass"         -> the test is robust AND the implementation passes it
 
+{rules}
 Reply with ONLY this JSON (no prose):
 {{
   "verdict": "pass" | "refine_test" | "rework_code",
@@ -79,6 +83,7 @@ def verify_step(
             test_path=test_path,
             test_cmd=cfg.test_cmd.format(test_path=test_path),
             thread=thread_line,
+            rules=workspace_rules(cfg, test_path),
             feedback=extra,
         )
         reply = client.run(

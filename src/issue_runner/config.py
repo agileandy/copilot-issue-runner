@@ -92,11 +92,10 @@ class RunnerConfig:
     repo_dir: Path
     repo: str | None = None  # owner/name for gh; None = infer from repo_dir remote
     test_cmd: str = DEFAULT_TEST_CMD
+    test_cmd_detected: bool = False  # re-detected in the run worktree when True
     regression_cmd: str | None = None
-    # commands that prepare a run worktree's dependencies; None = detect
+    # commands that prepare a run worktree instead of the discovered toolchain steps
     setup_cmd: list[str] | None = None
-    # True when test_cmd came from project markers, so a worktree re-detects it
-    test_cmd_detected: bool = False
     isolate_worktree: bool = True
     max_rounds: int = 3
     tester_retries: int = 2
@@ -109,6 +108,8 @@ class RunnerConfig:
     max_run_credits: int | None = None
     empty_reply_retries: int = 2
     timeout: int = 1800
+    provision: bool = True  # give each run worktree its own .venv / node_modules
+    provision_timeout: int = 900  # seconds per provisioning step
     roles: dict[str, RoleConfig] = field(default_factory=dict)
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
     events: object | None = None  # EventBus, set by the CLI; never from runner.toml
@@ -168,6 +169,8 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         "max_run_credits",
         "empty_reply_retries",
         "timeout",
+        "provision",
+        "provision_timeout",
         "repo",
     ):
         if key in data:
@@ -199,7 +202,7 @@ def validate_config(cfg: RunnerConfig) -> None:
         value = getattr(cfg, name)
         if type(value) is not int or value < 0:
             raise ConfigError(f"{name} must be a non-negative integer")
-    for name in ("timeout", "max_ai_credits", "max_run_credits"):
+    for name in ("timeout", "provision_timeout", "max_ai_credits", "max_run_credits"):
         value = getattr(cfg, name)
         if value is not None and (type(value) is not int or value <= 0):
             raise ConfigError(f"{name} must be a positive integer")
@@ -215,8 +218,9 @@ def validate_config(cfg: RunnerConfig) -> None:
         or not all(isinstance(c, str) and c.strip() for c in cfg.setup_cmd)
     ):
         raise ConfigError("setup_cmd must be a command or a list of non-empty commands")
-    if type(cfg.isolate_worktree) is not bool:
-        raise ConfigError("isolate_worktree must be true or false")
+    for name in ("isolate_worktree", "provision"):
+        if type(getattr(cfg, name)) is not bool:
+            raise ConfigError(f"{name} must be true or false")
     _validate_deploy(cfg.deploy_settings)
 
 

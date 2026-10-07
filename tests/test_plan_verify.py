@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from issue_runner.agent_rules import workspace_rules
 from issue_runner.phases.plan import PlanError, plan_step
 from issue_runner.phases.verify import Verdict, VerifyError, verify_step
 from issue_runner.tickets import Ticket
@@ -190,11 +191,20 @@ def test_plan_rejects_dependencies_on_tickets_that_do_not_exist(cfg, depends_on)
 
 
 def test_plan_prompt_without_criteria_is_unchanged(cfg):
-    from issue_runner.phases.plan import build_plan_prompt
+    from issue_runner.phases.plan import PLAN_PROMPT, TICKET_RULES, build_plan_prompt
 
-    prompt = build_plan_prompt(ISSUE)
+    prompt = build_plan_prompt(ISSUE, cfg)
     assert "Acceptance criteria" not in prompt
-    assert "Planning only.\n\nReply with ONLY this JSON" in prompt
+    assert "WORKSPACE RULES:" in prompt
+    # without criteria the prompt is exactly the one plain runs use
+    legacy = PLAN_PROMPT.replace("{ticket_rules}", TICKET_RULES).replace("{criteria}", "")
+    assert prompt == legacy.format(
+        number=ISSUE["number"],
+        title=ISSUE["title"],
+        body=ISSUE["body"],
+        rules=workspace_rules(cfg),
+        feedback="",
+    )
 
 
 def test_plan_extra_numbers_new_tickets_after_the_built_ones(cfg):

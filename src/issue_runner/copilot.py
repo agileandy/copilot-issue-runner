@@ -19,6 +19,18 @@ unknown cost — never as zero.
 
 `git push` is denied unconditionally: the runner commits on a branch, pushing
 is a human decision. Deny rules take precedence over --allow-all-tools.
+
+Read-only roles keep `write` denied and lose every git verb that changes the
+repository, but keep read-only git (`status`, `diff`, `log`, `show`, ...), so a
+verifier can see what changed instead of reconstructing it from files. Copilot
+matches git rules on the first-level subcommand (`shell(git commit)` matches
+`git commit -m x`); it cannot see deeper arguments, so `git branch` is denied as
+a whole rather than only `git branch -D`.
+
+`--add-dir` names the run worktree and nothing broader. `--allow-all-tools`
+already approves every shell command, so no per-command `--allow-tool` rule is
+added: the denials seen in practice were paths outside the worktree, which an
+allow rule cannot fix and the worktree's own toolchain removes.
 """
 
 import json
@@ -41,7 +53,35 @@ from .usage import UsageLedger, cost_is_complete, mark_incomplete, merge_usage
 log = logging.getLogger("issue_runner")
 
 ALWAYS_DENY = ("shell(git push)",)
-READ_ONLY_DENY = ("write", "shell(git:*)")
+# git subcommands that change refs, the index, the worktree or configuration
+MUTATING_GIT = (
+    "commit",
+    "push",
+    "reset",
+    "checkout",
+    "switch",
+    "restore",
+    "stash",
+    "clean",
+    "rebase",
+    "merge",
+    "cherry-pick",
+    "revert",
+    "am",
+    "apply",
+    "add",
+    "rm",
+    "mv",
+    "tag",
+    "branch",
+    "worktree",
+    "config",
+    "pull",
+    "fetch",
+    "update-ref",
+    "gc",
+)
+READ_ONLY_DENY = ("write",) + tuple(f"shell(git {verb})" for verb in MUTATING_GIT)
 
 EXIT_GRACE_SECONDS = 30
 KILL_GRACE_SECONDS = 5
@@ -383,9 +423,13 @@ class CopilotClient:
             "error",
             "-C",
             str(Path(cfg.repo_dir)),
+            "--add-dir",
+            str(Path(cfg.repo_dir)),
         ]
         # cfg.visual is runner-side rendering only — it must never alter this argv
-        deny = list(ALWAYS_DENY) + (list(READ_ONLY_DENY) if read_only else [])
+        deny = list(ALWAYS_DENY)
+        if read_only:
+            deny += [rule for rule in READ_ONLY_DENY if rule not in deny]
         for tool in deny:
             argv += ["--deny-tool", tool]
 

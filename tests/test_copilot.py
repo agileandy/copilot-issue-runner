@@ -57,7 +57,8 @@ def test_read_only_roles_deny_writes(tmp_path):
     argv, _ = runner.calls[0]
     denied = [argv[i + 1] for i, a in enumerate(argv) if a == "--deny-tool"]
     assert "write" in denied
-    assert "shell(git:*)" in denied
+    assert "shell(git commit)" in denied
+    assert "shell(git:*)" not in denied  # read-only git stays available
 
 
 def test_returns_stripped_stdout(tmp_path):

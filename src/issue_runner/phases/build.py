@@ -23,6 +23,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..journal import Journal
 from ..jsonx import JsonExtractError, extract_json_object
@@ -189,6 +190,7 @@ HARD RULES:
   now. That is the point.
 - Do not modify any other test.
 
+{rules}
 When done, reply with ONLY this JSON (no prose):
 {{"test_path": "<path of the test file relative to the repo root>"}}
 {feedback}"""
@@ -210,6 +212,7 @@ HARD RULES:
 - Do not break other existing tests.
 - Minimal, focused change — no drive-by refactoring.
 
+{rules}
 When done, reply with ONLY this JSON (no prose):
 {{"changed_files": ["<paths you changed>"], "notes": "<one line>"}}
 {feedback}"""
@@ -268,6 +271,7 @@ def tester_step(
             description=ticket.description,
             test_assertion=ticket.test_assertion,
             files_hint=", ".join(ticket.files_hint) or "explore the repo",
+            rules=workspace_rules(cfg),
             feedback=extra,
         )
         reply = client.run(prompt, role="builder.tester", session_name=f"tester-t{ticket.id}")
@@ -352,6 +356,7 @@ def coder_step(
             description=ticket.description,
             test_path=test_path,
             test_assertion=ticket.test_assertion,
+            rules=workspace_rules(cfg, test_path),
             feedback=extra,
         )
         client.run(prompt, role="builder.coder", session_name=f"coder-t{ticket.id}")

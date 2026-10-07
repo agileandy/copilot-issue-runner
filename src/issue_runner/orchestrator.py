@@ -16,9 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from . import envsetup, github_io, runsummary
+from . import github_io, runsummary, toolchain
 from .budget import BudgetExhausted, RunBudget
-from .config import RunnerConfig, apply_detected_test_cmd
+from .config import RunnerConfig
 from .control import RunStopped, announce_stop
 from .copilot import CopilotError
 from .demo.seed import is_seed
@@ -39,7 +39,7 @@ from .phases.build import (
 from .phases.devops import DevopsError
 from .phases.plan import plan_step, plan_with_criteria
 from .phases.verify import VerifyError, verify_step
-from .testcmd import detect_regression_cmd
+from .testcmd import detect_regression_cmd, detect_test_cmd
 from .tickets import DOD_GATES, Delivery, StateError, Ticket, TicketStore
 from .visual import render_flow
 
@@ -109,6 +109,7 @@ def run_issue(
         issue_ref, branch_slug = str(issue["number"]), devops.slugify(issue["title"])
     else:
         issue_ref, branch_slug = devops.slugify(issue["title"], 20), ""
+    branch_kind = devops.branch_kind(issue)
     state_dir = Path(state_dir) if state_dir is not None else source / ".issue-runner"
     if not state_dir.is_absolute():
         state_dir = source / state_dir
@@ -124,12 +125,8 @@ def run_issue(
                     raise StateError("saved state belongs to a different source repository")
                 store.source_repo = str(source)
                 if not plan_only:
-                    _prepare_workspace(cfg, store, source, branch_slug)
-                    if Path(cfg.repo_dir).resolve() != source:
-                        envsetup.prepare(cfg, Path(cfg.repo_dir))
-                        if cfg.test_cmd_detected:
-                            # the focused test and the full suite share one environment
-                            apply_detected_test_cmd(cfg)
+                    _prepare_workspace(cfg, store, source, branch_slug, branch_kind)
+                    _prepare_toolchain(cfg, source)
                     if client_config is not None:
                         client_config.repo_dir = cfg.repo_dir
                     report.branch = store.branch or ""
@@ -177,7 +174,11 @@ def _record_partial(cfg: RunnerConfig, store: TicketStore, report: RunReport) ->
 
 
 def _prepare_workspace(
-    cfg: RunnerConfig, store: TicketStore, source: Path, branch_slug: str
+    cfg: RunnerConfig,
+    store: TicketStore,
+    source: Path,
+    branch_slug: str,
+    branch_kind: str = "feature",
 ) -> None:
     for pattern in devops.DEFAULT_EXCLUDES:
         devops.ensure_excluded(source, pattern)
@@ -198,7 +199,7 @@ def _prepare_workspace(
                 raise StateError("pending workspace has no recorded base commit")
             if workspace == source:
                 if devops.current_branch(source) != store.branch:
-                    devops.create_branch(source, store.issue_ref, branch_slug)
+                    devops.create_branch(source, store.branch)
             else:
                 devops.finish_worktree_creation(source, store.branch, workspace, store.initial_head)
             store.workspace_ready = True
@@ -229,9 +230,7 @@ def _prepare_workspace(
         store.save()
         return
 
-    store.branch = (
-        f"issue-{store.issue_ref}-{branch_slug}" if branch_slug else f"issue-{store.issue_ref}"
-    )
+    store.branch = devops.branch_name(store.issue_ref, branch_slug, branch_kind)
     if devops.branch_exists(source, store.branch):
         raise DevopsError(
             f"branch {store.branch} exists without matching run state; refusing to reuse it"
@@ -244,10 +243,72 @@ def _prepare_workspace(
     if cfg.isolate_worktree:
         devops.create_worktree(source, store.branch, workspace)
     else:
-        devops.create_branch(source, store.issue_ref, branch_slug)
+        devops.create_branch(source, store.branch)
     store.workspace_ready = True
     store.save()
     cfg.repo_dir = workspace
+
+
+def _prepare_toolchain(cfg: RunnerConfig, source: Path) -> None:
+    """Install the run worktree's own dependencies, then point tests at them.
+
+    Only a runner-owned worktree is provisioned: `--in-place` runs in a checkout
+    the user prepared. `setup_cmd` replaces the discovered steps and runs even
+    with `provision = false`, because setting it asks for it. Either way the
+    worktree's code must come out untouched: provisioning may only write ignored
+    paths. A detected test command is re-detected in the worktree so it names
+    the worktree's environment, never the source checkout's.
+    """
+    workspace = Path(cfg.repo_dir).resolve()
+    if workspace != source and (cfg.setup_cmd or cfg.provision):
+        for pattern in toolchain.EXCLUDES:
+            devops.ensure_excluded(source, pattern)
+        before_paths = devops.changed_paths(workspace)
+        before = devops.workspace_digest(workspace)
+        try:
+            if cfg.setup_cmd:
+                toolchain.run_setup(workspace, cfg.setup_cmd, cfg.provision_timeout)
+            else:
+                commands = [
+                    cfg.test_cmd,
+                    cfg.regression_cmd or detect_regression_cmd(workspace) or "",
+                ]
+                toolchain.provision(workspace, commands, cfg.provision_timeout)
+        except toolchain.ProvisionError as e:
+            # a step that wrote code and then failed must not leave that code behind
+            _refuse_provisioning_changes(workspace, before, before_paths, e)
+            raise
+        _refuse_provisioning_changes(workspace, before, before_paths)
+    if cfg.test_cmd_detected:
+        found = detect_test_cmd(workspace)
+        if found.test_cmd != cfg.test_cmd:
+            log.info("test_cmd for the run workspace: %s", found.test_cmd)
+        cfg.test_cmd = found.test_cmd
+
+
+def _refuse_provisioning_changes(
+    workspace: Path, before: str, before_paths: list[str], error: Exception | None = None
+) -> None:
+    """Provisioning may only write ignored paths: undo anything else it wrote, then stop.
+
+    Only files that were clean before provisioning are restored. A file an
+    unfinished ticket had already changed cannot be told apart from setup's
+    edit, so it is named and left for the user.
+    """
+    if devops.workspace_digest(workspace) == before:
+        return
+    stray = sorted(set(devops.changed_paths(workspace)) - set(before_paths))
+    devops.discard_paths(workspace, stray)
+    message = (
+        f"provisioning changed files in the run worktree: {', '.join(stray[:10])}; "
+        "it may only write ignored paths, so those changes were undone"
+        if stray
+        else "provisioning changed files an unfinished ticket had already changed; "
+        "check them before re-running"
+    )
+    if error is not None:
+        message = f"{error}\n{message}"
+    raise toolchain.ProvisionError(message) from error
 
 
 def _run_issue(
@@ -652,7 +713,7 @@ def _process_ticket(
                             str(e),
                             "coder exhausted its retries — the spec may be wrong",
                         )
-                        if not _hand_back(cfg, store, ticket, report, str(e)):
+                        if not _hand_back(cfg, store, ticket, report, str(e), "coder"):
                             return
                         continue
                 _require_accepted_test(cfg, ticket)
@@ -708,7 +769,8 @@ def _process_ticket(
                     _verdict_body(verdict),
                     verdict.verdict,
                 )
-                if not _hand_back(cfg, store, ticket, report, f"last verdict {verdict.verdict}"):
+                reason = f"last verdict {verdict.verdict}"
+                if not _hand_back(cfg, store, ticket, report, reason, "verifier"):
                     return
                 continue
 
@@ -724,7 +786,7 @@ def _process_ticket(
                     journal.post(
                         ticket, "harness", "builder.coder", str(e), "regression suite failed"
                     )
-                    if not _hand_back(cfg, store, ticket, report, str(e)):
+                    if not _hand_back(cfg, store, ticket, report, str(e), "regression"):
                         return
                     continue
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
@@ -898,12 +960,23 @@ def _regression_gate(cfg: RunnerConfig) -> None:
 
 
 def _hand_back(
-    cfg: RunnerConfig, store: TicketStore, ticket: Ticket, report: RunReport, reason: str
+    cfg: RunnerConfig,
+    store: TicketStore,
+    ticket: Ticket,
+    report: RunReport,
+    reason: str,
+    failed_stage: str,
 ) -> bool:
+    """Count a hand-back; block the ticket once it exceeds max_rounds.
+
+    `failed_stage` is the stage that failed. The ticket's phase already names
+    the stage it was being sent back to, which is not where it stopped.
+    """
     ticket.rounds += 1
     store.save()
     if ticket.rounds > cfg.max_rounds:
-        _block(store, ticket, report, f"exceeded max_rounds={cfg.max_rounds}; {reason}", cfg)
+        reason = f"exceeded max_rounds={cfg.max_rounds}; {reason}"
+        _block(store, ticket, report, reason, cfg, stage=failed_stage)
         return False
     return True
 

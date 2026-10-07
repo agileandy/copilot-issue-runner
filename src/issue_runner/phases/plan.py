@@ -1,5 +1,6 @@
 """Plan phase: one read-only Copilot call turns issue + codebase into atomic tickets."""
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json_object
 from ..tickets import Ticket
@@ -32,8 +33,9 @@ GitHub issue #{number}: {title}
 Explore the codebase (read-only) and produce a detailed, atomic implementation
 plan for this issue as an ordered list of sub-task tickets.
 
-{rules}
-{criteria}
+{ticket_rules}
+
+{rules}{criteria}
 Reply with ONLY this JSON (no prose before or after):
 {{
   "summary": "<one-line plan summary>",
@@ -82,11 +84,12 @@ Tickets already built:
 Explore the codebase (read-only) and plan ADDITIONAL tickets that make every
 listed criterion met.
 
-{rules}
+{ticket_rules}
 - Number the new tickets from {first_id}. "depends_on" may name built tickets.
 - Name the criteria each new ticket proves in its "criteria" list. Every listed
   criterion must be named by at least one new ticket.
 
+{rules}
 Reply with ONLY this JSON (no prose before or after):
 {{
   "summary": "<one-line summary of the additional tickets>",
@@ -106,7 +109,7 @@ REQUIRED_FIELDS = ("title", "description", "test_assertion")
 WHERE = ("tests", "dev")
 
 
-def build_plan_prompt(issue: dict, criteria=None, feedback: str = "") -> str:
+def build_plan_prompt(issue: dict, cfg: RunnerConfig, criteria=None, feedback: str = "") -> str:
     block = ""
     if criteria:
         block = CRITERIA_BLOCK.format(lines="\n".join(f"{c.id}: {c.text}" for c in criteria))
@@ -114,7 +117,8 @@ def build_plan_prompt(issue: dict, criteria=None, feedback: str = "") -> str:
         number=issue["number"],
         title=issue["title"],
         body=issue["body"],
-        rules=TICKET_RULES,
+        ticket_rules=TICKET_RULES,
+        rules=workspace_rules(cfg),
         criteria=block,
         feedback=feedback,
     )
@@ -123,7 +127,7 @@ def build_plan_prompt(issue: dict, criteria=None, feedback: str = "") -> str:
 def plan_step(client, cfg: RunnerConfig, issue: dict) -> tuple[str, list[Ticket]]:
     summary, tickets, _ = _ask(
         client,
-        lambda extra: build_plan_prompt(issue, feedback=extra),
+        lambda extra: build_plan_prompt(issue, cfg, feedback=extra),
         lambda data: (_validate(data), {}),
     )
     return summary, tickets
@@ -139,7 +143,7 @@ def plan_with_criteria(
         tickets = _validate(data, criteria_ids=ids)
         return tickets, _validate_where(data, ids, tickets)
 
-    return _ask(client, lambda extra: build_plan_prompt(issue, criteria, extra), validate)
+    return _ask(client, lambda extra: build_plan_prompt(issue, cfg, criteria, extra), validate)
 
 
 def plan_extra(
@@ -158,7 +162,8 @@ def plan_extra(
             existing="\n".join(
                 f"{t.id}. {t.title} (criteria: {', '.join(t.criteria) or 'none'})" for t in existing
             ),
-            rules=TICKET_RULES,
+            ticket_rules=TICKET_RULES,
+            rules=workspace_rules(cfg),
             first_id=first_id,
             feedback=extra,
         )

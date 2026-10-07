@@ -83,3 +83,15 @@ def test_notes_drop_per_ticket_details():
             "no tickets started: re-run with --retry-blocked",
         ]
     ) == ["no tickets started: re-run with --retry-blocked"]
+
+
+def test_notes_never_report_success_as_a_reason_to_stop():
+    from issue_runner.runsummary import notes
+
+    assert notes(
+        [
+            "pull request opened: https://github.com/o/n/pull/9",
+            "plan-only run; no tickets executed",
+            "pull request not opened: gh failed",
+        ]
+    ) == ["pull request not opened: gh failed"]
