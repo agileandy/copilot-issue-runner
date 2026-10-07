@@ -270,7 +270,7 @@ export function createApp(renderer: CliRenderer): App {
     let row = boardRows[index]
     if (!row) {
       // one ticket, one row: a wrapped title breaks the alignment of the board
-      row = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "word" })
+      row = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "none" })
       boardRows[index] = row
       board.add(row)
     }

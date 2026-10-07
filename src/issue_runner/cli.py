@@ -345,13 +345,15 @@ def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> in
             report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
         except VisualUnavailable as e:
             cfg.events = None
-            logging.getLogger("issue_runner").warning(
-                "%s — falling back to the text visual", e
-            )
+            logging.getLogger("issue_runner").warning("%s — falling back to the text visual", e)
         else:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
-                _output(_abort_lines(error, client, resume), post)
+                lines = _abort_lines(error, client, resume)
+                if post is not None:
+                    # stderr already has the error; the comment must carry it too
+                    lines = [f"error: {error}", *lines]
+                _output(lines, post)
                 return 1
             _output(_summary_lines(report, resume), post)
             return _exit_code(report)

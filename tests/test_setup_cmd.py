@@ -84,3 +84,22 @@ def test_a_setup_cmd_that_cannot_be_parsed_or_started_is_named(tmp_path):
         toolchain.run_setup(tmp_path, ['echo "unterminated'], 5)
     with pytest.raises(ProvisionError, match="could not start"):
         toolchain.run_setup(tmp_path, ["no-such-binary-for-issue-runner"], 5)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executables")
+def test_setup_cmd_never_runs_tools_from_the_callers_activated_venv(tmp_path, monkeypatch):
+    def tool(directory: Path, says: str) -> None:
+        directory.mkdir(parents=True)
+        script = directory / "probe-tool"
+        script.write_text(f"#!/bin/sh\necho {says} > probe.txt\n")
+        script.chmod(0o755)
+
+    venv = tmp_path / "caller-venv"
+    tool(venv / "bin", "caller-venv")
+    tool(tmp_path / "elsewhere", "elsewhere")
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    monkeypatch.setenv("PATH", f"{venv / 'bin'}:{tmp_path / 'elsewhere'}:{'/usr/bin:/bin'}")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    toolchain.run_setup(workspace, ["probe-tool"], 5)
+    assert (workspace / "probe.txt").read_text().strip() == "elsewhere"

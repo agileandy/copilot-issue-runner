@@ -215,12 +215,25 @@ def provision(root: Path, commands: list[str], timeout: int, run=subprocess.run)
     return ran
 
 
+def _without_caller_venv(env: dict) -> dict:
+    """Hide an activated venv of the caller's shell, so `python` and `pip` in
+    setup_cmd can never install into it instead of the worktree."""
+    venv = env.pop("VIRTUAL_ENV", None)
+    if venv:
+        hidden = {os.path.normpath(os.path.join(venv, d)) for d in ("bin", "Scripts")}
+        kept = [
+            p
+            for p in env.get("PATH", "").split(os.pathsep)
+            if p and os.path.normpath(p) not in hidden
+        ]
+        env["PATH"] = os.pathsep.join(kept)
+    return env
+
+
 def run_setup(root: Path, commands: list[str], timeout: int, run=subprocess.run) -> list[str]:
     """Run the repository's own `setup_cmd` commands in the worktree, in order."""
     root = Path(root)
-    env = dict(os.environ, CI="1", NO_COLOR="1")
-    # an activated venv in the caller's shell must not receive the install
-    env.pop("VIRTUAL_ENV", None)
+    env = _without_caller_venv(dict(os.environ, CI="1", NO_COLOR="1"))
     for command in commands:
         log.info("toolchain: setup_cmd `%s` (in %s, timeout %ss)", command, root, timeout)
         try:

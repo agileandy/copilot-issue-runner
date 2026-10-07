@@ -57,6 +57,24 @@ test("the board, banner and chrome render from the event stream", async () => {
   })
 })
 
+test("a long ticket title keeps to one board row", async () => {
+  await withApp({ width: 90, height: 24 }, async (app, setup) => {
+    app.apply({
+      kind: "tickets_updated",
+      payload: {
+        tickets: [
+          { id: 1, title: "word ".repeat(40).trim(), status: "done", rounds: 0, blocked_reason: null },
+          { id: 2, title: "second", status: "pending", rounds: 0, blocked_reason: null },
+        ],
+      },
+    })
+    const frame = await setup.waitForFrame((value) => value.includes("#2 second"))
+    const lines = frame.split("\n")
+    const first = lines.findIndex((line) => line.includes("#1 word"))
+    expect(lines[first + 1]).toContain("#2 second")
+  })
+})
+
 test("an empty board says the planner is still thinking", async () => {
   await withApp({ width: 80, height: 16 }, async (_app, setup) => {
     const frame = await setup.waitForFrame((value) => value.includes("planner is"))
