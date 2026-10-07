@@ -16,6 +16,8 @@ open_pr = true        # open a PR when a run finishes with no blocked tickets
 # max_run_credits = 300 # soft whole-run budget, checked between invocations (exit 4)
 empty_reply_retries = 2 # retries when copilot exits 0 with no output (a transport failure)
 timeout = 1800        # seconds per model call
+provision = true      # give each run worktree its own .venv / node_modules (uv, npm ci)
+provision_timeout = 900 # seconds per provisioning step
 
 # Per-role model/effort — spend where it matters, save where it doesn't.
 # Run `copilot` and use /model to see what your plan offers.

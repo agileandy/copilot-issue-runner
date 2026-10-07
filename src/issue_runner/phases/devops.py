@@ -223,8 +223,37 @@ DEFAULT_EXCLUDES = (
 )
 
 
-def create_branch(repo_dir: Path, issue_ref: str, slug: str) -> str:
-    branch = f"issue-{issue_ref}-{slug}" if slug else f"issue-{issue_ref}"
+# the team convention: feature/, bugfix/ and hotfix/ only. issue-<n>-* is the
+# name earlier versions used; runs saved with it still resume and commit.
+RUN_BRANCH_PREFIXES = ("feature/", "bugfix/", "hotfix/")
+LEGACY_BRANCH_PREFIX = "issue-"
+
+
+def _label_names(issue: dict) -> list[str]:
+    names = []
+    for label in issue.get("labels") or []:
+        name = label.get("name") if isinstance(label, dict) else label
+        if isinstance(name, str):
+            names.append(name.strip().lower())
+    return names
+
+
+def branch_kind(issue: dict) -> str:
+    """`bugfix` for an issue labelled bug, otherwise `feature`."""
+    return "bugfix" if "bug" in _label_names(issue) else "feature"
+
+
+def branch_name(issue_ref: str, slug: str, kind: str = "feature") -> str:
+    if f"{kind}/" not in RUN_BRANCH_PREFIXES:
+        raise DevopsError(f"unknown branch kind {kind!r}")
+    return f"{kind}/{issue_ref}-{slug}" if slug else f"{kind}/{issue_ref}"
+
+
+def is_run_branch(branch: str) -> bool:
+    return branch.startswith(RUN_BRANCH_PREFIXES + (LEGACY_BRANCH_PREFIX,))
+
+
+def create_branch(repo_dir: Path, branch: str) -> str:
     require_clean(repo_dir)
     exists = (
         subprocess.run(
@@ -307,10 +336,8 @@ def ensure_excluded(repo_dir: Path, pattern: str) -> None:
 
 def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = None) -> str:
     branch = current_branch(repo_dir)
-    if not branch.startswith("issue-") or (
-        expected_branch is not None and branch != expected_branch
-    ):
-        raise DevopsError(f"refusing to commit on {branch} — the run must be on an issue branch")
+    if not is_run_branch(branch) or (expected_branch is not None and branch != expected_branch):
+        raise DevopsError(f"refusing to commit on {branch} — the run must be on its run branch")
     if ticket.base_commit is not None and head_commit(repo_dir) != ticket.base_commit:
         raise DevopsError("HEAD changed outside the ticket commit step; no changes were discarded")
     if ticket.approved_digest is None or ticket.approved_tree is None:

@@ -38,13 +38,25 @@ def test_fetch_gitea_issue_maps_fields():
         assert url == "http://gitea.local:3000/api/v1/repos/Org/repo/issues/7"
         assert token == "sekrit"
         return json.dumps(
-            {"number": 7, "title": "T", "body": "B", "html_url": "http://gitea.local/x/7"}
+            {
+                "number": 7,
+                "title": "T",
+                "body": "B",
+                "html_url": "http://gitea.local/x/7",
+                "labels": [{"name": "bug"}],
+            }
         )
 
     issue = fetch_gitea_issue(
         "http://gitea.local:3000", "Org/repo", "7", token="sekrit", getter=fake_get
     )
-    assert issue == {"number": 7, "title": "T", "body": "B", "url": "http://gitea.local/x/7"}
+    assert issue == {
+        "number": 7,
+        "title": "T",
+        "body": "B",
+        "url": "http://gitea.local/x/7",
+        "labels": ["bug"],
+    }
 
 
 def test_fetch_gitea_issue_requires_token():

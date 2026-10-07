@@ -22,7 +22,7 @@ def _run(argv, run=subprocess.run):
 
 
 def fetch_issue(issue_ref: str, repo: str | None = None, run=subprocess.run) -> dict:
-    argv = ["gh", "issue", "view", str(issue_ref), "--json", "number,title,body,url"]
+    argv = ["gh", "issue", "view", str(issue_ref), "--json", "number,title,body,url,labels"]
     if repo:
         argv += ["-R", repo]
     return json.loads(_run(argv, run))

@@ -143,14 +143,16 @@ def test_project_virtualenv_is_used_instead_of_the_runner_environment(tmp_path):
     python.parent.mkdir(parents=True)
     python.touch()
 
+    # relative, so a run worktree uses its own environment, never the source's
     assert shlex.split(detect_test_cmd(repo).test_cmd) == [
-        str(python),
+        f".venv/{relative}",
         "-m",
         "pytest",
         "{test_path}",
         "-q",
     ]
-    assert shlex.split(detect_regression_cmd(repo)) == [str(python), "-m", "pytest", "-q"]
+    assert shlex.split(detect_regression_cmd(repo)) == [f".venv/{relative}", "-m", "pytest", "-q"]
+    assert str(repo) not in detect_test_cmd(repo).test_cmd
 
 
 def test_python_without_a_project_environment_uses_the_callers_path(tmp_path):

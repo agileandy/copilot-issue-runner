@@ -16,9 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from . import envsetup, github_io, runsummary
+from . import github_io, runsummary, toolchain
 from .budget import BudgetExhausted, RunBudget
-from .config import RunnerConfig, apply_detected_test_cmd
+from .config import RunnerConfig
 from .control import RunStopped, announce_stop
 from .copilot import CopilotError
 from .demo.seed import is_seed
@@ -39,7 +39,7 @@ from .phases.build import (
 from .phases.devops import DevopsError
 from .phases.plan import plan_step
 from .phases.verify import VerifyError, verify_step
-from .testcmd import detect_regression_cmd
+from .testcmd import detect_regression_cmd, detect_test_cmd
 from .tickets import StateError, Ticket, TicketStore
 from .visual import render_flow
 
@@ -105,6 +105,7 @@ def run_issue(
         issue_ref, branch_slug = str(issue["number"]), devops.slugify(issue["title"])
     else:
         issue_ref, branch_slug = devops.slugify(issue["title"], 20), ""
+    branch_kind = devops.branch_kind(issue)
     state_dir = Path(state_dir) if state_dir is not None else source / ".issue-runner"
     if not state_dir.is_absolute():
         state_dir = source / state_dir
@@ -120,12 +121,8 @@ def run_issue(
                     raise StateError("saved state belongs to a different source repository")
                 store.source_repo = str(source)
                 if not plan_only:
-                    _prepare_workspace(cfg, store, source, branch_slug)
-                    if Path(cfg.repo_dir).resolve() != source:
-                        envsetup.prepare(cfg, Path(cfg.repo_dir))
-                        if cfg.test_cmd_detected:
-                            # the focused test and the full suite share one environment
-                            apply_detected_test_cmd(cfg)
+                    _prepare_workspace(cfg, store, source, branch_slug, branch_kind)
+                    _prepare_toolchain(cfg, source)
                     if client_config is not None:
                         client_config.repo_dir = cfg.repo_dir
                     report.branch = store.branch or ""
@@ -173,7 +170,11 @@ def _record_partial(cfg: RunnerConfig, store: TicketStore, report: RunReport) ->
 
 
 def _prepare_workspace(
-    cfg: RunnerConfig, store: TicketStore, source: Path, branch_slug: str
+    cfg: RunnerConfig,
+    store: TicketStore,
+    source: Path,
+    branch_slug: str,
+    branch_kind: str = "feature",
 ) -> None:
     for pattern in devops.DEFAULT_EXCLUDES:
         devops.ensure_excluded(source, pattern)
@@ -194,7 +195,7 @@ def _prepare_workspace(
                 raise StateError("pending workspace has no recorded base commit")
             if workspace == source:
                 if devops.current_branch(source) != store.branch:
-                    devops.create_branch(source, store.issue_ref, branch_slug)
+                    devops.create_branch(source, store.branch)
             else:
                 devops.finish_worktree_creation(source, store.branch, workspace, store.initial_head)
             store.workspace_ready = True
@@ -225,9 +226,7 @@ def _prepare_workspace(
         store.save()
         return
 
-    store.branch = (
-        f"issue-{store.issue_ref}-{branch_slug}" if branch_slug else f"issue-{store.issue_ref}"
-    )
+    store.branch = devops.branch_name(store.issue_ref, branch_slug, branch_kind)
     if devops.branch_exists(source, store.branch):
         raise DevopsError(
             f"branch {store.branch} exists without matching run state; refusing to reuse it"
@@ -240,10 +239,45 @@ def _prepare_workspace(
     if cfg.isolate_worktree:
         devops.create_worktree(source, store.branch, workspace)
     else:
-        devops.create_branch(source, store.issue_ref, branch_slug)
+        devops.create_branch(source, store.branch)
     store.workspace_ready = True
     store.save()
     cfg.repo_dir = workspace
+
+
+def _prepare_toolchain(cfg: RunnerConfig, source: Path) -> None:
+    """Install the run worktree's own dependencies, then point tests at them.
+
+    Only a runner-owned worktree is provisioned: `--in-place` runs in a checkout
+    the user prepared. `setup_cmd` replaces the discovered steps and runs even
+    with `provision = false`, because setting it asks for it. Either way the
+    worktree's code must come out untouched: provisioning may only write ignored
+    paths. A detected test command is re-detected in the worktree so it names
+    the worktree's environment, never the source checkout's.
+    """
+    workspace = Path(cfg.repo_dir).resolve()
+    if workspace != source and (cfg.setup_cmd or cfg.provision):
+        for pattern in toolchain.EXCLUDES:
+            devops.ensure_excluded(source, pattern)
+        before_paths = devops.changed_paths(workspace)
+        before = devops.workspace_digest(workspace)
+        if cfg.setup_cmd:
+            toolchain.run_setup(workspace, cfg.setup_cmd, cfg.provision_timeout)
+        else:
+            commands = [cfg.test_cmd, cfg.regression_cmd or detect_regression_cmd(workspace) or ""]
+            toolchain.provision(workspace, commands, cfg.provision_timeout)
+        if devops.workspace_digest(workspace) != before:
+            changed = sorted(set(devops.changed_paths(workspace)) ^ set(before_paths))
+            named = ", ".join(changed[:10]) or "the contents of already-changed files"
+            raise toolchain.ProvisionError(
+                f"provisioning changed files in the run worktree: {named}; "
+                "it may only write ignored paths"
+            )
+    if cfg.test_cmd_detected:
+        found = detect_test_cmd(workspace)
+        if found.test_cmd != cfg.test_cmd:
+            log.info("test_cmd for the run workspace: %s", found.test_cmd)
+        cfg.test_cmd = found.test_cmd
 
 
 def _run_issue(

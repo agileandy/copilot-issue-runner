@@ -13,6 +13,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .agent_rules import workspace_rules
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
@@ -25,6 +26,7 @@ from .phases.plan import PLAN_PROMPT, PlanError
 from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
 from .tickets import StateError
+from .toolchain import ProvisionError
 from .trackers import TrackerError, fetch_gitea_issue, resolve
 
 # failures that abort a whole run: report them, never traceback at the user
@@ -37,6 +39,7 @@ PipelineError = (
     StateError,
     GithubError,
     TrackerError,
+    ProvisionError,
 )
 
 
@@ -278,6 +281,7 @@ def main(argv=None) -> int:
             number="<new clone>" if args.demo else issue["number"],
             title=issue["title"],
             body=issue["body"],
+            rules=workspace_rules(cfg),
             feedback="",
         )
         argv_preview = client._build_argv(

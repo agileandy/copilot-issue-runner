@@ -125,7 +125,8 @@ def _clean_local_run(repo_dir: Path, number: int) -> str:
     """Remove the run worktree, branch and state this demo clone generated.
 
     Scoped by the issue number: only a worktree at worktrees/<number> and a
-    branch named issue-<number>-* are touched, so unrelated work survives.
+    branch named feature/<number>-*, bugfix/<number>-* or the legacy
+    issue-<number>-* are touched, so unrelated work survives.
     """
     state_dir = repo_dir / ".issue-runner"
     state_file = state_dir / f"issue-{number}.json"
@@ -139,7 +140,9 @@ def _clean_local_run(repo_dir: Path, number: int) -> str:
     if worktree.exists():
         _git(repo_dir, "worktree", "remove", "--force", str(worktree))
     _git(repo_dir, "worktree", "prune")
-    if branch and branch.startswith(f"issue-{number}-"):
+    if branch and branch.startswith(
+        (f"issue-{number}-", f"feature/{number}-", f"bugfix/{number}-")
+    ):
         _git(repo_dir, "branch", "-D", branch)
     for path in (state_file, state_dir / f"usage-issue-{number}.json"):
         path.unlink(missing_ok=True)
