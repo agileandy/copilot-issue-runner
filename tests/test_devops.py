@@ -283,3 +283,19 @@ def test_commit_changes_commits_an_already_staged_deletion(git_repo):
     (git_repo / "seed.txt").write_text("seed changed")
     sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
     assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
+
+
+def test_finish_merge_commits_a_deletion_from_the_merged_ref(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/150-x")
+    git("checkout", "main")
+    git("rm", "-q", "seed.txt")
+    git("commit", "-m", "remove seed")
+    git("checkout", "feature/150-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]

@@ -472,7 +472,7 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
         discard_paths(repo_dir, incidental)
         paths = changed_paths(repo_dir)
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "--no-edit")
     require_clean(repo_dir)
     return head_commit(repo_dir)
