@@ -156,6 +156,7 @@ class CallRecord:
     model_calls: int | None = None  # model calls inside this one CLI invocation
     costed_model_calls: int | None = None  # of those, how many reported a charge
     cost_complete: bool | None = None  # False => nano_aiu is a lower bound
+    models: tuple[str, ...] = ()  # models copilot reported, else the requested model
 
 
 class UsageLedger:
@@ -174,6 +175,9 @@ class UsageLedger:
         usage: dict | None,
     ) -> None:
         usage = usage or {}
+        models = tuple(usage.get("models") or ())
+        if not models and model:
+            models = (model,)
         self.calls.append(
             CallRecord(
                 role=role,
@@ -190,6 +194,7 @@ class UsageLedger:
                 model_calls=usage.get("model_calls"),
                 costed_model_calls=usage.get("costed_model_calls"),
                 cost_complete=cost_is_complete(usage),
+                models=models,
             )
         )
 
@@ -227,7 +232,7 @@ class UsageLedger:
         result = {}
         for role, calls in roles.items():
             bucket = self._bucket(calls)
-            bucket["models"] = sorted({c.model for c in calls if c.model is not None})
+            bucket["models"] = sorted({m for c in calls for m in c.models})
             result[role] = bucket
         return result
 
