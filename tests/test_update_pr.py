@@ -162,3 +162,35 @@ def test_update_pr_branch_returns_the_head_unchanged_when_the_branch_already_con
     head = devops.head_commit(git_repo)
 
     assert merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main") == head
+
+
+def test_update_pull_request_merges_base_into_an_open_pr_in_its_own_worktree(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    import importlib
+
+    from issue_runner.github_flow import GitHubFlow
+    from tests.fake_github import FakeGitHub
+
+    try:
+        update_pull_request = importlib.import_module(
+            "issue_runner.phases.update_pr"
+        ).update_pull_request
+    except ModuleNotFoundError:
+        update_pull_request = merge.update_pull_request
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+
+    update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+
+    subject = subprocess.run(
+        ["git", "--git-dir", str(pr_branch), "log", "-1", "--format=%s", BRANCH],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert subject == f"chore: merge origin/main into {BRANCH}"
