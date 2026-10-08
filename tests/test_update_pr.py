@@ -1,6 +1,7 @@
 """update_pr_branch merges origin/<base> into a PR branch and pushes it fast-forward."""
 
 import subprocess
+import sys
 
 import pytest
 
@@ -341,9 +342,15 @@ def test_update_pull_request_runs_setup_cmd_inside_the_pr_worktree(
     flow = GitHubFlow("o/n", run=fake)
     number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
     marker = tmp_path_factory.mktemp("setup") / "cwd"
+    # One python -c argument with no shell operator. It is left unquoted on
+    # purpose: run as plain argv it works, while a shell would reject the `(`.
+    write_cwd = (
+        f'__import__(\\"pathlib\\").Path(r\\"{marker}\\")'
+        f'.write_text(__import__(\\"os\\").getcwd())'
+    )
 
     update_pull_request(
-        dataclasses.replace(cfg, setup_cmd=[f"pwd > {marker}"]),
+        dataclasses.replace(cfg, setup_cmd=[f"{sys.executable} -c {write_cwd}"]),
         FakeClient([]),
         flow,
         number,

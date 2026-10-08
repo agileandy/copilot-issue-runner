@@ -181,9 +181,8 @@ provision_timeout = 900   # seconds per step
 `setup_cmd` in `runner.toml` (a command or a list of commands) or a repeated
 `--setup-cmd` replaces the discovered steps. It runs even when `provision =
 false`. Use it for steps discovery cannot know, such as copying test helpers
-into the worktree. A command with a shell operator (`>`, `|`, `&&` and the like)
-runs through the platform shell. It shares `provision_timeout`, and a failing
-command stops the run with its output.
+into the worktree. It shares `provision_timeout`, and a failing command stops the
+run with its output.
 
 Provisioning may only write ignored paths. If the discovered steps or
 `setup_cmd` change any tracked or untracked file in the worktree, the run stops
