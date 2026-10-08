@@ -752,6 +752,11 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    for entry in store.delivery.review_rounds if store.delivery else []:
+        lines += ["", f"### Review round {entry['round']} (`{entry['sha'][:12]}`)"]
+        lines += [f"- `{f['where']}`: {f['reason']}" for f in entry["fixed"]]
+        if entry["notes"]:
+            lines.append(f"Changed behaviour: {entry['notes']}")
     lines += [
         "",
         (

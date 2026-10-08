@@ -11,7 +11,7 @@ from issue_runner.github_flow import GitHubFlow
 from issue_runner.orchestrator import run_issue
 from issue_runner.phases import delivery, review
 from issue_runner.phases.preflight import Preflight, PushTrigger
-from issue_runner.tickets import TicketStore
+from issue_runner.tickets import Delivery, TicketStore
 from tests.conftest import FakeClient
 from tests.fake_github import APPROVE, BOT, CHANGES, FakeGitHub, Head
 from tests.test_orchestrator import (
@@ -170,6 +170,25 @@ def test_update_pull_body_replaces_the_pr_description(tmp_path):
     pr = flow.create_pull("t", "b", "main", "old")
     flow.update_pull_body(pr["number"], "new body")
     assert fake.pulls[pr["number"]]["body"] == "new body"
+
+
+def test_pr_body_lists_each_recorded_review_round(tmp_path):
+    store = TicketStore(tmp_path, "17")
+    store.delivery = Delivery(
+        review_rounds=[
+            {
+                "round": 1,
+                "sha": "abc123def4567890",
+                "fixed": [{"where": "impl.py:1", "reason": "None is handled"}],
+                "notes": "subtract now rejects None",
+            }
+        ]
+    )
+    assert (
+        "### Review round 1 (`abc123def456`)\n"
+        "- `impl.py:1`: None is handled\n"
+        "Changed behaviour: subtract now rejects None"
+    ) in delivery.pr_body(ISSUE, store)
 
 
 # --- the loop, end to end -----------------------------------------------------------
