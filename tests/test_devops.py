@@ -293,12 +293,15 @@ def test_ensure_excluded_keeps_every_pattern_when_worktrees_race(tmp_path, monke
     original_read_text = pathlib.Path.read_text
 
     def racing_read_text(self, *args, **kwargs):
+        existing = original_read_text(self, *args, **kwargs)
         if self.name == "exclude":
+            # Wait after reading: without the lock both threads then write from the same snapshot.
             try:
                 barrier.wait()
             except threading.BrokenBarrierError:
+                # With the lock the other thread is kept out, so the wait times out.
                 pass
-        return original_read_text(self, *args, **kwargs)
+        return existing
 
     monkeypatch.setattr(pathlib.Path, "read_text", racing_read_text)
     threads = [
