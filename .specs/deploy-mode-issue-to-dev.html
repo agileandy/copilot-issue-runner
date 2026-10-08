@@ -172,11 +172,11 @@ figcaption {
       <dl>
         <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
         <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00, 2026-10-06T16:40:00+08:00, 2026-10-06T17:30:00+08:00, 2026-10-06T18:10:00+08:00, 2026-10-07T09:20:00+08:00</dd>
-        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6), adc6de9 (Phase 7), 702190f (Phase 8 part 1), Woodside/issue-runner-sandbox 79c8fe6 (seed) and 2f92de0 (live run merge), 54d9f67 (live run record), Woodside/issue-runner-sandbox 80827fe (live run 2 merge)</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6), adc6de9 (Phase 7), 702190f (Phase 8 part 1), example-org/example-sandbox 79c8fe6 (seed) and 2f92de0 (live run merge), 54d9f67 (live run record), example-org/example-sandbox 80827fe (live run 2 merge)</dd>
         <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
         <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
-        <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), Woodside/ai-maint#337 and Woodside/ai-maint#344 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
-        <dt>forward refs</dt> <dd>Woodside/issue-runner-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
+        <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), example-org/example-app#101 and example-org/example-app#102 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
+        <dt>forward refs</dt> <dd>example-org/example-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
       </dl>
     </details>
   </header>
@@ -221,9 +221,9 @@ flowchart LR
     <h2>Problem</h2>
     <p>Today a run finishes the moment it opens a pull request (<code>orchestrator._open_pull_request</code>). Four things are missing:</p>
     <ul>
-      <li><strong>Acceptance criteria are never checked.</strong> The planner reads the issue once. Nothing maps criteria to tickets, and nothing checks the finished change against them. For #110 three criteria were only partly tested. Woodside/ai-maint issues keep their criteria under <code>## Acceptance criteria</code> as checkboxes (15 of the last 22 issues), and many criteria can only be checked in Dev ("In Dev at 1920x1080 …").</li>
-      <li><strong>The review is ignored.</strong> The Woodside/ai-maint ruleset "Copilot review for default branch" requests a Copilot review when a PR opens, with <code>review_on_push: false</code>. The runner never reads it, never fixes its findings and never asks for a re-review.</li>
-      <li><strong>Nobody merges.</strong> Woodside/ai-maint allows squash merges only and needs 0 approvals. A merge is a single permitted step that the runner never takes.</li>
+      <li><strong>Acceptance criteria are never checked.</strong> The planner reads the issue once. Nothing maps criteria to tickets, and nothing checks the finished change against them. For #110 three criteria were only partly tested. example-org/example-app issues keep their criteria under <code>## Acceptance criteria</code> as checkboxes (15 of the last 22 issues), and many criteria can only be checked in Dev ("In Dev at 1920x1080 …").</li>
+      <li><strong>The review is ignored.</strong> The example-org/example-app ruleset "Copilot review for default branch" requests a Copilot review when a PR opens, with <code>review_on_push: false</code>. The runner never reads it, never fixes its findings and never asks for a re-review.</li>
+      <li><strong>Nobody merges.</strong> example-org/example-app allows squash merges only and needs 0 approvals. A merge is a single permitted step that the runner never takes.</li>
       <li><strong>Nobody watches Dev.</strong> <code>dev-deployment.yaml</code> runs on a push to <code>main</code> (with a <code>paths</code> filter), deploys to environment <code>development</code> and records a GitHub deployment. Runs can be cancelled when a newer merge supersedes them (run 37261581216, <code>ea9e9377</code>).</li>
     </ul>
     <p>The PR body also says <code>Closes #n</code>, so GitHub closes the issue at merge, even if the deployment fails afterwards.</p>
@@ -355,7 +355,7 @@ environment = "development"
 deploy_start_grace_min = 10  # wait for the run to appear
 deploy_timeout_min = 60
 dispatch_if_not_triggered = false
-dev_url = "https://maint-dev.dev.app.woodside"
+dev_url = "https://dev.example.com"
 dev_check_cmd = ""           # runs one Dev check, see Phase 7
 poll_seconds = 30</code></pre></li>
       </ul>
@@ -445,9 +445,9 @@ flowchart LR
       </ul>
 
       <h4>4. Testing Strategy</h4>
-      <p>Parser tests use real issue bodies (Woodside/ai-maint#337, #110), checkbox and plain lists, missing sections and nested lists. Planner and acceptor tests use canned fake-Copilot replies.</p>
+      <p>Parser tests use real issue bodies (example-org/example-app#101, #110), checkbox and plain lists, missing sections and nested lists. Planner and acceptor tests use canned fake-Copilot replies.</p>
       <ul class="checklist">
-        <li><code class="status">[x]</code> <code>uv run pytest tests/test_criteria.py -q</code>: the parser takes exactly the 3 criteria from the #337 body and the 3 from #110, and ignores the "Required behaviour" list.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_criteria.py -q</code>: the parser takes exactly the 3 criteria from the #101 body and the 3 from #110, and ignores the "Required behaviour" list.</li>
         <li><code class="status">[x]</code> <code>uv run pytest tests/test_plan_verify.py -q</code>: a plan missing a criterion, citing an unknown ID or naming an unknown dependency is rejected and retried.</li>
         <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k pre_pr</code>: an acceptor reply that cites a missing or failing test is treated as unmet. An unmet criterion triggers one extra-ticket round and then exit 5.</li>
       </ul>
@@ -695,7 +695,7 @@ sequenceDiagram
     <!-- Phase 8 -->
     <div class="phase">
       <h3><code class="status">[x]</code> Phase 8: Visibility, docs and live proof</h3>
-      <p>Make the long tail visible (a deploy-mode run can take an hour or more) and prove the whole flow once against a real GitHub repo before pointing it at Woodside/ai-maint.</p>
+      <p>Make the long tail visible (a deploy-mode run can take an hour or more) and prove the whole flow once against a real GitHub repo before pointing it at example-org/example-app.</p>
 
       <h4>1. Events, summary, docs</h4>
       <ul class="checklist">
@@ -706,7 +706,7 @@ sequenceDiagram
 
       <h4>2. Live sandbox</h4>
       <ul class="checklist">
-        <li><code class="status">[x]</code> Sandbox repo <code>Woodside/issue-runner-sandbox</code> created 2026-10-06, private and empty, with the operator as admin. Woodside members cannot create internal repos or delete repos, so when the work is done, archive it (the operator can) or ask an org owner to delete it.</li>
+        <li><code class="status">[x]</code> Sandbox repo <code>example-org/example-sandbox</code> created 2026-10-06, private and empty, with the operator as admin. Org members cannot create internal repos or delete repos, so when the work is done, archive it (the operator can) or ask an org owner to delete it.</li>
         <li><code class="status">[x]</code> Set up the sandbox with an active <code>copilot_code_review</code> ruleset, a CI workflow, and a <code>dev-deployment.yaml</code> that creates a GitHub deployment to <code>development</code> and publishes a static page through GitHub Pages as "Dev".</li>
         <li><code class="status">[x]</code> Seed one issue whose criteria include one tested in code and one checked in Dev. Use a <code>dev_check_cmd</code> that fetches the Pages URL with <code>curl</code> and prints <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL</code>.</li>
         <li><code class="status">[x]</code> Run once clean, and once with a deliberate review finding and a conflicting commit pushed to <code>main</code> mid-run, to exercise the reviser and resolver live.</li>
@@ -716,8 +716,8 @@ sequenceDiagram
       <ul class="checklist">
         <li><code class="status">[x]</code> <code>cd apps/visual &amp;&amp; bun test</code>: the deploy phases and gate table render.</li>
         <li><code class="status">[x]</code> <code>uv run pytest tests/test_closeout.py tests/test_review_loop.py tests/test_merge_step.py tests/test_deploy_watch.py -q</code> (planned as <code>test_deploy_e2e.py</code>): a full scenario on the fake GitHub from plan to DoD met, plus one failure scenario per gate with the correct exit code.</li>
-        <li><code class="status">[x]</code> <code>gh-runner &lt;n&gt; --repo Woodside/issue-runner-sandbox --deploy --agent; echo $?</code>: prints <code>0</code>. The issue is closed with all criteria ticked and has a DoD comment showing six passes.</li>
-        <li><code class="status">[x]</code> <code>gh api "repos/Woodside/issue-runner-sandbox/deployments?environment=development" --jq '.[0].sha'</code>: contains the PR's merge commit, and its latest status is <code>success</code>.</li>
+        <li><code class="status">[x]</code> <code>gh-runner &lt;n&gt; --repo example-org/example-sandbox --deploy --agent; echo $?</code>: prints <code>0</code>. The issue is closed with all criteria ticked and has a DoD comment showing six passes.</li>
+        <li><code class="status">[x]</code> <code>gh api "repos/example-org/example-sandbox/deployments?environment=development" --jq '.[0].sha'</code>: contains the PR's merge commit, and its latest status is <code>success</code>.</li>
       </ul>
       <div class="loop">
         🔁 <strong>Do not exit this phase until every box above is checked.</strong>
@@ -738,7 +738,7 @@ sequenceDiagram
       <li><code class="status">[x]</code> <code>gh-runner 17 --deploy --no-pr; echo $?</code>: prints <code>2</code> with a flag-conflict message and no model call.</li>
       <li><code class="status">[x]</code> Live sandbox run (Phase 8): exit <code>0</code>, the issue is closed, all criteria are ticked, and the DoD comment shows six passes.</li>
       <li><code class="status">[x]</code> Live sandbox failure run: a Dev check that cannot pass gives exit <code>5</code>, the issue stays open, and the DoD comment names the failing criterion.</li>
-      <li><code class="status">[x]</code> <code>gh repo archive Woodside/issue-runner-sandbox --yes</code>: run once the live proof is done. Deletion needs a Woodside org owner.</li>
+      <li><code class="status">[x]</code> <code>gh repo archive example-org/example-sandbox --yes</code>: run once the live proof is done. Deletion needs an org owner.</li>
     </ul>
     <div class="loop">
       🔁 <strong>The plan is not complete until every box is checked and every command passes. If for some reason a step is not possible to complete, mark it with [f] and move on if possible.</strong>
@@ -767,22 +767,22 @@ sequenceDiagram
       <li><strong>Declining a review comment</strong> needs a read-only verifier to agree. Otherwise the thread stays open and the review gate cannot pass.</li>
       <li><strong>A failed deploy or Dev check after merge is not auto-reverted.</strong> The runner reports, comments and exits non-zero. Reverting is left to a person, because a revert is itself a merge to <code>main</code> that triggers another deploy. A hotfix loop is a possible follow-up.</li>
       <li><strong>A merge that triggers no deploy</strong> (because of the <code>paths</code> filter) fails by default. <code>dispatch_if_not_triggered</code> is opt-in.</li>
-      <li><strong>Criteria checked in Dev need <code>dev_check_cmd</code>.</strong> Without it preflight fails. For Woodside/ai-maint this means an Edge and Playwright harness (<code>pw-win</code> with an Entra sign-in) on the machine that runs the runner.</li>
-      <li><strong>Required human approvals</strong> (currently 0 on Woodside/ai-maint) are waited for up to <code>review_timeout_min</code>. The runner never approves its own PR.</li>
-      <li><strong>Copilot review counts as clean</strong> when its latest review on the current head has zero comments and no thread is unresolved. GitHub only ever marks it <code>COMMENTED</code>, as on Woodside/ai-maint#344.</li>
+      <li><strong>Criteria checked in Dev need <code>dev_check_cmd</code>.</strong> Without it preflight fails. For example-org/example-app this means an Edge and Playwright harness (<code>pw-win</code> with an Entra sign-in) on the machine that runs the runner.</li>
+      <li><strong>Required human approvals</strong> (currently 0 on example-org/example-app) are waited for up to <code>review_timeout_min</code>. The runner never approves its own PR.</li>
+      <li><strong>Copilot review counts as clean</strong> when its latest review on the current head has zero comments and no thread is unresolved. GitHub only ever marks it <code>COMMENTED</code>, as on example-org/example-app#102.</li>
     </ol>
 
     <h3>Facts this plan relies on (checked 2026-10-05)</h3>
     <ul>
-      <li>Woodside/ai-maint allows squash merge only. <code>delete_branch_on_merge</code> is false and <code>allow_auto_merge</code> is false. Branch protection requires 0 approvals and has no required status checks.</li>
+      <li>example-org/example-app allows squash merge only. <code>delete_branch_on_merge</code> is false and <code>allow_auto_merge</code> is false. Branch protection requires 0 approvals and has no required status checks.</li>
       <li>Ruleset 21702720 "Copilot review for default branch" sets <code>copilot_code_review</code> with <code>review_on_push: false</code> and <code>review_draft_pull_requests: true</code>.</li>
-      <li><code>dev-deployment.yaml</code> runs on a push to <code>main</code> under a <code>paths</code> filter. Its jobs are <code>ci</code>, then <code>development</code>, which calls <code>deploy-web-application-base.yaml</code> with environment <code>development</code> and concurrency group <code>application-dev</code>. Deployments are recorded per SHA (for example 6854019104 for <code>9a17d7f0</code>, the merge of #344).</li>
+      <li><code>dev-deployment.yaml</code> runs on a push to <code>main</code> under a <code>paths</code> filter. Its jobs are <code>ci</code>, then <code>development</code>, which calls <code>deploy-web-application-base.yaml</code> with environment <code>development</code> and concurrency group <code>application-dev</code>. Deployments are recorded per SHA (for example 6854019104 for <code>9a17d7f0</code>, the merge of #102).</li>
       <li>Local <code>gh</code> is 2.46.0. Re-requesting the Copilot review goes through the REST API.</li>
     </ul>
 
     <h3>Risks</h3>
     <ul>
-      <li><strong>Wall-clock time.</strong> A review takes minutes and a deploy about 6 minutes on Woodside/ai-maint. With review rounds a run can exceed an hour. Every wait is bounded and resumable, and the credit budget only counts agent calls.</li>
+      <li><strong>Wall-clock time.</strong> A review takes minutes and a deploy about 6 minutes on example-org/example-app. With review rounds a run can exceed an hour. Every wait is bounded and resumable, and the credit budget only counts agent calls.</li>
       <li><strong>Shared <code>main</code>.</strong> Other merges can land between the review gate and the merge. <code>--match-head-commit</code> protects the head. Base movement is handled by the behind/dirty loop, and deploy supersession by the ancestry rule.</li>
       <li><strong>Authority.</strong> The runner merges to <code>main</code> and so triggers a deploy, using the operator's <code>gh</code> token. Preflight checks write access, and every merge is logged in the DoD comment with the gate evidence that allowed it.</li>
       <li><strong>Agent dismissing findings.</strong> This is limited by the verifier agreement rule, and every decline is listed in the DoD comment for a person to audit.</li>
@@ -807,8 +807,8 @@ flowchart LR
   <section id="amendments">
     <h2>Amendments</h2>
     <details>
-      <summary>2026-10-06T09:11:22+08:00: sandbox repo moved to Woodside/issue-runner-sandbox</summary>
-      <p>The live-proof sandbox (Phase 8 and the global validation) is now <code>Woodside/issue-runner-sandbox</code>, private, rather than the proposed <code>agileandy/issue-runner-sandbox</code>. The user first asked for <code>andy-spamer-ws/issue-runner-sandbox</code>, then for a Woodside internal repo. Woodside members cannot create internal repos (<code>members_can_create_internal_repositories: false</code>) or delete repos (<code>members_can_delete_repositories: false</code>). The org is on the Enterprise plan, so private repos there support the Copilot review ruleset and private Pages. The repo was created empty and its setup stays in Phase 8. A cleanup step (archive) was added to the global validation.</p>
+      <summary>2026-10-06T09:11:22+08:00: sandbox repo moved to example-org/example-sandbox</summary>
+      <p>The live-proof sandbox (Phase 8 and the global validation) is now <code>example-org/example-sandbox</code>, private, rather than the proposed <code>agileandy/issue-runner-sandbox</code>. The user first asked for <code>example-user/example-sandbox</code>, then for an internal org repo. Org members cannot create internal repos (<code>members_can_create_internal_repositories: false</code>) or delete repos (<code>members_can_delete_repositories: false</code>). The org is on the Enterprise plan, so private repos there support the Copilot review ruleset and private Pages. The repo was created empty and its setup stays in Phase 8. A cleanup step (archive) was added to the global validation.</p>
     </details>
     <details>
       <summary>2026-10-06T10:05:00+08:00: Phase 1 built, with four differences from the plan</summary>
@@ -842,8 +842,8 @@ flowchart LR
     <details>
       <summary>2026-10-06T13:10:00+08:00: Phase 4 built, with six differences from the plan</summary>
       <ol>
-        <li>Copilot's review always has the state <code>COMMENTED</code>, but its body starts with an overview verdict. On Woodside/ai-maint about 90 reviews show three verdicts: "🟢 Approval recommended", "🟡 Changes recommended" and "🔵 Needs a closer look". The review passes only on "Approval recommended". Any other verdict becomes a finding carrying the overview's summary sentence, so a 🔵 review with no inline comments still gives the reviser something to act on. A review without an overview heading falls back to its threads.</li>
-        <li>The review rule is the pure function <code>review.evaluate</code>. Live on Woodside/ai-maint it passes PR #344 and returns PR #347's verdict plus its 4 open threads.</li>
+        <li>Copilot's review always has the state <code>COMMENTED</code>, but its body starts with an overview verdict. On example-org/example-app about 90 reviews show three verdicts: "🟢 Approval recommended", "🟡 Changes recommended" and "🔵 Needs a closer look". The review passes only on "Approval recommended". Any other verdict becomes a finding carrying the overview's summary sentence, so a 🔵 review with no inline comments still gives the reviser something to act on. A review without an overview heading falls back to its threads.</li>
+        <li>The review rule is the pure function <code>review.evaluate</code>. Live on example-org/example-app it passes PR #102 and returns PR #103's verdict plus its 4 open threads.</li>
         <li>Findings are numbered T1.. for the reviser: checks and statuses, then the review verdict, then threads. A new <code>reviser</code> role (write access) is held to the same guards as a ticket: frozen tests are restored, Dev checks must be unchanged, HEAD and the branch must not move, and every ticket test and the regression suite must pass. A "fixed" claim with no change is rejected.</li>
         <li>A new <code>[deploy] pr_title</code> setting (default <code>feat: {title}</code>) controls the title, which becomes the squash commit subject. The PR tests live in <code>tests/test_review_loop.py</code> rather than a separate <code>test_delivery_pr.py</code>.</li>
         <li>The PR merged or closed outside the runner, or its head moved, fails the review gate. A GitHub read error is treated as still waiting, up to the timeout. If findings exist when the timeout hits, the reviser acts on them instead of failing.</li>
@@ -854,7 +854,7 @@ flowchart LR
       <summary>2026-10-06T14:20:00+08:00: Phase 5 built, with five differences from the plan</summary>
       <ol>
         <li>The base is merged with <code>--no-commit</code>, so a clean merge is also checked (markers, frozen tests, Dev checks, ticket tests, regression) before the runner commits it. Upstream code that breaks this issue's tests also goes to the resolver.</li>
-        <li>The runner acts only on the <code>mergeable_state</code> GitHub reports. "behind" appears only when branch protection requires up-to-date branches, which Woodside/ai-maint does not, so there a merely-behind PR merges as it is. "dirty" (a conflict) always triggers the base merge.</li>
+        <li>The runner acts only on the <code>mergeable_state</code> GitHub reports. "behind" appears only when branch protection requires up-to-date branches, which example-org/example-app does not, so there a merely-behind PR merges as it is. "dirty" (a conflict) always triggers the base merge.</li>
         <li>A test file that was itself in conflict is re-frozen at its merged content once every check passes. Other frozen tests are restored if touched.</li>
         <li>A 405 "not mergeable" from GitHub is retried after a poll, within <code>max_merge_attempts</code>. A 409 head mismatch fails the gate. A PR merged outside the runner counts only if its head is the reviewed head. Merging requires the saved review gate to be <code>pass</code>, and any base merge resets it.</li>
         <li>The fake GitHub merges for real in the bare remote (<code>git merge-tree --write-tree</code> plus <code>commit-tree</code>). <code>test_session_controls.py::test_completion_while_detached_returns_to_the_shell</code> flaked once in a full run under load and passed 3 times out of 3 alone. It is unrelated to this work.</li>
@@ -863,7 +863,7 @@ flowchart LR
     <details>
       <summary>2026-10-06T15:30:00+08:00: Phase 6 built, with four differences from the plan</summary>
       <ol>
-        <li>The newest deployment to the environment whose SHA contains the merge decides the gate: <code>success</code> passes, <code>failure</code> or <code>error</code> fails, anything else waits. Run state supports this, and a failed newest run fails with its failed jobs and log tail. A cancelled run counts as superseded, so the watch keeps waiting for the newer run. Live on Woodside/ai-maint, the #344 merge <code>9a17d7f0</code> resolves to deployment 6878920105 of the later <code>6719f78e</code>, state <code>success</code>.</li>
+        <li>The newest deployment to the environment whose SHA contains the merge decides the gate: <code>success</code> passes, <code>failure</code> or <code>error</code> fails, anything else waits. Run state supports this, and a failed newest run fails with its failed jobs and log tail. A cancelled run counts as superseded, so the watch keeps waiting for the newer run. Live on example-org/example-app, the #102 merge <code>9a17d7f0</code> resolves to deployment 6878920105 of the later <code>6719f78e</code>, state <code>success</code>.</li>
         <li>Ancestry is checked with git in the run worktree (<code>devops.contains</code>), fetching once when a SHA is unknown. The paths-filter explanation uses the files the merge changed against its first parent (<code>devops.files_in_commit</code>).</li>
         <li>A failed deploy also comments on the PR. Retrying a failed stage resets its wait start, so a re-run gets the full grace and timeout again. That applies to the review wait too.</li>
         <li>Earlier stage tests now assert only their own gate, so they stay valid as later stages are built.</li>
@@ -890,7 +890,7 @@ flowchart LR
     </details>
     <details>
       <summary>2026-10-06T18:10:00+08:00: Phase 8 live proof, first run met the Definition of Done</summary>
-      <p>The sandbox <code>Woodside/issue-runner-sandbox</code> was seeded at <code>79c8fe6</code>:</p>
+      <p>The sandbox <code>example-org/example-sandbox</code> was seeded at <code>79c8fe6</code>:</p>
       <ul>
         <li>a <code>calc</code> module with tests,</li>
         <li><code>site/build.py</code>, and a <code>dev-deployment</code> workflow (paths filter, environment <code>development</code>) that publishes the page to the <code>deployed/dev</code> branch,</li>
@@ -898,21 +898,21 @@ flowchart LR
         <li>a <code>runner.toml</code> whose Dev check reads <code>deployed/dev</code> through <code>gh api</code>.</li>
       </ul>
       <p>Dev is a branch rather than a Pages site, because Pages on a private Enterprise repository would not be readable by a plain <code>curl</code>.</p>
-      <p>Issue #1 has one criterion proven by tests and one checked in Dev. <code>issue-runner 1 --repo Woodside/issue-runner-sandbox --deploy --agent --max-run-credits 800</code> exited 0 and used about 122 AIU. Verified on GitHub:</p>
+      <p>Issue #201 has one criterion proven by tests and one checked in Dev. <code>issue-runner 201 --repo example-org/example-sandbox --deploy --agent --max-run-credits 800</code> exited 0 and used about 122 AIU. Verified on GitHub:</p>
       <ul>
-        <li>The plan had 2 tickets, mirrored as sub-issues #2 and #3, both closed.</li>
+        <li>The plan had 2 tickets, mirrored as sub-issues #202 and #203, both closed.</li>
         <li>The Dev check for AC2 was red before the PR: "Dev page does not show the line '5 - 3 = 2'".</li>
-        <li>PR #4 was titled "feat: Add subtract to the calculator and show it on Dev", with a body starting <code>Refs #1</code>.</li>
+        <li>PR #204 was titled "feat: Add subtract to the calculator and show it on Dev", with a body starting <code>Refs #201</code>.</li>
         <li>The Copilot review of <code>78faacb</code> said "🟢 Approval recommended", and CI, CodeQL and Code Quality were green.</li>
         <li>It squash-merged at <code>2f92de0</code>. <code>dev-deployment</code> ran on the push, and deployment 6880732137 of <code>2f92de0</code> reported <code>success</code>.</li>
         <li>The Dev page lists <code>5 - 3 = 2</code>, and the AC2 check then passed.</li>
-        <li>Issue #1 was closed as completed, with both criteria ticked, a "Definition of Done: met" comment showing six passes, and the <code>--agent</code> summary comment.</li>
+        <li>Issue #201 was closed as completed, with both criteria ticked, a "Definition of Done: met" comment showing six passes, and the <code>--agent</code> summary comment.</li>
       </ul>
       <p>Not yet exercised live, because the first review approved straight away: the reviser loop, re-requesting the Copilot review (<code>POST /requested_reviewers</code>), the base merge with conflict resolution, and a failing run.</p>
     </details>
     <details>
       <summary>2026-10-07T09:20:00+08:00: Phase 8 live proof, second run covered the review loop, a conflict, a failure and recovery</summary>
-      <p>Sandbox issue #5 (multiply). A watcher script acted the moment PR #8 opened:</p>
+      <p>Sandbox issue #205 (multiply). A watcher script acted the moment PR #208 opened:</p>
       <ul>
         <li>it disabled <code>dev-deployment</code>,</li>
         <li>it pushed a teammate commit <code>36725b1</code> to <code>main</code> that conflicts in <code>calc.py</code> (adds <code>divide</code>),</li>
@@ -922,8 +922,8 @@ flowchart LR
       <ul>
         <li><strong>Reviser loop and re-review request:</strong> the reviser added the docstring as <code>fix(review): address review round 1</code> (<code>570adf8</code>). The runner replied "Fixed: … (570adf86f501)" and resolved the thread, and its <code>POST /requested_reviewers</code> with <code>copilot-pull-request-reviewer[bot]</code> made Copilot review <code>570adf8</code>. That call is now proven live.</li>
         <li><strong>Conflict resolution:</strong> GitHub reported the PR <code>dirty</code>. The runner merged <code>origin/main</code> as <code>b06390f</code>, keeping both <code>multiply</code> and <code>divide</code>. It requested review again, Copilot approved <code>b06390f</code>, and the PR squash-merged at <code>80827fe</code>.</li>
-        <li><strong>Failing run:</strong> with the workflow disabled, no deploy started. The run exited 8 with "the merge did not start dev-deployment.yml within 10 min" and commented on the PR. Issue #5 stayed open with "Definition of Done: FAILED at deploy", AC1 ticked (merged) and AC2 not.</li>
-        <li><strong>Recovery:</strong> after re-enabling the workflow, the same command with <code>--config</code> setting <code>dispatch_if_not_triggered = true</code> resumed at <code>deploying</code>, dispatched once (<code>workflow_dispatch</code> run on <code>80827fe</code>, success), and the Dev check passed (<code>4 x 3 = 12</code> on Dev). Issue #5 closed as completed with both criteria ticked and a "Definition of Done: met" comment. Exit 0. Run 2 used about 208 AIU.</li>
+        <li><strong>Failing run:</strong> with the workflow disabled, no deploy started. The run exited 8 with "the merge did not start dev-deployment.yml within 10 min" and commented on the PR. Issue #205 stayed open with "Definition of Done: FAILED at deploy", AC1 ticked (merged) and AC2 not.</li>
+        <li><strong>Recovery:</strong> after re-enabling the workflow, the same command with <code>--config</code> setting <code>dispatch_if_not_triggered = true</code> resumed at <code>deploying</code>, dispatched once (<code>workflow_dispatch</code> run on <code>80827fe</code>, success), and the Dev check passed (<code>4 x 3 = 12</code> on Dev). Issue #205 closed as completed with both criteria ticked and a "Definition of Done: met" comment. Exit 0. Run 2 used about 208 AIU.</li>
       </ul>
       <p>Follow-ups found live, not fixed here:</p>
       <ol>
