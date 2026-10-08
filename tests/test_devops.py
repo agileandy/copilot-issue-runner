@@ -313,3 +313,75 @@ def test_ensure_excluded_keeps_every_pattern_when_worktrees_race(tmp_path, monke
 
     lines = exclude.read_text().splitlines()
     assert {"/.issue-runner-a/", "/.issue-runner-b/"} <= set(lines)
+
+
+def test_commit_ticket_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    subprocess.run(["git", "rm", "-q", "seed.txt"], cwd=git_repo, check=True, capture_output=True)
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
+def test_commit_ticket_commits_an_unstaged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    (git_repo / "seed.txt").unlink()
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
+def test_commit_changes_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    git("add", "uv.lock")
+    git("commit", "-m", "add uv.lock")
+    create_branch(git_repo, "feature/150-x")
+    git("rm", "-q", "uv.lock")
+    (git_repo / "seed.txt").write_text("seed changed")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
+
+
+def test_commit_changes_commits_an_unstaged_deletion(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    git("add", "uv.lock")
+    git("commit", "-m", "add uv.lock")
+    create_branch(git_repo, "feature/150-x")
+    (git_repo / "uv.lock").unlink()
+    (git_repo / "seed.txt").write_text("seed changed")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
+
+
+def test_finish_merge_commits_a_deletion_from_the_merged_ref(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/150-x")
+    git("checkout", "main")
+    git("rm", "-q", "seed.txt")
+    git("commit", "-m", "remove seed")
+    git("checkout", "feature/150-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]
