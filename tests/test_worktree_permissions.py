@@ -311,6 +311,8 @@ def test_isolated_run_uses_a_feature_branch_and_briefs_every_agent(tmp_path):
         assert "If a tool call is denied, try one different approach, then report" in prompt
         assert "never repeat it" in prompt, role
     assert f"Run the full suite with: `{cfg.regression_cmd}`" in client.prompts["planner"]
+    for role in ("builder.tester", "builder.coder", "verifier"):
+        assert "Run the full suite with" not in client.prompts[role], role
     assert "<test_path>" in client.prompts["builder.tester"]
     test_path = load_store(env).tickets[0].test_path
     focused = cfg.test_cmd.format(test_path=test_path)
