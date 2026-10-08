@@ -148,6 +148,30 @@ def test_review_without_an_overview_heading_relies_on_threads():
     assert evaluate(reviews=[dict(copilot(), body="Looks good to me")]).state == "pass"
 
 
+def test_update_pull_body_replaces_the_pr_description(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    git = ["git", "--git-dir", str(remote), "-c", "user.name=t", "-c", "user.email=t@x"]
+    tree = subprocess.run(
+        [*git, "hash-object", "-t", "tree", "-w", "--stdin"],
+        input="",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    commit = subprocess.run(
+        [*git, "commit-tree", tree, "-m", "init"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    for branch in ("main", "b"):
+        subprocess.run([*git, "update-ref", f"refs/heads/{branch}", commit], check=True)
+    fake = FakeGitHub()
+    fake.remote = remote
+    flow = GitHubFlow("o/n", run=fake)
+    pr = flow.create_pull("t", "b", "main", "old")
+    flow.update_pull_body(pr["number"], "new body")
+    assert fake.pulls[pr["number"]]["body"] == "new body"
+
+
 # --- the loop, end to end -----------------------------------------------------------
 
 

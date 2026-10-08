@@ -163,6 +163,7 @@ class FakeGitHub:
             (r"/pulls", ("GET", self._list_pulls)),
             (r"/pulls#post", ("POST", self._create_pull)),
             (r"/pulls/(\d+)", ("GET", self._pull)),
+            (r"/pulls/(\d+)#patch", ("PATCH", self._update_pull)),
             (r"/pulls/(\d+)/reviews", ("GET", self._reviews)),
             (r"/pulls/(\d+)/requested_reviewers", ("POST", self._request_review)),
             (r"/pulls/(\d+)/merge", ("PUT", self._merge)),
@@ -510,6 +511,11 @@ class FakeGitHub:
         if number not in self.issues:
             raise _NotFound
         return {"number": number, **self.issues[number]}
+
+    def _update_pull(self, number, body, **_):
+        pr = self.pulls[int(number)]
+        pr.update(body)
+        return dict(pr)
 
     def _update_issue(self, number, body, **_):
         issue = self.issues[int(number)]
