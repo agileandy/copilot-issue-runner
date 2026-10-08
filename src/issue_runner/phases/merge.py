@@ -185,7 +185,7 @@ def _pr_problem(cfg, conflicted: list[str]) -> str | None:
     markers = devops.leftover_markers(cfg.repo_dir, conflicted)
     if markers:
         return "conflict markers remain:\n" + "\n".join(markers[:20])
-    return green_problem(cfg, [], allow_empty_suite=True)
+    return green_problem(cfg, [])
 
 
 def _problem(cfg, store, tests, conflicted: list[str]) -> str | None:

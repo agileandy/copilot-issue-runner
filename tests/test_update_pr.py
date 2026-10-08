@@ -21,11 +21,18 @@ def _git(cwd, *args):
     )
 
 
+def _commit_a_passing_test(repo):
+    (repo / "test_ok.py").write_text("PASS\n")
+    _git(repo, "add", "test_ok.py")
+    _git(repo, "commit", "-q", "-m", "test: a passing case")
+
+
 @pytest.fixture
 def pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     remote = tmp_path_factory.mktemp("origin") / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
     _git(git_repo, "remote", "add", "origin", str(remote))
+    _commit_a_passing_test(git_repo)
     _git(git_repo, "push", "-q", "-u", "origin", "main")
     _git(git_repo, "checkout", "-q", "-b", BRANCH)
     (git_repo / "feature.py").write_text("y = 2\n")
@@ -66,6 +73,23 @@ def test_update_pr_branch_does_not_push_a_merge_that_fails_the_regression_suite(
     assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before
 
 
+def test_update_pr_branch_does_not_push_a_merge_whose_regression_suite_runs_no_test(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+    import sys
+
+    no_tests_cfg = dataclasses.replace(
+        cfg, regression_cmd=f"{sys.executable} {git_repo / 'checker.py'} feature.py"
+    )
+    before = _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip()
+
+    with pytest.raises(merge.MergeError, match="the regression suite did not run"):
+        merge.update_pr_branch(FakeClient([]), no_tests_cfg, BRANCH, "main")
+
+    assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before
+
+
 @pytest.fixture
 def conflicting_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     remote = tmp_path_factory.mktemp("origin") / "remote.git"
@@ -74,6 +98,7 @@ def conflicting_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     (git_repo / "impl.py").write_text("base\n")
     _git(git_repo, "add", "impl.py")
     _git(git_repo, "commit", "-q", "-m", "feat: base impl")
+    _commit_a_passing_test(git_repo)
     _git(git_repo, "push", "-q", "-u", "origin", "main")
     _git(git_repo, "checkout", "-q", "-b", BRANCH)
     (git_repo / "impl.py").write_text("ours\n")
@@ -145,6 +170,7 @@ def up_to_date_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     remote = tmp_path_factory.mktemp("origin") / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
     _git(git_repo, "remote", "add", "origin", str(remote))
+    _commit_a_passing_test(git_repo)
     _git(git_repo, "push", "-q", "-u", "origin", "main")
     _git(git_repo, "checkout", "-q", "-b", BRANCH)
     (git_repo / "feature.py").write_text("y = 2\n")

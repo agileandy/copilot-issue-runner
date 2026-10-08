@@ -28,7 +28,7 @@ from ..jsonx import JsonExtractError, extract_json_object
 from ..testcmd import detect_regression_cmd
 from ..tickets import TicketStore
 from . import acceptance, devops
-from .build import BuildError, NoTestsError, resolve_test_path, run_test_command, run_tests
+from .build import BuildError, resolve_test_path, run_test_command, run_tests
 
 OK_CONCLUSIONS = ("success", "neutral", "skipped")
 APPROVAL = "Approval recommended"
@@ -305,12 +305,8 @@ def _verify_change(cfg, tests, changed, actions, labels) -> str | None:
     return green_problem(cfg, tests)
 
 
-def green_problem(cfg, tests, allow_empty_suite: bool = False) -> str | None:
-    """Why the working tree is not green: a ticket test or the regression suite fails.
-
-    With allow_empty_suite, a regression suite that executes no test is green:
-    there is nothing a merge could regress.
-    """
+def green_problem(cfg, tests) -> str | None:
+    """Why the working tree is not green: a ticket test or the regression suite fails."""
     for ticket in tests:
         try:
             passed, output = run_tests(cfg, ticket.test_path)
@@ -323,10 +319,6 @@ def green_problem(cfg, tests, allow_empty_suite: bool = False) -> str | None:
         return "no regression command is configured or detectable"
     try:
         passed, output = run_test_command(cfg, command)
-    except NoTestsError as e:
-        if allow_empty_suite:
-            return None
-        return f"the regression suite did not run: {e}"
     except BuildError as e:
         return f"the regression suite did not run: {e}"
     if not passed:
