@@ -29,7 +29,7 @@ asyncio_mode = "auto"
 line-length = 100
 target-version = "py312"
 # factory/ is installer-generated scaffolding; a reinstall overwrites hand edits
-extend-exclude = ["factory"]
+extend-exclude = ["./factory"]
 
 [tool.ruff.lint.per-file-ignores]
 # the nested pytest.raises keeps the outer lock's entry outside the expected failure

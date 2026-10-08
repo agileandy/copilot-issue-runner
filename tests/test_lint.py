@@ -31,3 +31,25 @@ def test_ruff_check_is_clean():
     )
 
     assert result.returncode == 0, result.stdout
+
+
+def test_ruff_lints_nested_factory_dir():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--force-exclude",
+            "--stdin-filename",
+            "src/issue_runner/factory/x.py",
+            "-",
+        ],
+        cwd=ROOT,
+        input="import os\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "F401" in result.stdout, result.stdout + result.stderr
