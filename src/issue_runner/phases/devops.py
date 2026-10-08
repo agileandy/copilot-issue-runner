@@ -194,7 +194,30 @@ def _validate_paths(repo_dir: Path, paths: list[str]) -> None:
             raise DevopsError(f"ticket path escapes the workspace: {name}")
 
 
+TOOL_BYPRODUCTS = ("uv.lock",)
+
+
+def incidental_paths(repo_dir: Path, paths: list[str], wanted=()) -> list[str]:
+    """Tool byproducts that HEAD does not track and the ticket did not ask for."""
+    incidental = []
+    for name in paths:
+        if Path(name).name not in TOOL_BYPRODUCTS or name in wanted:
+            continue
+        tracked = subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{name}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            incidental.append(name)
+    return incidental
+
+
 def approve_changes(repo_dir: Path, ticket: Ticket) -> None:
+    incidental = incidental_paths(repo_dir, changed_paths(repo_dir), wanted=ticket.files_hint)
+    if incidental:
+        discard_paths(repo_dir, incidental)
     ticket.changed_files = changed_paths(repo_dir)
     _validate_paths(repo_dir, ticket.changed_files)
     ticket.approved_digest = workspace_digest(repo_dir, include_index=False)
@@ -359,6 +382,10 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     if branch != expected_branch or not is_run_branch(branch):
         raise DevopsError(f"refusing to commit on {branch} — the run must be on {expected_branch}")
     paths = changed_paths(repo_dir)
+    incidental = incidental_paths(repo_dir, paths)
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     if not paths:
         raise DevopsError("nothing to commit")
     _validate_paths(repo_dir, paths)
@@ -435,6 +462,15 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
     if not merge_in_progress(repo_dir):
         raise DevopsError("no merge is in progress")
     paths = changed_paths(repo_dir)
+    merged = (
+        _git(repo_dir, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD", "--", *paths).stdout
+        if paths
+        else ""
+    )
+    incidental = incidental_paths(repo_dir, paths, wanted={p for p in merged.split("\0") if p})
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     _validate_paths(repo_dir, paths)
     _git(repo_dir, "add", "-A", "--", *paths)
     _git(repo_dir, "commit", "--no-edit")

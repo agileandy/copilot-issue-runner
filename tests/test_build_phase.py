@@ -59,6 +59,16 @@ def test_run_test_command_takes_a_complete_command(repo, cfg):
     assert "ok 1" in output
 
 
+def test_run_test_command_sets_uv_no_sync_so_uv_run_never_writes_a_lockfile(repo, cfg):
+    from issue_runner.phases.build import run_test_command
+
+    command = (
+        f"{sys.executable} -c \"import os; print('TAP version 13'); print('1..1'); "
+        f"print(('ok' if os.environ.get('UV_NO_SYNC') == '1' else 'not ok') + ' 1')\""
+    )
+    assert run_test_command(cfg, command)[0] is True
+
+
 def test_the_fixture_checker_runs_the_whole_tree_for_a_regression_gate(repo, cfg):
     """What the parent's regression gate will drive through run_test_command."""
     from issue_runner.phases.build import run_test_command

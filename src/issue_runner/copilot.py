@@ -53,6 +53,8 @@ from .usage import UsageLedger, cost_is_complete, mark_incomplete, merge_usage
 log = logging.getLogger("issue_runner")
 
 ALWAYS_DENY = ("shell(git push)",)
+# agents' `uv run` reuses the existing environment instead of locking the project
+AGENT_ENV = {"UV_NO_SYNC": "1"}
 # git subcommands that change refs, the index, the worktree or configuration
 MUTATING_GIT = (
     "commit",
@@ -228,6 +230,7 @@ class CopilotClient:
                 text=True,
                 timeout=self.config.timeout,
                 cwd=str(self.config.repo_dir),
+                env=dict(os.environ, **AGENT_ENV),
             )
         except subprocess.TimeoutExpired as e:
             raise CopilotError(
@@ -258,6 +261,7 @@ class CopilotClient:
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=str(self.config.repo_dir),
+                env=dict(os.environ, **AGENT_ENV),
                 # own a process group so a timeout can reap the whole tool tree by id
                 start_new_session=True,
             )

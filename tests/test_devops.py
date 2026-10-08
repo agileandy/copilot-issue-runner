@@ -156,6 +156,64 @@ def test_worktree_state_reports_untracked_file(git_repo):
     }
 
 
+def test_untracked_uv_lock_stays_out_of_the_ticket_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "real.py").write_text("x = 1")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["real.py"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_review_fix_commit(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "seed.txt").write_text("seed changed")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "other.txt").write_text("other")
+    git("add", "other.txt")
+    git("commit", "-m", "other")
+    git("checkout", "feature/151-x")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["other.txt"]
+
+
+def test_uv_lock_tracked_by_merged_ref_stays_in_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    (git_repo / "feature.txt").write_text("feature")
+    git("add", "uv.lock", "feature.txt")
+    git("commit", "-m", "add uv.lock and feature")
+    git("checkout", "feature/151-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["feature.txt", "uv.lock"]
+
+
 def test_shared_changes_reports_only_committed_source_with_other_tests(git_repo):
     from issue_runner.phases.devops import shared_changes
 
