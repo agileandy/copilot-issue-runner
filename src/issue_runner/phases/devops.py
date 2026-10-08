@@ -423,6 +423,13 @@ def leftover_markers(repo_dir: Path, paths: list[str]) -> list[str]:
     return [line for line in lines if "conflict marker" in line]
 
 
+def worktree_edits(repo_dir: Path) -> list[str]:
+    """Paths changed in the working tree but not staged, plus untracked files."""
+    unstaged = _git(repo_dir, "diff", "--name-only").stdout.splitlines()
+    untracked = _git(repo_dir, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
+    return sorted(set(unstaged) | set(untracked))
+
+
 def finish_merge(repo_dir: Path, expected_branch: str) -> str:
     """Commit the in-progress merge with the message given to `merge_in`."""
     if current_branch(repo_dir) != expected_branch:

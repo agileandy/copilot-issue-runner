@@ -160,7 +160,11 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
             raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
         if not devops.merge_in_progress(repo):
             raise MergeError("the resolver ended the merge; only the runner finishes it")
-        problem = _pr_problem(cfg, conflicted)
+        stray = [p for p in devops.worktree_edits(repo) if p not in conflicted]
+        if stray:
+            problem = f"the resolver edited files outside the conflict: {', '.join(stray)}"
+        else:
+            problem = _pr_problem(cfg, conflicted)
         feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
     sha = devops.finish_merge(repo, branch)
     devops.push_branch(repo, branch)

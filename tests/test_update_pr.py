@@ -101,3 +101,24 @@ def test_update_pr_branch_pushes_the_resolvers_fix_for_a_conflicted_merge(
         conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
     ).stdout
     assert pushed == "ours\n# and upstream\n"
+
+
+def test_update_pr_branch_rejects_a_resolver_edit_outside_the_conflict(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    no_retries = dataclasses.replace(cfg, coder_retries=0)
+
+    def resolve_and_stray():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        (git_repo / "other.py").write_text("x = 2\n")
+
+    client = FakeClient([('{"notes":"ok"}', resolve_and_stray)])
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: other.py"):
+        merge.update_pr_branch(client, no_retries, BRANCH, "main")
