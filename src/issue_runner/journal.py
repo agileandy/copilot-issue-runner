@@ -66,7 +66,7 @@ class Journal:
         text = format_message(ticket, sender, recipient, body, heading)
         try:
             self.backend.comment(ticket, text)
-        except Exception:  # a lost comment must not cost the run
+        except Exception:  # noqa: BLE001 — a lost comment must not cost the run
             log.warning("could not record feedback on ticket %s", ticket.id, exc_info=True)
             return False
         self._last[ticket.id] = body

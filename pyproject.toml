@@ -28,3 +28,9 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# origin/main state of these files, kept out of #151's scope
+"src/issue_runner/cli.py" = ["RUF100"]
+"src/issue_runner/journal.py" = ["RUF100"]
+"tests/test_visual_*.py" = ["PLW1510"]

@@ -404,7 +404,7 @@ def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> in
         report = run_issue(cfg, client, issue, plan_only=plan_only)
     except PipelineError as e:
         return _report_abort(e, client, resume, post=post)
-    except Exception as e:  # a demo must not end in a traceback
+    except Exception as e:  # noqa: BLE001 — a demo must not end in a traceback
         logging.getLogger("issue_runner").debug("unexpected failure", exc_info=True)
         return _report_abort(e, client, resume, unexpected=True, post=post)
 

@@ -25,7 +25,6 @@ def test_a_stopped_run_is_held_on_the_summary_overlay_with_its_dismiss_keys():
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
-        check=False,
     )
     output = result.stdout + result.stderr
     assert "matched 0 tests" not in output, f"the named case never ran:\n{output}"
