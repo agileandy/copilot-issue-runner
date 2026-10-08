@@ -5,6 +5,7 @@ import subprocess
 
 from ..config import RunnerConfig
 from ..testreport import strip_ansi
+from ..tickets import Ticket, TicketStore
 
 MAX_FINDING_CHARS = 3000
 
@@ -33,3 +34,31 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
         text = strip_ansi((result.stdout or "") + (result.stderr or "")).strip()
         findings.append({"command": cmd, "text": text[-MAX_FINDING_CHARS:]})
     return findings
+
+
+def step(cfg: RunnerConfig, store: TicketStore) -> bool:
+    """Run the pre-PR checks once; turn each finding into a fix ticket. True if any were added."""
+    if not cfg.pre_pr.commands or store.pr_url:
+        return False
+    if store.delivery is not None and store.delivery.pr_number:
+        return False
+    findings = run_checks(cfg, store.initial_head or "")
+    store.pre_pr_rounds.append({"round": len(store.pre_pr_rounds) + 1, "findings": findings})
+    for finding in findings:
+        next_id = max((t.id for t in store.tickets), default=0) + 1
+        lines = finding["text"].splitlines()
+        first = (lines[0] if lines else "").strip()[:80]
+        store.tickets.append(
+            Ticket(
+                id=next_id,
+                title=f"Fix pre-PR finding: {first}",
+                description=(
+                    f"The pre-PR check `{finding['command']}` failed with:\n\n{finding['text']}"
+                ),
+                test_assertion=(
+                    f"the pre-PR check '{finding['command']}' no longer reports this finding"
+                ),
+            )
+        )
+    store.save()
+    return bool(findings)

@@ -26,7 +26,7 @@ from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .journal import Journal
-from .phases import acceptance, delivery, devops
+from .phases import acceptance, delivery, devops, prepr
 from .phases.build import (
     BuildError,
     CoderFailure,
@@ -430,6 +430,10 @@ def _run_issue(
                 or devops.current_branch(cfg.repo_dir) != store.branch
             ):
                 raise DevopsError("regression command changed the run branch; refusing publication")
+            if prepr.step(cfg, store):
+                _mirror_tickets(cfg, issue, store)
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                continue
             if cfg.deploy:
                 if delivery.run(cfg, client, issue, store, report) == delivery.MORE_TICKETS:
                     # acceptance planned tickets for unmet criteria: build them, then resume

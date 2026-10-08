@@ -727,3 +727,47 @@ def test_an_aborted_run_still_reports_the_work_it_completed(git_repo, cfg):
     assert report.done == 1, "the committed ticket must still be reported"
     assert report.branch, "the branch must be reported so the work can be found"
     assert "first" in " ".join(report.details)
+
+
+def write_test_file(repo, tag):
+    return lambda: (repo / "test_lint.py").write_text(f"assert PASS # {tag}")
+
+
+def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    counter = outside / "count"
+    lint = outside / "lint.py"
+    lint.write_text(
+        "import pathlib, sys\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "n = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(n + 1))\n"
+        "if n == 0:\n"
+        "    print('unused import')\n"
+        "    sys.exit(1)\n"
+    )
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert (
+        len(pull_requests.created),
+        [(t.title, t.status) for t in store.tickets],
+    ) == (1, [("subtract ints", "done"), ("Fix pre-PR finding: unused import", "done")])
+
