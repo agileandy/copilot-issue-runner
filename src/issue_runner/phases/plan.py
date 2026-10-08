@@ -210,9 +210,10 @@ def _validate(data: dict, criteria_ids=None, first_id: int = 1, existing_ids=())
             if not item.get(field):
                 raise PlanError(f"ticket {i} is missing required field {field!r}")
         depends_on = list(item.get("depends_on", []))
-        for dep in depends_on:
-            if dep not in known or dep == i:
-                raise PlanError(f"ticket {i} depends on {dep!r}, which is not another ticket")
+        if criteria_ids is not None:  # --deploy planning only; plain runs block such tickets later
+            for dep in depends_on:
+                if dep not in known or dep == i:
+                    raise PlanError(f"ticket {i} depends on {dep!r}, which is not another ticket")
         named = list(item.get("criteria", [])) if criteria_ids is not None else []
         unknown = [c for c in named if c not in criteria_ids]
         if unknown:
