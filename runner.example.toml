@@ -61,3 +61,9 @@ provision_timeout = 900 # seconds per provisioning step
 # dev_check_ext = ".sh"
 # dev_check_guide = "A POSIX sh script. Dev's base URL is $1; use curl against it."
 # dev_check_timeout_sec = 300
+
+# Checks run on the branch before the PR opens. Every key is optional.
+# {base} is the commit the run branched from.
+[pre_pr]
+# commands = ["gh-code-quality --base {base}"]
+# max_rounds = 2

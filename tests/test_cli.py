@@ -1258,3 +1258,14 @@ def test_ticket_regression_reads_from_runner_toml(tmp_path):
         'test_cmd = "pytest -q"\nticket_regression = "focused"\n'
     )
     assert load_config(tmp_path).ticket_regression == "focused"
+
+
+def test_load_config_reads_pre_pr_table(tmp_path):
+    from issue_runner.config import PrePrConfig, load_config
+
+    (tmp_path / "runner.toml").write_text(
+        "[pre_pr]\ncommands = ['gh-code-quality --base {base}']\nmax_rounds = 3\n"
+    )
+    assert load_config(tmp_path).pre_pr == PrePrConfig(
+        commands=["gh-code-quality --base {base}"], max_rounds=3
+    )
