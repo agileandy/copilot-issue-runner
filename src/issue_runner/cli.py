@@ -122,6 +122,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     )
     p.add_argument("--model", help="model for every role this run, overriding runner.toml (see 'copilot /model')")
     p.add_argument("--effort", help="reasoning effort for every role this run, overriding runner.toml")
+    p.add_argument(
+        "--role-model",
+        action="append",
+        metavar="ROLE=MODEL",
+        help="override one role's model for this run, taking precedence over --model (repeatable)",
+    )
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
     p.add_argument(
         "--max-run-credits",
@@ -276,6 +282,9 @@ def main(argv=None) -> int:
                 model=args.model or existing.model,
                 effort=args.effort or existing.effort,
             )
+    for value in args.role_model or []:
+        role, model_id = value.split("=", 1)
+        cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
 
     try:
         validate_config(cfg)

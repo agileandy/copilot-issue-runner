@@ -438,6 +438,42 @@ def test_runner_toml_roles_kept_without_model_or_effort_flags(tmp_path, monkeypa
     assert (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]) == ("cheap", "low")
 
 
+def test_role_model_flag_overrides_one_role_over_model_flag(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["cfg"] = cfg
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--model",
+            "base",
+            "--role-model",
+            "resolver=strong",
+        ]
+    )
+    cfg = seen["cfg"]
+    assert {r: cfg.role(r).model for r in ("resolver", "planner")} == {
+        "resolver": "strong",
+        "planner": "base",
+    }
+
+
 def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     repo = tmp_path / "target"
     repo.mkdir()
