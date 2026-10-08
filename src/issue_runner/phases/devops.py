@@ -389,7 +389,7 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     if not paths:
         raise DevopsError("nothing to commit")
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "-m", message)
     require_clean(repo_dir)
     return head_commit(repo_dir)

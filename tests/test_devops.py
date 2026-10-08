@@ -267,3 +267,19 @@ def test_commit_ticket_commits_an_already_staged_deletion(git_repo):
     approve_changes(git_repo, ticket)
     sha = commit_ticket(git_repo, ticket)
     assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
+def test_commit_changes_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    git("add", "uv.lock")
+    git("commit", "-m", "add uv.lock")
+    create_branch(git_repo, "feature/150-x")
+    git("rm", "-q", "uv.lock")
+    (git_repo / "seed.txt").write_text("seed changed")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
