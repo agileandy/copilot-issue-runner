@@ -551,6 +551,51 @@ def test_a_fix_round_whose_push_failed_is_still_recorded_in_the_pr_body(
     ]
 
 
+def test_a_fix_round_resumed_after_a_failed_push_answers_its_threads_with_the_saved_commit(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    original = delivery.devops.push_branch
+    failures = [DevopsError("push rejected")]
+
+    def push_failing_once_on_the_fix(repo_dir, branch):
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if failures and subject.startswith("fix(review)"):
+            raise failures.pop()
+        return original(repo_dir, branch)
+
+    monkeypatch.setattr(delivery.devops, "push_branch", push_failing_once_on_the_fix)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, _, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+
+    # the thread stays open and the resume has no reviser reply to give
+    _, store, client = run(cfg, git_repo, [])
+    observed = (
+        [c for c in client.calls if c["role"] == "reviser"],
+        fake.thread_replies.get("PRRT_1"),
+        fake.threads["PRRT_1"]["isResolved"],
+        store.delivery.review_round,
+        store.delivery.gates.get("review"),
+    )
+    assert observed == (
+        [],
+        [f"Fixed: None is handled ({store.delivery.head_sha[:12]})"],
+        True,
+        1,
+        "pass",
+    )
+
+
 def test_two_fix_rounds_both_appear_in_the_final_pr_body(env, git_repo):  # noqa: F811
     fake, _, cfg = env
     fake.scenarios = [
