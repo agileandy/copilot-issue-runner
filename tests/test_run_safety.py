@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from issue_runner.config import RunnerConfig
 from issue_runner.orchestrator import run_issue
 from issue_runner.phases import devops
 from issue_runner.phases.devops import DevopsError
@@ -108,3 +109,33 @@ def test_linked_worktree_exclusions_use_the_real_git_directory(tmp_path):
     state.mkdir()
     (state / "private.json").write_text("{}")
     assert git(other, "status", "--porcelain") == ""
+
+
+def test_linked_worktree_runner_is_not_blocked_by_another_worktree(tmp_path):
+    env, cfg = sandbox(tmp_path)
+    linked = tmp_path / "linked"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-b", str(linked))
+    cfg_b = RunnerConfig(
+        repo_dir=linked,
+        copilot_cmd=str(env.copilot_cmd),
+        test_cmd=env.test_cmd,
+        regression_cmd=env.test_cmd.format(test_path="tests"),
+        isolate_worktree=False,
+        github_tickets=False,
+        open_pr=False,
+    )
+    inner = {}
+
+    class NestingClient(DemoClient):
+        def run(self, prompt, role, **kwargs):
+            if role == "planner" and "report" not in inner:
+                inner["report"] = run_issue(
+                    cfg_b,
+                    DemoClient(cfg_b),
+                    {**ISSUE, "number": 18, "title": "Add median"},
+                )
+            return super().run(prompt, role, **kwargs)
+
+    run_issue(cfg, NestingClient(cfg), ISSUE)
+    inner_report = inner["report"]
+    assert (inner_report.done, inner_report.blocked) == (1, 0)

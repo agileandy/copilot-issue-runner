@@ -113,6 +113,10 @@ def git_common_dir(repo_dir: Path) -> Path:
     return Path(raw).resolve()
 
 
+def git_dir(repo_dir: Path) -> Path:
+    return Path(_git(repo_dir, "rev-parse", "--absolute-git-dir").stdout.strip()).resolve()
+
+
 @contextmanager
 def _file_lock(path: Path):
     try:
@@ -148,7 +152,7 @@ def _file_lock(path: Path):
 
 
 def repository_lock(repo_dir: Path):
-    return _file_lock(git_common_dir(repo_dir) / "issue-runner.lock")
+    return _file_lock(git_dir(repo_dir) / "issue-runner.lock")
 
 
 def state_lock(state_dir: Path):
