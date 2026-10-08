@@ -782,9 +782,10 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     if findings:
         lines += ["", "### Remaining pre-PR findings"]
         for finding in findings:
-            text_lines = finding["text"].splitlines()
+            text_lines = prepr.finding_lines(finding)
             first = text_lines[0] if text_lines else ""
             lines.append(f"- `{finding['command']}`: {first}")
+            lines.extend(f"  {line}" for line in text_lines[1:])
     for entry in store.delivery.review_rounds if store.delivery else []:
         lines += ["", f"### Review round {entry['round']} (`{entry['sha'][:12]}`)"]
         lines += [f"- `{f['where']}`: {f['reason']}" for f in entry["fixed"]]
