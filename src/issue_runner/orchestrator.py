@@ -506,6 +506,13 @@ def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    findings = prepr.remaining(store)
+    if findings:
+        lines += ["", "### Remaining pre-PR findings"]
+        for finding in findings:
+            text_lines = finding["text"].splitlines()
+            first = text_lines[0] if text_lines else ""
+            lines.append(f"- `{finding['command']}`: {first}")
     lines += ["", f"Branch `{report.branch}`, opened by issue-runner. Co-authored with AI."]
     return "\n".join(lines)
 

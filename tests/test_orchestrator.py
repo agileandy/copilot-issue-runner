@@ -804,3 +804,32 @@ def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
         [t.title for t in store.tickets if t.title == "Fix pre-PR finding: still bad"],
         len(store.pre_pr_rounds),
     ) == (1, ["Fix pre-PR finding: still bad"], 2)
+
+
+def test_pull_request_body_lists_remaining_pre_pr_findings(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    from issue_runner.config import PrePrConfig
+
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    body = pull_requests.created[0]["body"]
+    _, heading, after = body.partition("### Remaining pre-PR findings")
+    assert heading and any("still bad" in line for line in after.splitlines())

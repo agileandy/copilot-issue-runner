@@ -36,6 +36,13 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
     return findings
 
 
+def remaining(store: TicketStore) -> list[dict]:
+    """The findings of the last pre-PR round, or [] when no round has run."""
+    if not store.pre_pr_rounds:
+        return []
+    return store.pre_pr_rounds[-1].get("findings", [])
+
+
 def step(cfg: RunnerConfig, store: TicketStore) -> bool:
     """Run the pre-PR checks once; turn each finding into a fix ticket. True if any were added."""
     if not cfg.pre_pr.commands or store.pr_url:
