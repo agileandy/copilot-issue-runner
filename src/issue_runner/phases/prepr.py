@@ -20,6 +20,9 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
     for cmd in cfg.pre_pr.commands:
         cfg.control.check()
         cmd = cmd.replace("{base}", base)
+        if guarded:
+            head_before = devops.head_commit(cfg.repo_dir)
+            branch_before = devops.current_branch(cfg.repo_dir)
         try:
             result = subprocess.run(
                 shlex.split(cmd),
@@ -37,6 +40,13 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
             if changed:
                 raise devops.DevopsError(
                     f"pre-PR command {cmd} changed the run worktree: {', '.join(changed)}"
+                )
+            if (
+                devops.head_commit(cfg.repo_dir) != head_before
+                or devops.current_branch(cfg.repo_dir) != branch_before
+            ):
+                raise devops.DevopsError(
+                    f"pre-PR command {cmd} moved the run branch; refusing publication"
                 )
         if result.returncode == 0:
             continue

@@ -42,6 +42,31 @@ def test_run_checks_refuses_when_command_changes_worktree(tmp_path):
         run_checks(cfg, "base")
 
 
+def test_run_checks_refuses_when_command_moves_head(tmp_path):
+    import subprocess
+
+    import pytest
+
+    from issue_runner.phases.devops import DevopsError
+    from issue_runner.phases.prepr import run_checks
+
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cfg.pre_pr.commands = ["git commit --allow-empty -m sneaky"]
+
+    with pytest.raises(DevopsError, match=r"pre-PR command.*moved the run branch"):
+        run_checks(cfg, "base")
+
+
 def test_run_checks_refuses_when_command_cannot_start(tmp_path):
     import pytest
 
