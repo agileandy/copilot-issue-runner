@@ -501,6 +501,33 @@ def test_unknown_role_model_role_is_an_invocation_error(tmp_path, monkeypatch):
     assert rc == 2
 
 
+def test_whitespace_only_role_model_id_is_an_invocation_error(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+
+    def must_not_run(*a, **k):
+        pytest.fail("must not run")
+
+    monkeypatch.setattr(cli, "run_issue", must_not_run)
+    rc = cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--role-model",
+            "resolver=   ",
+        ]
+    )
+    assert rc == 2
+
+
 def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     repo = tmp_path / "target"
     repo.mkdir()

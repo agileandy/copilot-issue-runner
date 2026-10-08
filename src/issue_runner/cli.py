@@ -284,6 +284,7 @@ def main(argv=None) -> int:
             )
     for value in args.role_model or []:
         role, _, model_id = value.partition("=")
+        role, model_id = role.strip(), model_id.strip()
         if not role or not model_id or role not in ROLES:
             print(
                 f"error: --role-model expects ROLE=MODEL with ROLE one of {', '.join(ROLES)}",
