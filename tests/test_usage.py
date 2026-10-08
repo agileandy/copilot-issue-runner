@@ -109,6 +109,11 @@ def test_summary_line_flags_failures():
     assert "failed: 1" in ledger_with(a_call(ok=False)).summary_line()
 
 
+def test_summary_line_shows_the_model_used_per_role():
+    ledger = ledger_with(a_call(role="resolver", model="claude-opus-4.5"))
+    assert "resolver=1 (claude-opus-4.5)" in ledger.summary_line()
+
+
 def test_format_duration():
     assert format_duration(9) == "9s"
     assert format_duration(75) == "1m15s"
@@ -163,6 +168,12 @@ def test_saved_run_records_per_role_and_per_ticket_rollups(tmp_path):
     assert run["by_role"]["builder.tester"]["calls"] == 1
     assert run["by_ticket"]["1"]["calls"] == 2
     assert run["started_at"]
+
+
+def test_usage_log_records_the_models_used_per_role(tmp_path):
+    ledger_with(a_call(role="resolver", model="claude-opus-4.5")).save(tmp_path, issue_ref="17")
+    line = (tmp_path / "usage.log").read_text().splitlines()[0]
+    assert json.loads(line)["by_role"]["resolver"]["models"] == ["claude-opus-4.5"]
 
 
 # --- client integration ------------------------------------------------------
@@ -312,3 +323,17 @@ def git_repo(repo):
     git("add", "-A")
     git("commit", "-m", "seed")
     return repo
+
+
+def test_merge_usage_keeps_distinct_models_in_first_seen_order():
+    from issue_runner.usage import merge_usage
+
+    two_models = merge_usage(
+        merge_usage(None, {"model_calls": 1, "models": ["a"]}),
+        {"model_calls": 1, "models": ["b"]},
+    )
+    same_model = merge_usage(
+        merge_usage(None, {"model_calls": 1, "models": ["a"]}),
+        {"model_calls": 1, "models": ["a"]},
+    )
+    assert (two_models.get("models"), same_model.get("models")) == (["a", "b"], ["a"])

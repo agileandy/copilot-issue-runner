@@ -103,7 +103,10 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 ```
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
-`--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
+`--model M --effort low` (override every role, taking precedence over runner.toml) ·
+`--role-model ROLE=MODEL` (repeatable, overrides one role and takes precedence over `--model`, e.g.
+`--role-model reviser=claude-opus-4.5` to escalate a stuck review-fix round; `resolver` is the
+merge-conflict and failed-check resolver) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
 `--retry-blocked` · `--visual` · `--agent` · `--comment-issue N` · `--demo` ·
 `--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
@@ -340,11 +343,12 @@ turn within that invocation. The `calls` total counts CLI invocations, not
 internal model turns. The summary prints in both plain and `--visual` modes:
 
 ```
-usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5, builder.tester=6, planner=1, verifier=2
+usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5 (claude-sonnet-4.5), builder.tester=6 (claude-sonnet-4.5), planner=1 (claude-opus-4.5), verifier=2 (claude-opus-4.5)
 ```
 
 Rollups are written to `.issue-runner/usage-issue-<n>.json`, with per-role and
-per-ticket breakdowns. A resumed run **appends** to `runs` and updates the
+per-ticket breakdowns. Each per-role entry lists the distinct `models` copilot reported for
+that role, falling back to the configured model when none was reported. A resumed run **appends** to `runs` and updates the
 cumulative `totals`, so the file is the whole history of an issue, not just the
 last attempt. Each run also appends one JSON line to `.issue-runner/usage.log`.
 

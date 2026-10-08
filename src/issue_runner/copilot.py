@@ -494,6 +494,9 @@ def _extract_usage(data: dict) -> dict:
         usage["nano_aiu"] = nano_aiu
     usage["model_calls"] = 1
     usage["costed_model_calls"] = 1 if nano_aiu is not None else 0
+    model = (data.get("modelCall") or {}).get("model")
+    if isinstance(model, str) and model:
+        usage["models"] = [model]
     return usage
 
 
