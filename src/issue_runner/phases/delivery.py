@@ -17,7 +17,7 @@ from ..copilot import CopilotError
 from ..events import emit
 from ..github_flow import GithubError, GitHubFlow
 from ..tickets import Delivery, Ticket, TicketStore
-from . import acceptance, devops, merge, review
+from . import acceptance, devops, merge, prepr, review
 from .devops import DevopsError
 from .plan import PlanError, plan_extra
 
@@ -778,6 +778,13 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    findings = prepr.remaining(store)
+    if findings:
+        lines += ["", "### Remaining pre-PR findings"]
+        for finding in findings:
+            text_lines = finding["text"].splitlines()
+            first = text_lines[0] if text_lines else ""
+            lines.append(f"- `{finding['command']}`: {first}")
     for entry in store.delivery.review_rounds if store.delivery else []:
         lines += ["", f"### Review round {entry['round']} (`{entry['sha'][:12]}`)"]
         lines += [f"- `{f['where']}`: {f['reason']}" for f in entry["fixed"]]
