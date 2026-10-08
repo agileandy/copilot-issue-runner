@@ -169,3 +169,26 @@ def test_a_resolver_crash_aborts_the_merge(env, git_repo, tmp_path_factory):  # 
         check=False,
     )
     assert (status, merge_head.returncode != 0) == ("", True)
+
+
+def test_a_modify_delete_conflict_still_runs_the_resolver(env, git_repo, tmp_path_factory):  # noqa: F811
+    fake, _, cfg = env
+    fake.require_up_to_date = True
+    git = ["git", "-C", str(git_repo)]
+    (git_repo / "impl.py").write_text("seed code\n")
+    subprocess.run([*git, "add", "impl.py"], check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-q", "-m", "chore: seed impl"], check=True)
+    subprocess.run([*git, "push", "-q", "origin", "main"], check=True, capture_output=True)
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(fake.remote), str(clone)], check=True)
+    teammate = ["git", "-C", str(clone), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*teammate, "rm", "-q", "impl.py"], check=True)
+    subprocess.run([*teammate, "commit", "-q", "-m", "refactor: drop impl"], check=True)
+    subprocess.run([*teammate, "push", "-q", "origin", "main"], check=True)
+
+    def keep_ours():
+        (git_repo / "impl.py").write_text("code")
+
+    script = built_through_acceptance(git_repo) + [resolver(keep_ours)]
+    _, _, client = run(cfg, git_repo, script)
+    assert len([c for c in client.calls if c["role"] == "resolver"]) == 1

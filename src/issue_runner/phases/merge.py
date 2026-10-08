@@ -91,7 +91,7 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
         problem = _problem(cfg, store, tests, conflicted)
         feedback = ""
         attempts = 0
-        while problem is not None:
+        while problem is not None or (conflicted and attempts == 0):
             if attempts > cfg.coder_retries:
                 devops.abort_merge(repo)
                 raise MergeError(f"could not merge origin/{base}: {problem}")
@@ -106,7 +106,7 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
                     number=issue["number"],
                     title=issue["title"],
                     base=base,
-                    situation=f"{situation}\n\nWhat is wrong now:\n{problem}",
+                    situation=f"{situation}\n\nWhat is wrong now:\n{problem or _UNMARKED_CONFLICT}",
                     tests="\n".join(f"  - {t.test_path}" for t in tests) or "  (none)",
                     rules=workspace_rules(cfg),
                     feedback=feedback,
