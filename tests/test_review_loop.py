@@ -596,6 +596,50 @@ def test_a_fix_round_resumed_after_a_failed_push_answers_its_threads_with_the_sa
     )
 
 
+def test_a_resumed_fix_round_keeps_its_saved_replies_when_the_thread_read_fails(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    original = delivery.devops.push_branch
+    failures = [DevopsError("push rejected")]
+
+    def push_failing_once_on_the_fix(repo_dir, branch):
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if failures and subject.startswith("fix(review)"):
+            raise failures.pop()
+        return original(repo_dir, branch)
+
+    monkeypatch.setattr(delivery.devops, "push_branch", push_failing_once_on_the_fix)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, _, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+
+    # the next two thread reads fail: the review status read and the pending-reply read
+    original_threads = GitHubFlow.review_threads
+    thread_failures = [GithubError("threads unavailable"), GithubError("threads unavailable")]
+
+    def review_threads_failing_twice(self, number):
+        if thread_failures:
+            raise thread_failures.pop()
+        return original_threads(self, number)
+
+    monkeypatch.setattr(GitHubFlow, "review_threads", review_threads_failing_twice)
+    run(cfg, git_repo, [])
+    _, store, _ = run(cfg, git_repo, [])
+    assert fake.thread_replies.get("PRRT_1") == [
+        f"Fixed: None is handled ({store.delivery.head_sha[:12]})"
+    ]
+
+
 def test_two_fix_rounds_both_appear_in_the_final_pr_body(env, git_repo):  # noqa: F811
     fake, _, cfg = env
     fake.scenarios = [

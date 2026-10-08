@@ -271,7 +271,7 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
     _sync_push(cfg, store, delivery)
     findings = _review_status(flow, cfg, delivery).findings
     if delivery.pending_replies and delivery.head_sha == devops.head_commit(cfg.repo_dir):
-        _publish_pending_replies(cfg, flow, store, delivery, findings)
+        _publish_pending_replies(cfg, flow, store, delivery)
         return
     if not findings:
         delivery.stage = "reviewing"
@@ -357,10 +357,12 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
     delivery.stage = "reviewing"
 
 
-def _publish_pending_replies(cfg, flow, store: TicketStore, delivery: Delivery, findings) -> None:
+def _publish_pending_replies(cfg, flow, store: TicketStore, delivery: Delivery) -> None:
     """Answer a fix round's threads whose commit was saved but whose push had failed."""
-    open_threads = {f.ref for f in findings if f.kind == "thread"}
     try:
+        open_threads = {
+            t["id"] for t in flow.review_threads(delivery.pr_number) if not t.get("isResolved")
+        }
         for ref, body in delivery.pending_replies.items():
             if ref not in open_threads or ref in delivery.handled_threads:
                 continue
