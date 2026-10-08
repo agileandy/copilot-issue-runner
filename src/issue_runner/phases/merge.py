@@ -146,7 +146,7 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
         problem = _pr_problem(cfg, conflicted)
         feedback = ""
         attempts = 0
-        while problem is not None:
+        while problem is not None or (conflicted and attempts == 0):
             if not conflicted or attempts > cfg.coder_retries:
                 devops.abort_merge(repo)
                 raise MergeError(f"could not merge origin/{base}: {problem}")
@@ -156,7 +156,7 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
                     branch=branch,
                     base=base,
                     conflicted="\n".join(f"  - {p}" for p in conflicted),
-                    problem=problem,
+                    problem=problem or _UNMARKED_CONFLICT,
                     rules=workspace_rules(cfg),
                     feedback=feedback,
                 ),
@@ -186,6 +186,12 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
             f"origin/{branch} moved during the update; nothing was pushed, rerun --update-pr"
         ) from e
     return sha
+
+
+_UNMARKED_CONFLICT = (
+    "git left these paths unmerged without conflict markers (a modify/delete, rename or "
+    "binary conflict); decide what each should hold so both sides' intent is kept"
+)
 
 
 def _pr_problem(cfg, conflicted: list[str]) -> str | None:

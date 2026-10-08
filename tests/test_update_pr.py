@@ -220,6 +220,39 @@ def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
 
 
 @pytest.fixture
+def modify_delete_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    (git_repo / "impl.py").write_text("base\n")
+    _git(git_repo, "add", "impl.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: base impl")
+    _commit_a_passing_test(git_repo)
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "impl.py").write_text("ours\n")
+    _git(git_repo, "commit", "-q", "-am", "feat: our impl")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _git(clone, "rm", "-q", "impl.py")
+    _git(clone, "commit", "-q", "-m", "feat: upstream drops impl")
+    _git(clone, "push", "-q", "origin", "main")
+    return remote
+
+
+def test_update_pr_branch_runs_the_resolver_for_a_modify_delete_conflict(
+    modify_delete_pr_branch, cfg
+):
+    client = FakeClient([('{"notes":"ok"}', None)])
+
+    merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    assert [c["role"] for c in client.calls] == ["resolver"]
+
+
+@pytest.fixture
 def up_to_date_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     remote = tmp_path_factory.mktemp("origin") / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
