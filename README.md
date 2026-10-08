@@ -337,7 +337,8 @@ usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: buil
 ```
 
 Rollups are written to `.issue-runner/usage-issue-<n>.json`, with per-role and
-per-ticket breakdowns. A resumed run **appends** to `runs` and updates the
+per-ticket breakdowns. Each per-role entry lists the distinct `models` used for
+that role. A resumed run **appends** to `runs` and updates the
 cumulative `totals`, so the file is the whole history of an issue, not just the
 last attempt. Each run also appends one JSON line to `.issue-runner/usage.log`.
 

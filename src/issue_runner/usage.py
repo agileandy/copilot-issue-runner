@@ -222,7 +222,12 @@ class UsageLedger:
         roles = {}
         for call in self.calls:
             roles.setdefault(call.role, []).append(call)
-        return {role: self._bucket(calls) for role, calls in roles.items()}
+        result = {}
+        for role, calls in roles.items():
+            bucket = self._bucket(calls)
+            bucket["models"] = sorted({c.model for c in calls if c.model is not None})
+            result[role] = bucket
+        return result
 
     def by_ticket(self) -> dict[int | None, dict]:
         tickets = {}
