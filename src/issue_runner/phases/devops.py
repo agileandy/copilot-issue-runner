@@ -155,6 +155,14 @@ def repository_lock(repo_dir: Path):
     return _file_lock(git_dir(repo_dir) / "issue-runner.lock")
 
 
+def branch_lock(repo_dir: Path, branch: str):
+    # Hash the name so slashes stay out of the path. The common dir is shared by every worktree.
+    name = hashlib.sha256(branch.encode()).hexdigest()[:32] + ".lock"
+    return _file_lock(
+        git_common_dir(repo_dir) / "issue-runner-branches" / name, owner=f"branch {branch}"
+    )
+
+
 def state_lock(state_dir: Path):
     return _file_lock(state_dir / "run.lock", owner="state directory")
 

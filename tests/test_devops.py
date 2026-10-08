@@ -255,3 +255,18 @@ def test_shared_changes_treats_existing_non_python_source_as_shared(git_repo):
     shared = shared_changes(git_repo, ["app.js", "tests/test_added.py"], "tests/test_added.py")
 
     assert shared == ["app.js"]
+
+
+def test_branch_lock_is_shared_by_every_worktree_of_a_repository(tmp_path):
+    from contextlib import ExitStack
+
+    from issue_runner.phases import devops
+    from tests.hardening_support import git, sandbox
+
+    env, _ = sandbox(tmp_path)
+    linked = tmp_path / "linked"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-linked", str(linked))
+    branch = "feature/17-add-statistics"
+    with devops.branch_lock(env.repo_dir, branch), ExitStack() as stack:
+        with pytest.raises(DevopsError, match=f"another issue-runner owns this branch {branch}"):
+            stack.enter_context(devops.branch_lock(linked, branch))
