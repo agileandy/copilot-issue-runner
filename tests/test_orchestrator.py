@@ -867,3 +867,41 @@ def test_pull_request_body_lists_remaining_pre_pr_findings(
     body = pull_requests.created[0]["body"]
     _, heading, after = body.partition("### Remaining pre-PR findings")
     assert heading and any("still bad" in line for line in after.splitlines())
+
+
+def test_pr_body_lists_every_line_of_a_remaining_pre_pr_finding(tmp_path):
+    from issue_runner import orchestrator
+
+    store = TicketStore(tmp_path / ".state", issue_ref="17")
+    store.pre_pr_rounds = [
+        {
+            "round": 1,
+            "findings": [{"command": "gh-code-quality", "text": "a.py:1 x\nb.py:2 y\nc.py:3 z"}],
+        }
+    ]
+
+    body = orchestrator._pr_body(ISSUE, store, orchestrator.RunReport(branch="b"))
+
+    _, _, after = body.partition("### Remaining pre-PR findings")
+    assert all(line in after for line in ("a.py:1 x", "b.py:2 y", "c.py:3 z"))
+
+
+def test_unset_pre_pr_records_no_rounds_and_no_findings_section(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    state = json.loads(TicketStore(git_repo / ".state", issue_ref="17").state_file.read_text())
+    assert (
+        not any(d.startswith("pre-PR") for d in report.details),
+        "pre_pr_rounds" not in state,
+        "### Remaining pre-PR findings" not in pull_requests.created[0]["body"],
+    ) == (True, True, True)

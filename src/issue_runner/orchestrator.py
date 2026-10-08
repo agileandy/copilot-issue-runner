@@ -510,9 +510,10 @@ def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
     if findings:
         lines += ["", "### Remaining pre-PR findings"]
         for finding in findings:
-            text_lines = finding["text"].splitlines()
+            text_lines = prepr.finding_lines(finding)
             first = text_lines[0] if text_lines else ""
             lines.append(f"- `{finding['command']}`: {first}")
+            lines.extend(f"  {line}" for line in text_lines[1:])
     lines += ["", f"Branch `{report.branch}`, opened by issue-runner. Co-authored with AI."]
     return "\n".join(lines)
 
