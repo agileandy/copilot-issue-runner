@@ -269,7 +269,7 @@ class UsageLedger:
         return "usage — " + ", ".join(parts)
 
     def _role_entry(self, role: str, calls: int) -> str:
-        models = sorted({c.model for c in self.calls if c.role == role and c.model})
+        models = sorted({m for c in self.calls if c.role == role for m in c.models})
         entry = f"{role}={calls}"
         return f"{entry} ({'/'.join(models)})" if models else entry
 
