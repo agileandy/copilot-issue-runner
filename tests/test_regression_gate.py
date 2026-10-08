@@ -159,3 +159,44 @@ def test_focused_ticket_regression_runs_focused_tests_even_for_shared_changes(
         cfg.test_cmd.format(test_path="tests/test_added.py tests/test_existing.py"),
         cfg.regression_cmd,
     ]
+
+
+def test_full_ticket_regression_runs_full_suite_per_ticket_for_new_files_only(
+    tmp_path, monkeypatch
+):
+    env, cfg = sandbox(tmp_path, max_rounds=0)
+    cfg.ticket_regression = "full"
+    repo = env.repo_dir
+
+    def test():
+        (repo / "tests" / "test_added.py").write_text(
+            "def test_added():\n    from added import added\n\n    assert added() == 42\n"
+        )
+
+    def code():
+        (repo / "added.py").write_text("def added():\n    return 42\n")
+
+    plan = {
+        "summary": "Add behavior",
+        "tickets": [{"title": "add", "description": "d", "test_assertion": "added() == 42"}],
+    }
+    client = FakeClient(
+        [
+            (json.dumps(plan), None),
+            (json.dumps({"test_path": "tests/test_added.py"}), test),
+            ('{"changed_files":["added.py"]}', code),
+            ('{"verdict":"pass","reasons":["target passes"]}', None),
+        ]
+    )
+    real = orchestrator.run_test_command
+    commands = []
+
+    def recording(cfg_arg, command):
+        commands.append(command)
+        return real(cfg_arg, command)
+
+    monkeypatch.setattr("issue_runner.orchestrator.run_test_command", recording)
+
+    run_issue(cfg, client, ISSUE)
+
+    assert commands == [cfg.regression_cmd, cfg.regression_cmd]
