@@ -320,6 +320,31 @@ def branch_exists(repo_dir: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+def checkout_branch_worktree(repo_dir: Path, branch: str, directory: Path) -> Path:
+    _git(repo_dir, "check-ref-format", "--branch", branch)
+    if directory.exists():
+        raise DevopsError(f"refusing to reuse an existing worktree directory: {directory}")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    _git(repo_dir, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:{remote_ref}")
+    if branch_exists(repo_dir, branch):
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", f"refs/heads/{branch}", remote_ref],
+            cwd=repo_dir,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode == 1:
+            raise DevopsError(
+                f"local branch {branch} has commits not on origin/{branch}; refusing to discard them"
+            )
+        if result.returncode != 0:
+            raise DevopsError(f"could not compare branch {branch} with origin/{branch}")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo_dir, "worktree", "add", "-B", branch, str(directory), remote_ref)
+    return directory.resolve()
+
+
 def finish_worktree_creation(
     repo_dir: Path, branch: str, directory: Path, initial_head: str
 ) -> Path:
