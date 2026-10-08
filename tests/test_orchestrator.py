@@ -772,6 +772,39 @@ def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
     ) == (1, [("subtract ints", "done"), ("Fix pre-PR finding: unused import", "done")])
 
 
+def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp_path_factory):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    counter = outside / "count"
+    lint = outside / "lint.py"
+    lint.write_text(
+        "import pathlib, sys\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "n = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(n + 1))\n"
+        "if n == 0:\n"
+        "    print('unused import')\n"
+        "    sys.exit(1)\n"
+    )
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    rounds = [d for d in report.details if d.startswith("pre-PR round ")]
+    assert rounds == ["pre-PR round 1: 1 finding(s)", "pre-PR round 2: 0 finding(s)"]
+
+
 
 def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
     git_repo, cfg, pull_requests, tmp_path_factory

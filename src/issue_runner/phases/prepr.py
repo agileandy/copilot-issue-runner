@@ -43,7 +43,7 @@ def remaining(store: TicketStore) -> list[dict]:
     return store.pre_pr_rounds[-1].get("findings", [])
 
 
-def step(cfg: RunnerConfig, store: TicketStore) -> bool:
+def step(cfg: RunnerConfig, store: TicketStore, report=None) -> bool:
     """Run the pre-PR checks once; turn each finding into a fix ticket. True if any were added."""
     if not cfg.pre_pr.commands or store.pr_url:
         return False
@@ -52,6 +52,12 @@ def step(cfg: RunnerConfig, store: TicketStore) -> bool:
     findings = run_checks(cfg, store.initial_head or "")
     round_number = len(store.pre_pr_rounds) + 1
     store.pre_pr_rounds.append({"round": round_number, "findings": findings})
+    if report is not None:
+        report.details.append(f"pre-PR round {round_number}: {len(findings)} finding(s)")
+        for finding in findings:
+            lines = finding["text"].splitlines()
+            first = (lines[0] if lines else "").strip()
+            report.details.append(f"  {finding['command']}: {first}")
     if round_number > cfg.pre_pr.max_rounds:
         store.save()
         return False

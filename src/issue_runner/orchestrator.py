@@ -430,7 +430,7 @@ def _run_issue(
                 or devops.current_branch(cfg.repo_dir) != store.branch
             ):
                 raise DevopsError("regression command changed the run branch; refusing publication")
-            if prepr.step(cfg, store):
+            if prepr.step(cfg, store, report):
                 _mirror_tickets(cfg, issue, store)
                 emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
                 continue
