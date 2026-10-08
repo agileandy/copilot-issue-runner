@@ -86,41 +86,45 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
     conflicted = devops.merge_in(
         repo, f"origin/{base}", f"chore: merge origin/{base} into {store.branch}"
     )
-    tests = [t for t in store.tickets if t.test_hash and t.test_path]
-    problem = _problem(cfg, store, tests, conflicted)
-    feedback = ""
-    attempts = 0
-    while problem is not None:
-        if attempts > cfg.coder_retries:
-            devops.abort_merge(repo)
-            raise MergeError(f"could not merge origin/{base}: {problem}")
-        attempts += 1
-        situation = (
-            "These paths conflict:\n" + "\n".join(f"  - {p}" for p in conflicted)
-            if conflicted
-            else "The merge applied cleanly, but the result fails the checks."
-        )
-        client.run(
-            RESOLVER_PROMPT.format(
-                number=issue["number"],
-                title=issue["title"],
-                base=base,
-                situation=f"{situation}\n\nWhat is wrong now:\n{problem}",
-                tests="\n".join(f"  - {t.test_path}" for t in tests) or "  (none)",
-                rules=workspace_rules(cfg),
-                feedback=feedback,
-            ),
-            role="resolver",
-            session_name=f"resolver-{store.issue_ref}",
-        )
-        if devops.current_branch(repo) != store.branch or devops.head_commit(repo) != head:
-            devops.abort_merge(repo)
-            raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
-        if not devops.merge_in_progress(repo):
-            raise MergeError("the resolver ended the merge; only the runner finishes it")
+    try:
+        tests = [t for t in store.tickets if t.test_hash and t.test_path]
         problem = _problem(cfg, store, tests, conflicted)
-        feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
-    sha = devops.finish_merge(repo, store.branch)
+        feedback = ""
+        attempts = 0
+        while problem is not None:
+            if attempts > cfg.coder_retries:
+                devops.abort_merge(repo)
+                raise MergeError(f"could not merge origin/{base}: {problem}")
+            attempts += 1
+            situation = (
+                "These paths conflict:\n" + "\n".join(f"  - {p}" for p in conflicted)
+                if conflicted
+                else "The merge applied cleanly, but the result fails the checks."
+            )
+            client.run(
+                RESOLVER_PROMPT.format(
+                    number=issue["number"],
+                    title=issue["title"],
+                    base=base,
+                    situation=f"{situation}\n\nWhat is wrong now:\n{problem}",
+                    tests="\n".join(f"  - {t.test_path}" for t in tests) or "  (none)",
+                    rules=workspace_rules(cfg),
+                    feedback=feedback,
+                ),
+                role="resolver",
+                session_name=f"resolver-{store.issue_ref}",
+            )
+            if devops.current_branch(repo) != store.branch or devops.head_commit(repo) != head:
+                devops.abort_merge(repo)
+                raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
+            if not devops.merge_in_progress(repo):
+                raise MergeError("the resolver ended the merge; only the runner finishes it")
+            problem = _problem(cfg, store, tests, conflicted)
+            feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
+        sha = devops.finish_merge(repo, store.branch)
+    except BaseException:
+        devops.abort_merge(repo)
+        raise
     _refreeze_merged_tests(cfg, store, tests, conflicted)
     store.last_commit = sha
     store.save()

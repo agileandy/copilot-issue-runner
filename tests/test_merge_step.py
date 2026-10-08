@@ -147,3 +147,25 @@ def test_merging_needs_a_passed_review(env, git_repo):  # noqa: F811
     report, _, _ = run(cfg, git_repo, built_through_acceptance(git_repo))
     assert report.dod_failed_gate == "review"
     assert fake.merge_calls == []
+
+
+def test_a_resolver_crash_aborts_the_merge(env, git_repo, tmp_path_factory):  # noqa: F811
+    from issue_runner.copilot import CopilotError
+
+    fake, _, cfg = env
+    push_upstream(fake, tmp_path_factory, {"impl.py": "upstream code\n"})
+
+    def crash():
+        raise CopilotError("boom")
+
+    run(cfg, git_repo, built_through_acceptance(git_repo) + [resolver(crash)])
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=git_repo, capture_output=True, text=True, check=True
+    ).stdout
+    merge_head = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=git_repo,
+        capture_output=True,
+        check=False,
+    )
+    assert (status, merge_head.returncode != 0) == ("", True)
