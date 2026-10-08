@@ -141,6 +141,7 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     conflicted = devops.merge_in(
         repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}"
     )
+    snapshot = devops.merge_snapshot(repo)
     try:
         problem = _pr_problem(cfg, conflicted)
         feedback = ""
@@ -167,7 +168,7 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
                 raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
             if not devops.merge_in_progress(repo):
                 raise MergeError("the resolver ended the merge; only the runner finishes it")
-            stray = [p for p in devops.worktree_edits(repo) if p not in conflicted]
+            stray = [p for p in devops.changed_since(repo, snapshot) if p not in conflicted]
             if stray:
                 problem = f"the resolver edited files outside the conflict: {', '.join(stray)}"
             else:

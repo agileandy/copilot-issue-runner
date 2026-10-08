@@ -453,11 +453,26 @@ def leftover_markers(repo_dir: Path, paths: list[str]) -> list[str]:
     return [line for line in lines if "conflict marker" in line]
 
 
-def worktree_edits(repo_dir: Path) -> list[str]:
-    """Paths changed in the working tree but not staged, plus untracked files."""
-    unstaged = _git(repo_dir, "diff", "--name-only").stdout.splitlines()
+def merge_snapshot(repo_dir: Path) -> dict:
+    """Index entries and working-tree hash of every path the merge or an edit touched."""
+    changed = _git(repo_dir, "diff", "--name-only", "HEAD").stdout.splitlines()
     untracked = _git(repo_dir, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
-    return sorted(set(unstaged) | set(untracked))
+    paths = set(changed) | set(untracked) | set(unmerged_paths(repo_dir))
+    snapshot = {}
+    for path in paths:
+        entries = tuple(_git(repo_dir, "ls-files", "-s", "--", path).stdout.splitlines())
+        file = Path(repo_dir) / path
+        content = hashlib.sha256(file.read_bytes()).hexdigest() if file.is_file() else "deleted"
+        snapshot[path] = (entries, content)
+    return snapshot
+
+
+def changed_since(repo_dir: Path, snapshot: dict) -> list[str]:
+    """Paths whose index entries or working-tree bytes differ from `snapshot`."""
+    current = merge_snapshot(repo_dir)
+    return sorted(
+        p for p in set(snapshot) | set(current) if snapshot.get(p) != current.get(p)
+    )
 
 
 def finish_merge(repo_dir: Path, expected_branch: str) -> str:

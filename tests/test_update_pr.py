@@ -150,6 +150,28 @@ def test_update_pr_branch_rejects_a_resolver_edit_outside_the_conflict(
         merge.update_pr_branch(client, no_retries, BRANCH, "main")
 
 
+def test_update_pr_branch_rejects_a_staged_resolver_edit_outside_the_conflict(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    no_retries = dataclasses.replace(cfg, coder_retries=0)
+
+    def resolve_and_stage_stray():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        (git_repo / "other.py").write_text("x = 2\n")
+        _git(git_repo, "add", "other.py")
+
+    client = FakeClient([('{"notes":"ok"}', resolve_and_stage_stray)])
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: other.py"):
+        merge.update_pr_branch(client, no_retries, BRANCH, "main")
+
+
 def test_update_pr_branch_refuses_the_push_when_origins_pr_branch_moved_and_changes_no_ref(
     conflicting_pr_branch, git_repo, cfg, tmp_path_factory  # noqa: F811
 ):
