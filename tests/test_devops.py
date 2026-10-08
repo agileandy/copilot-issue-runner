@@ -154,3 +154,28 @@ def test_worktree_state_reports_untracked_file(git_repo):
         "dirty": True,
         "uncommitted": ["notes.md"],
     }
+
+
+def test_shared_changes_reports_only_committed_source_with_other_tests(git_repo):
+    from issue_runner.phases.devops import shared_changes
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "tests").mkdir()
+    (git_repo / "feature.py").write_text("def feature():\n    return 1\n")
+    (git_repo / "tests" / "test_existing.py").write_text(
+        "import feature\n\n\ndef test_feature():\n    assert feature.feature() == 1\n"
+    )
+    git("add", "feature.py", "tests/test_existing.py")
+    git("commit", "-m", "feature")
+    (git_repo / "added.py").write_text("def added():\n    return 2\n")
+    (git_repo / "tests" / "test_added.py").write_text(
+        "import added\nimport feature\n\n\ndef test_added():\n    assert added.added() == 2\n"
+    )
+
+    shared = shared_changes(
+        git_repo, ["added.py", "feature.py", "tests/test_added.py"], "tests/test_added.py"
+    )
+
+    assert shared == ["feature.py"]

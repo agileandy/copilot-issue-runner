@@ -12,6 +12,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from ..testcmd import related_tests
 from ..tickets import Ticket
 
 
@@ -527,3 +528,33 @@ def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = 
         raise DevopsError("a commit hook changed the approved tree; the commit was not accepted")
     require_clean(repo_dir)
     return sha
+
+
+def _existed_at_head(repo_dir: Path, path: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{path}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def _is_test_path(path: str) -> bool:
+    name = Path(path).name
+    if name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")):
+        return True
+    return "tests" in Path(path).parts[:-1]
+
+
+def shared_changes(repo_dir: Path, changed_files: list[str], own_test: str) -> list[str]:
+    """Changed files that existed at HEAD, are not tests, and are covered by another test."""
+    shared: list[str] = []
+    for path in changed_files:
+        if _is_test_path(path) or not _existed_at_head(repo_dir, path):
+            continue
+        if any(test != own_test for test in related_tests(repo_dir, [path])):
+            shared.append(path)
+    return sorted(shared)
