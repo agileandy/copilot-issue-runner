@@ -379,6 +379,65 @@ def test_max_run_credits_flag_reaches_config(tmp_path, monkeypatch):
     assert seen["max_run_credits"] == 120
 
 
+def test_model_and_effort_flags_override_runner_toml_roles(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    (repo / "runner.toml").write_text('[roles.resolver]\nmodel = "cheap"\neffort = "low"\n')
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["client"] = client
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--model",
+            "strong",
+            "--effort",
+            "high",
+        ]
+    )
+    argv = seen["client"]._build_argv("p", role="resolver", read_only=False, session_name="resolver")
+    assert (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]) == (
+        "strong",
+        "high",
+    )
+
+
+def test_runner_toml_roles_kept_without_model_or_effort_flags(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    (repo / "runner.toml").write_text('[roles.resolver]\nmodel = "cheap"\neffort = "low"\n')
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["client"] = client
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(["--issue-file", str(issue_file), "--dir", str(repo), "--no-github-tickets"])
+    argv = seen["client"]._build_argv("p", role="resolver", read_only=False, session_name="resolver")
+    assert (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]) == ("cheap", "low")
+
+
 def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     repo = tmp_path / "target"
     repo.mkdir()

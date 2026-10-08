@@ -120,8 +120,8 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         metavar="NUMBER",
         help="with --agent, post the run summary to this issue (required with --issue-file)",
     )
-    p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
-    p.add_argument("--effort", help="default reasoning effort for all roles")
+    p.add_argument("--model", help="model for every role this run, overriding runner.toml (see 'copilot /model')")
+    p.add_argument("--effort", help="reasoning effort for every role this run, overriding runner.toml")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
     p.add_argument(
         "--max-run-credits",
@@ -273,8 +273,8 @@ def main(argv=None) -> int:
         for role in ROLES:
             existing = cfg.roles.get(role, RoleConfig())
             cfg.roles[role] = RoleConfig(
-                model=existing.model or args.model,
-                effort=existing.effort or args.effort,
+                model=args.model or existing.model,
+                effort=args.effort or existing.effort,
             )
 
     try:
@@ -404,7 +404,7 @@ def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> in
         report = run_issue(cfg, client, issue, plan_only=plan_only)
     except PipelineError as e:
         return _report_abort(e, client, resume, post=post)
-    except Exception as e:  # noqa: BLE001 — a demo must not end in a traceback
+    except Exception as e:  # a demo must not end in a traceback
         logging.getLogger("issue_runner").debug("unexpected failure", exc_info=True)
         return _report_abort(e, client, resume, unexpected=True, post=post)
 

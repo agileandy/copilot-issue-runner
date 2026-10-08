@@ -103,7 +103,7 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 ```
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
-`--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
+`--model M --effort low` (override every role, taking precedence over runner.toml) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
 `--retry-blocked` · `--visual` · `--agent` · `--comment-issue N` · `--demo` ·
 `--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
