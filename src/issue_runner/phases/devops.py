@@ -113,8 +113,12 @@ def git_common_dir(repo_dir: Path) -> Path:
     return Path(raw).resolve()
 
 
+def git_dir(repo_dir: Path) -> Path:
+    return Path(_git(repo_dir, "rev-parse", "--absolute-git-dir").stdout.strip()).resolve()
+
+
 @contextmanager
-def _file_lock(path: Path):
+def _file_lock(path: Path, owner: str = "repository", *, blocking: bool = False):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         stream = path.open("a+b")
@@ -125,7 +129,9 @@ def _file_lock(path: Path):
             if os.name == "posix":
                 import fcntl
 
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(
+                    stream.fileno(), fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
             else:
                 import msvcrt
 
@@ -134,9 +140,10 @@ def _file_lock(path: Path):
                     stream.write(b"\0")
                     stream.flush()
                 stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+                msvcrt.locking(stream.fileno(), mode, 1)
         except OSError as e:
-            raise DevopsError(f"another issue-runner owns this repository ({path})") from e
+            raise DevopsError(f"another issue-runner owns this {owner} ({path})") from e
         try:
             yield
         finally:
@@ -148,11 +155,19 @@ def _file_lock(path: Path):
 
 
 def repository_lock(repo_dir: Path):
-    return _file_lock(git_common_dir(repo_dir) / "issue-runner.lock")
+    return _file_lock(git_dir(repo_dir) / "issue-runner.lock")
+
+
+def branch_lock(repo_dir: Path, branch: str):
+    # Hash the name so slashes stay out of the path. The common dir is shared by every worktree.
+    name = hashlib.sha256(branch.encode()).hexdigest()[:32] + ".lock"
+    return _file_lock(
+        git_common_dir(repo_dir) / "issue-runner-branches" / name, owner=f"branch {branch}"
+    )
 
 
 def state_lock(state_dir: Path):
-    return _file_lock(state_dir / "run.lock")
+    return _file_lock(state_dir / "run.lock", owner="state directory")
 
 
 def workspace_digest(repo_dir: Path, *, include_index: bool = True) -> str:
@@ -521,10 +536,12 @@ def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     exclude = Path(raw)
     if not exclude.is_absolute():
         exclude = Path(repo_dir) / exclude
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text() if exclude.exists() else ""
-    if pattern not in existing.splitlines():
-        exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
+    lock = git_common_dir(repo_dir) / "issue-runner-exclude.lock"
+    with _file_lock(lock, owner="exclude file", blocking=True):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text() if exclude.exists() else ""
+        if pattern not in existing.splitlines():
+            exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
 
 
 def _stage_paths(repo_dir: Path, paths, env=None) -> None:
