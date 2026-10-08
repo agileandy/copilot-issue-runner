@@ -16,8 +16,14 @@ def test_ruff_dev_pin_matches_lock():
     locked_version = next(
         pkg["version"] for pkg in lock["package"] if pkg["name"] == "ruff"
     )
+    issue_runner_pkg = next(
+        pkg for pkg in lock["package"] if pkg["name"] == "issue-runner"
+    )
 
     assert ruff_spec == f"ruff=={locked_version}"
+    assert {"name": "ruff", "specifier": f"=={locked_version}"} in issue_runner_pkg[
+        "metadata"
+    ]["requires-dev"]["dev"]
 
 
 def test_ruff_check_is_clean():
