@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -16,3 +18,16 @@ def test_ruff_dev_pin_matches_lock():
     )
 
     assert ruff_spec == f"ruff=={locked_version}"
+
+
+def test_ruff_check_is_clean():
+    repo_root = Path(__file__).parent.parent
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "."],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout
