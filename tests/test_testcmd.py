@@ -170,3 +170,17 @@ def test_explicit_test_and_regression_commands_still_override_detection(tmp_path
     cfg = load_config(tmp_path)
     assert cfg.test_cmd == "custom-test {test_path}"
     assert cfg.regression_cmd == "custom-suite"
+
+
+def test_related_tests_finds_tests_importing_changed_module(tmp_path):
+    from issue_runner.testcmd import related_tests
+
+    pkg = tmp_path / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feature.py").write_text("value = 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_feature.py").write_text("from pkg.feature import value\n")
+    (tests_dir / "test_other.py").write_text("import os\n")
+    assert related_tests(tmp_path, ["src/pkg/feature.py"]) == ["tests/test_feature.py"]

@@ -12,6 +12,7 @@ so filtering by path would match nothing and exit 0 — the harness would read
 that as a passing test and the TDD loop would break.
 """
 
+import ast
 import json
 import os
 import shlex
@@ -119,3 +120,57 @@ def detect_regression_cmd(repo_dir: Path) -> str | None:
     """
     found = _first_match(repo_dir, _REGRESSION_MARKERS)
     return found[0] if found else None
+
+
+_SKIP_DIRS = frozenset({".git", ".venv", "node_modules", ".issue-runner"})
+
+
+def _module_names(changed_file: str) -> set[str]:
+    parts = list(Path(changed_file).with_suffix("").parts)
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return set()
+    return {".".join(parts), parts[-1]}
+
+
+def _imported_modules(path: Path) -> set[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
+        return set()
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            found.add(node.module)
+    return found
+
+
+def _is_test_file(name: str) -> bool:
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def related_tests(repo_dir: Path, changed_files: list[str]) -> list[str]:
+    """Repo-relative test files whose imports name a changed Python module."""
+    modules: set[str] = set()
+    for changed in changed_files:
+        if changed.endswith(".py"):
+            modules |= _module_names(changed)
+    if not modules:
+        return []
+    repo = Path(repo_dir)
+    related: list[str] = []
+    for root, dirs, files in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for name in files:
+            if not _is_test_file(name):
+                continue
+            path = Path(root) / name
+            imported = _imported_modules(path)
+            if any(imp == mod or imp.startswith(mod + ".") for imp in imported for mod in modules):
+                related.append(path.relative_to(repo).as_posix())
+    return sorted(related)
