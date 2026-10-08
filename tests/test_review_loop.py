@@ -252,8 +252,11 @@ def built_through_acceptance(repo):
     ]
 
 
-def reviser(threads=(), effect=None):
-    reply = {"threads": [{"ref": r, "action": a, "reason": why} for r, a, why in threads]}
+def reviser(threads=(), effect=None, notes=""):
+    reply = {
+        "threads": [{"ref": r, "action": a, "reason": why} for r, a, why in threads],
+        "notes": notes,
+    }
     return (json.dumps(reply), effect)
 
 
@@ -307,6 +310,22 @@ def test_a_thread_is_fixed_pushed_replied_resolved_and_rereviewed(env, git_repo)
     assert reply.startswith("Fixed: None is handled") and head[:12] in reply
     assert fake.threads["PRRT_1"]["isResolved"]
     assert fake.review_requests == [(store.delivery.pr_number, BOT)]
+
+
+def test_a_fixed_round_is_recorded_in_the_pr_body_after_the_push(env, git_repo):  # noqa: F811
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    script = built_through_acceptance(git_repo) + [
+        reviser(
+            [("T2", "fixed", "None is handled")], edit(git_repo), notes="subtract now rejects None"
+        ),
+    ]
+    _, store, _ = run(cfg, git_repo, script)
+    assert (
+        f"### Review round 1 (`{store.delivery.head_sha[:12]}`)\n"
+        "- `impl.py:1`: None is handled\n"
+        "Changed behaviour: subtract now rejects None"
+    ) in fake.pulls[store.delivery.pr_number]["body"]
 
 
 def test_a_failing_check_goes_to_the_reviser_with_its_details(env, git_repo):  # noqa: F811

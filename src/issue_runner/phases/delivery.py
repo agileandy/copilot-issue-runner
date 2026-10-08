@@ -315,6 +315,23 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
             delivery.head_sha = store.last_commit = sha
             store.save()
             devops.push_branch(cfg.repo_dir, store.branch)
+            delivery.review_rounds.append(
+                {
+                    "round": delivery.review_round + 1,
+                    "sha": sha,
+                    "fixed": [
+                        {"where": by_ref[ref].where, "reason": reason}
+                        for ref, (action, reason) in revision.actions.items()
+                        if action == "fixed"
+                    ],
+                    "notes": revision.notes,
+                }
+            )
+            store.save()
+            try:
+                flow.update_pull_body(delivery.pr_number, pr_body(issue, store))
+            except GithubError as e:
+                log.warning("could not update the body of PR #%s: %s", delivery.pr_number, e)
             replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
         for ref, body in replies.items():
             if ref in delivery.handled_threads:
