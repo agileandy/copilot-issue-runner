@@ -1290,3 +1290,21 @@ def test_update_pr_refuses_when_origin_is_not_the_configured_repo(tmp_path, monk
     monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
     rc = cli.main(["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path)])
     assert (rc, called) == (2, False)
+
+
+def test_update_pr_rejects_run_only_flags(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    called = False
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        nonlocal called
+        called = True
+        return "abc123"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        ["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path), "--dry-run", "--plan-only"]
+    )
+    assert (rc, called, "--dry-run, --plan-only" in capsys.readouterr().err) == (2, False, True)

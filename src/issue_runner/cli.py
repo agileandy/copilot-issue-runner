@@ -378,6 +378,21 @@ def _update_pr(args) -> int:
             file=sys.stderr,
         )
         return 2
+    conflicts = [
+        flag
+        for flag, value in (
+            ("--dry-run", args.dry_run),
+            ("--plan-only", args.plan_only),
+            ("--in-place", args.in_place),
+            ("--retry-blocked", args.retry_blocked),
+            ("--no-pr", args.no_pr),
+            ("--agent", args.agent),
+        )
+        if value
+    ]
+    if conflicts:
+        print(f"error: --update-pr cannot be used with {', '.join(conflicts)}", file=sys.stderr)
+        return 2
     repo_dir = args.dir.resolve()
     try:
         cfg = load_config(repo_dir, args.config)
