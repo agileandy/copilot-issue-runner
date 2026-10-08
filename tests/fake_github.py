@@ -104,6 +104,7 @@ class FakeGitHub:
         self.require_up_to_date = False  # branch protection "require branches to be up to date"
         self.merge_calls: list[dict] = []
         self.refuse_merges = 0  # answer 405 to this many merge attempts
+        self.refuse_body_updates = 0  # answer 502 to this many PR body updates
         self.on_review_request = None  # called after each review request, e.g. to move main
         # deployment
         self.deploys: list[Deploy] = []  # consumed, in order, by each push to main or dispatch
@@ -513,6 +514,9 @@ class FakeGitHub:
         return {"number": number, **self.issues[number]}
 
     def _update_pull(self, number, body, **_):
+        if self.refuse_body_updates > 0:
+            self.refuse_body_updates -= 1
+            raise _HttpError("Server Error (HTTP 502)")
         pr = self.pulls[int(number)]
         pr.update(body)
         return dict(pr)

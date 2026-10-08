@@ -51,6 +51,7 @@ class Delivery:
     head_sha: str | None = None
     review_round: int = 0
     review_rounds: list[dict] = field(default_factory=list)
+    body_stale: bool = False  # the PR description misses a review round
     waiting_since: float | None = None  # when the wait for the current head began
     handled_threads: list[str] = field(default_factory=list)
     merge_attempts: int = 0

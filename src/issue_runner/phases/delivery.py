@@ -327,9 +327,12 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
                     "notes": revision.notes,
                 }
             )
+            delivery.body_stale = True
             store.save()
             try:
                 flow.update_pull_body(delivery.pr_number, pr_body(issue, store))
+                delivery.body_stale = False
+                store.save()
             except GithubError as e:
                 log.warning("could not update the body of PR #%s: %s", delivery.pr_number, e)
             replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
@@ -358,6 +361,13 @@ def _merging(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None
     if delivery.gates["review"] != "pass":
         delivery.stage = "reviewing"
         return
+    if delivery.body_stale:
+        try:
+            flow.update_pull_body(number, pr_body(issue, store))
+        except GithubError as e:
+            raise GateFailed(f"could not update the body of PR #{number}: {e}") from e
+        delivery.body_stale = False
+        store.save()
     _sync_push(cfg, store, delivery)
     pr = _settled_pull(cfg, flow, number)
     head = (pr.get("head") or {}).get("sha")
