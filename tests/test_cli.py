@@ -1336,3 +1336,25 @@ def test_update_pr_applies_max_ai_credits_and_max_run_credits(tmp_path, monkeypa
         ]
     )
     assert (rc, seen.get("caps")) == (0, (20, 3))
+
+
+def test_update_pr_validates_config_before_building_a_client(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    called = False
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        nonlocal called
+        called = True
+        return "abc"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        ["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path), "--max-run-credits", "0"]
+    )
+    assert (
+        rc,
+        called,
+        "max_run_credits must be a positive integer" in capsys.readouterr().err,
+    ) == (2, False, True)

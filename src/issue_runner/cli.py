@@ -430,6 +430,11 @@ def _update_pr(args) -> int:
             return 2
         cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
     try:
+        validate_config(cfg)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    try:
         info = resolve(repo_dir)
     except TrackerError as e:
         print(f"error: {e}", file=sys.stderr)
