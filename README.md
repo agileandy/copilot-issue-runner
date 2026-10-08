@@ -156,7 +156,7 @@ ends with one full regression gate.
 
 | Value | Per-ticket behaviour |
 | --- | --- |
-| `shared` (default) | Focused tests, plus the full suite when the ticket changes existing behaviour in shared files |
+| `shared` (default) | Focused tests, plus the full suite when the ticket changes existing behaviour in shared files. Changes to existing non-Python files always trigger the full suite, because related-test discovery covers Python imports only |
 | `focused` | Only the ticket's test file and tests that import the changed modules |
 | `full` | The full suite after every ticket |
 

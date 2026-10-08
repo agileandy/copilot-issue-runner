@@ -179,3 +179,21 @@ def test_shared_changes_reports_only_committed_source_with_other_tests(git_repo)
     )
 
     assert shared == ["feature.py"]
+
+
+def test_shared_changes_treats_existing_non_python_source_as_shared(git_repo):
+    from issue_runner.phases.devops import shared_changes
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "tests").mkdir()
+    (git_repo / "app.js").write_text("module.exports = 1;\n")
+    git("add", "app.js")
+    git("commit", "-m", "app")
+    (git_repo / "app.js").write_text("module.exports = 2;\n")
+    (git_repo / "tests" / "test_added.py").write_text("def test_added():\n    assert 1 + 1 == 2\n")
+
+    shared = shared_changes(git_repo, ["app.js", "tests/test_added.py"], "tests/test_added.py")
+
+    assert shared == ["app.js"]

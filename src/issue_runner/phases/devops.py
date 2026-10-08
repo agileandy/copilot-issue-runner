@@ -554,11 +554,17 @@ def _is_test_path(path: str) -> bool:
 
 
 def shared_changes(repo_dir: Path, changed_files: list[str], own_test: str) -> list[str]:
-    """Changed files that existed at HEAD, are not tests, and are covered by another test."""
+    """Changed non-test files that existed at HEAD and may affect other tests.
+
+    Related-test discovery covers Python imports only, so an existing non-Python
+    file is always shared. A Python file is shared when another test imports it.
+    """
     shared: list[str] = []
     for path in changed_files:
         if _is_test_path(path) or not _existed_at_head(repo_dir, path):
             continue
-        if any(test != own_test for test in related_tests(repo_dir, [path])):
+        if not path.endswith(".py") or any(
+            test != own_test for test in related_tests(repo_dir, [path])
+        ):
             shared.append(path)
     return sorted(shared)
