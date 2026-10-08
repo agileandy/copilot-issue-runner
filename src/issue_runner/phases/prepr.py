@@ -3,10 +3,13 @@
 import shlex
 import subprocess
 
+from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
+from ..journal import Journal
 from ..testreport import strip_ansi
 from ..tickets import Ticket, TicketStore
 from . import devops
+from .build import CoderFailure
 
 MAX_FINDING_CHARS = 3000
 TOOL_ERROR_EXIT = 2
@@ -92,6 +95,51 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
             )
         findings.append({"command": cmd, "text": text[-MAX_FINDING_CHARS:]})
     return findings
+
+
+FIX_PROMPT = """\
+You are builder.coder fixing a pre-PR check finding on this repository.
+
+Sub-task: {title}
+Description: {description}
+The check that reports the finding: {command}
+
+Fix the reported finding in the production code. Do NOT suppress, skip, disable
+or reconfigure the check, and do not add ignore comments to silence it.
+The check is re-run after your change and must pass.
+
+{rules}
+When done, reply with ONLY this JSON (no prose):
+{{"changed_files": ["<paths you changed>"], "notes": "<one line>"}}
+{feedback}"""
+
+
+def fix_step(
+    client,
+    cfg: RunnerConfig,
+    ticket: Ticket,
+    feedback: str | None = None,
+    journal: Journal | None = None,
+) -> None:
+    """Loop builder.coder until the ticket's pre-PR command no longer reports a finding."""
+    journal = journal or Journal()
+    extra = journal.render(ticket, feedback) if feedback else ""
+    last_error = "no attempt made"
+    for _ in range(cfg.coder_retries + 1):
+        prompt = FIX_PROMPT.format(
+            title=ticket.title,
+            description=ticket.description,
+            command=ticket.pre_pr_command,
+            rules=workspace_rules(cfg, ticket=True),
+            feedback=extra,
+        )
+        client.run(prompt, role="builder.coder", session_name=f"coder-t{ticket.id}")
+        finding = finding_for(cfg, ticket.pre_pr_command)
+        if finding is None:
+            return
+        last_error = f"the pre-PR check still reports a finding. Output:\n{finding}"
+        extra = journal.hand_back(ticket, "harness", "builder.coder", last_error, "change rejected")
+    raise CoderFailure(f"builder.coder failed for ticket {ticket.id}: {last_error}")
 
 
 def remaining(store: TicketStore) -> list[dict]:
