@@ -53,6 +53,31 @@ When done, reply with ONLY this JSON: {{"notes": "<one line>"}}
 {feedback}"""
 
 
+RESOLVER_PR_PROMPT = """\
+You are the resolver in an automated delivery pipeline working on this repository.
+
+The pull request branch `{branch}` is being brought up to date with `{base}`.
+A merge of `origin/{base}` is IN PROGRESS in the working tree.
+
+These paths conflict:
+{conflicted}
+
+What is wrong now:
+{problem}
+
+Edit the working tree so that the merge keeps BOTH sides' intent: the branch's
+change and what landed on `{base}`. Remove every conflict marker.
+
+HARD RULES:
+- Do NOT run git commands that change state (no add, commit, merge, rebase,
+  reset, checkout or stash). The runner finishes the merge.
+- Keep the change minimal.
+
+{rules}
+When done, reply with ONLY this JSON: {{"notes": "<one line>"}}
+{feedback}"""
+
+
 def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, base: str) -> str:
     """Merge origin/<base> into the run branch, resolving if needed; return the new head."""
     repo = cfg.repo_dir
@@ -105,15 +130,48 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
 def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     """Merge origin/<base> into `branch` (already checked out) and push it fast-forward."""
     repo = cfg.repo_dir
+    head = devops.head_commit(repo)
     devops.fetch(repo)
-    devops.merge_in(repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}")
-    problem = green_problem(cfg, [], allow_empty_suite=True)
-    if problem is not None:
-        devops.abort_merge(repo)
-        raise MergeError(f"could not merge origin/{base}: {problem}")
+    conflicted = devops.merge_in(
+        repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}"
+    )
+    problem = _pr_problem(cfg, conflicted)
+    feedback = ""
+    attempts = 0
+    while problem is not None:
+        if not conflicted or attempts > cfg.coder_retries:
+            devops.abort_merge(repo)
+            raise MergeError(f"could not merge origin/{base}: {problem}")
+        attempts += 1
+        client.run(
+            RESOLVER_PR_PROMPT.format(
+                branch=branch,
+                base=base,
+                conflicted="\n".join(f"  - {p}" for p in conflicted),
+                problem=problem,
+                rules=workspace_rules(cfg),
+                feedback=feedback,
+            ),
+            role="resolver",
+            session_name=f"resolver-pr-{branch}",
+        )
+        if devops.current_branch(repo) != branch or devops.head_commit(repo) != head:
+            devops.abort_merge(repo)
+            raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
+        if not devops.merge_in_progress(repo):
+            raise MergeError("the resolver ended the merge; only the runner finishes it")
+        problem = _pr_problem(cfg, conflicted)
+        feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
     sha = devops.finish_merge(repo, branch)
     devops.push_branch(repo, branch)
     return sha
+
+
+def _pr_problem(cfg, conflicted: list[str]) -> str | None:
+    markers = devops.leftover_markers(cfg.repo_dir, conflicted)
+    if markers:
+        return "conflict markers remain:\n" + "\n".join(markers[:20])
+    return green_problem(cfg, [], allow_empty_suite=True)
 
 
 def _problem(cfg, store, tests, conflicted: list[str]) -> str | None:

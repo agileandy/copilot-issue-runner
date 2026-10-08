@@ -64,3 +64,40 @@ def test_update_pr_branch_does_not_push_a_merge_that_fails_the_regression_suite(
         merge.update_pr_branch(FakeClient([]), failing, BRANCH, "main")
 
     assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before
+
+
+@pytest.fixture
+def conflicting_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    (git_repo / "impl.py").write_text("base\n")
+    _git(git_repo, "add", "impl.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: base impl")
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "impl.py").write_text("ours\n")
+    _git(git_repo, "commit", "-q", "-am", "feat: our impl")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "impl.py").write_text("upstream\n")
+    _git(clone, "commit", "-q", "-am", "feat: upstream impl")
+    _git(clone, "push", "-q", "origin", "main")
+    return remote
+
+
+def test_update_pr_branch_pushes_the_resolvers_fix_for_a_conflicted_merge(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    client = FakeClient(
+        [('{"notes":"ok"}', lambda: (git_repo / "impl.py").write_text("ours\n# and upstream\n"))]
+    )
+
+    merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    pushed = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
+    ).stdout
+    assert pushed == "ours\n# and upstream\n"
