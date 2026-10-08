@@ -238,3 +238,8 @@ def test_plan_extra_numbers_new_tickets_after_the_built_ones(cfg):
     client = FakeClient([(no_cover, None), (no_cover, None)])
     with pytest.raises(PlanError, match="no new ticket names criteria AC1"):
         plan_extra(client, cfg, CRITERIA_ISSUE, unmet, built, ["AC1", "AC2"])
+
+
+def test_workspace_rules_with_a_test_path_omits_the_full_suite_line(cfg):
+    assert cfg.regression_cmd
+    assert "Run the full suite with" not in workspace_rules(cfg, "tests/test_x.py")

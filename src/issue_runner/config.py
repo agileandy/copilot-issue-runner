@@ -94,6 +94,7 @@ class RunnerConfig:
     test_cmd: str = DEFAULT_TEST_CMD
     test_cmd_detected: bool = False  # re-detected in the run worktree when True
     regression_cmd: str | None = None
+    ticket_regression: str = "shared"  # per-ticket full suite: shared, focused or full
     # commands that prepare a run worktree instead of the discovered toolchain steps
     setup_cmd: list[str] | None = None
     isolate_worktree: bool = True
@@ -157,6 +158,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
     for key in (
         "test_cmd",
         "regression_cmd",
+        "ticket_regression",
         "isolate_worktree",
         "max_rounds",
         "tester_retries",
@@ -212,6 +214,8 @@ def validate_config(cfg: RunnerConfig) -> None:
         not isinstance(cfg.regression_cmd, str) or not cfg.regression_cmd.strip()
     ):
         raise ConfigError("regression_cmd must be a non-empty command")
+    if cfg.ticket_regression not in ("shared", "focused", "full"):
+        raise ConfigError("ticket_regression must be one of: shared, focused, full")
     if cfg.setup_cmd is not None and (
         not isinstance(cfg.setup_cmd, list)
         or not cfg.setup_cmd

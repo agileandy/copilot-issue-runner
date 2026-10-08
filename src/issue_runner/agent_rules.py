@@ -22,7 +22,9 @@ def test_commands(cfg: RunnerConfig, test_path: str | None = None) -> tuple[str,
     return focused, regression
 
 
-def workspace_rules(cfg: RunnerConfig, test_path: str | None = None) -> str:
+def workspace_rules(
+    cfg: RunnerConfig, test_path: str | None = None, *, ticket: bool = False
+) -> str:
     focused, regression = test_commands(cfg, test_path)
     lines = [
         "WORKSPACE RULES:",
@@ -32,7 +34,15 @@ def workspace_rules(cfg: RunnerConfig, test_path: str | None = None) -> str:
         ),
         f"- Run the test for this sub-task with: `{focused}`",
     ]
-    if regression:
+    if ticket or test_path:
+        lines += [
+            (
+                "- Also run the existing tests that import the modules you change, "
+                "with the same command."
+            ),
+            "- Do not run the full suite; the harness runs it once at the end of the run.",
+        ]
+    elif regression:
         lines.append(f"- Run the full suite with: `{regression}`")
     lines += [
         (
