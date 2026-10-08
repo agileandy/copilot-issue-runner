@@ -274,3 +274,32 @@ def test_update_pull_request_runs_the_conflict_resolver_inside_the_pr_worktree(
         conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
     ).stdout
     assert (pushed, client.config.repo_dir) == ("ours\n# and upstream\n", cfg.repo_dir)
+
+
+def test_update_pull_request_runs_setup_cmd_inside_the_pr_worktree(
+    pr_branch, git_repo, cfg, tmp_path_factory  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    marker = tmp_path_factory.mktemp("setup") / "cwd"
+
+    update_pull_request(
+        dataclasses.replace(cfg, setup_cmd=[f"pwd > {marker}"]),
+        FakeClient([]),
+        flow,
+        number,
+        git_repo / ".state",
+    )
+
+    assert marker.read_text().strip() == str(
+        (git_repo / ".state" / "worktrees" / f"pr-{number}").resolve()
+    )

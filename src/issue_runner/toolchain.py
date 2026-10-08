@@ -230,8 +230,28 @@ def _without_caller_venv(env: dict) -> dict:
     return env
 
 
+_SHELL_OPERATOR = re.compile(r"[();<>|&]+")
+
+
+def _uses_shell(command: str) -> bool:
+    """Whether a command holds an unquoted shell operator, such as `>` or `&&`."""
+    lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return any(_SHELL_OPERATOR.fullmatch(token) for token in lexer)
+
+
+def _shell_argv(command: str) -> list[str]:
+    if os.name == "nt":
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", command]
+    return ["/bin/sh", "-c", command]
+
+
 def run_setup(root: Path, commands: list[str], timeout: int, run=subprocess.run) -> list[str]:
-    """Run the repository's own `setup_cmd` commands in the worktree, in order."""
+    """Run the repository's own `setup_cmd` commands in the worktree, in order.
+
+    A command with a shell operator (`>`, `|`, `&&` and the like) runs through
+    the platform shell. Any other command runs directly.
+    """
     root = Path(root)
     env = _without_caller_venv(dict(os.environ, CI="1", NO_COLOR="1"))
     for command in commands:
@@ -240,6 +260,8 @@ def run_setup(root: Path, commands: list[str], timeout: int, run=subprocess.run)
             argv = shlex.split(command)
         except ValueError as e:
             raise ProvisionError(f"setup_cmd `{command}` could not be parsed: {e}") from e
+        if _uses_shell(command):
+            argv = _shell_argv(command)
         try:
             result = run(
                 argv,

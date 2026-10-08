@@ -427,7 +427,7 @@ def _update_pr(args) -> int:
             sha = update_pull_request(
                 cfg, CopilotClient(cfg), GitHubFlow(cfg.repo), args.update_pr, repo_dir / ".issue-runner"
             )
-    except (MergeError, CopilotError, DevopsError, GithubError) as e:
+    except (MergeError, CopilotError, DevopsError, GithubError, ProvisionError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(sha)

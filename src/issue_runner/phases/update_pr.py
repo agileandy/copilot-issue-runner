@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import RunnerConfig
+from ..orchestrator import _prepare_toolchain
 from . import devops
 from .merge import MergeError, update_pr_branch
 
@@ -22,10 +23,12 @@ def update_pull_request(cfg: RunnerConfig, client, flow, number: int, state_dir:
     )
     client_config = getattr(client, "config", None)
     original_client_dir = client_config.repo_dir if client_config is not None else None
+    wt_cfg = dataclasses.replace(cfg, repo_dir=wt)
     try:
+        _prepare_toolchain(wt_cfg, Path(cfg.repo_dir).resolve())
         if client_config is not None:
             client_config.repo_dir = wt
-        return update_pr_branch(client, dataclasses.replace(cfg, repo_dir=wt), branch, base)
+        return update_pr_branch(client, wt_cfg, branch, base)
     finally:
         if client_config is not None:
             client_config.repo_dir = original_client_dir
