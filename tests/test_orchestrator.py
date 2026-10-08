@@ -966,3 +966,48 @@ def test_an_unfixed_pre_pr_ticket_is_handed_back_to_the_coder_until_max_rounds(
         "coder",
         True,
     )
+
+
+def test_a_pre_pr_ticket_whose_finding_an_earlier_fix_cleared_is_done_without_a_commit(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    unused_import = style_lint(outside, git_repo, "unused import")
+    unused_variable = style_lint(outside, git_repo, "unused variable")
+    cfg.pre_pr.commands = [
+        f"{sys.executable} {unused_import}",
+        f"{sys.executable} {unused_variable}",
+    ]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            # writing style.py clears both findings, so the second ticket has nothing to change
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
+            (json.dumps({"changed_files": [], "notes": "already fixed"}), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    fixes = [t for t in store.tickets if t.kind == "pre_pr"]
+    log = subprocess.run(
+        ["git", "log", "--pretty=%s"], cwd=git_repo, capture_output=True, text=True, check=False
+    ).stdout
+    assert (
+        [(t.title, t.status, t.blocked_reason, t.already_satisfied) for t in fixes],
+        report.blocked,
+        log.count("Fix pre-PR finding"),
+    ) == (
+        [
+            ("Fix pre-PR finding: unused import", "done", None, False),
+            ("Fix pre-PR finding: unused variable", "done", None, True),
+        ],
+        0,
+        1,
+    )

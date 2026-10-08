@@ -726,6 +726,9 @@ def _process_ticket(
                         return
                     continue
                 ticket.approved_digest = devops.workspace_digest(cfg.repo_dir)
+                # an earlier ticket's fix may have cleared this finding already: the coder then
+                # changed nothing, so there is nothing to commit and the ticket is still done
+                ticket.already_satisfied = not devops.changed_paths(cfg.repo_dir)
                 ticket.code_feedback = ""
                 journal.post(
                     ticket, "builder.coder", "harness", "pre-PR finding gone", "pre-PR finding gone"
