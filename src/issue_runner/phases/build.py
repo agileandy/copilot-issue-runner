@@ -35,7 +35,9 @@ _TEST_TIMEOUT = 600
 # runner (vitest, jest --watch) would hang until the timeout, and ANSI codes can
 # split the very summary lines the report parser reads. CI=1 is what the JS
 # ecosystem checks for "batch run, do not prompt"; stdin is closed so anything
-# that still asks a question fails instead of blocking.
+# that still asks a question fails instead of blocking. UV_NO_SYNC=1 stops a
+# `uv run` test command from syncing the project and writing a uv.lock into
+# the worktree, which would otherwise show up as an unrequested change.
 _RUN_ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "CI": "1",
@@ -44,6 +46,7 @@ _RUN_ENV = {
     "NPM_CONFIG_COLOR": "false",
     "PY_COLORS": "0",
     "TERM": "dumb",
+    "UV_NO_SYNC": "1",
 }
 # language-agnostic emptiness check: cheap pre-filter only — execution evidence
 # is the real gate, so this never has to know what an assertion looks like.
