@@ -147,6 +147,7 @@ def _imported_modules(path: Path) -> set[str]:
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             found.add(node.module)
+            found.update(f"{node.module}.{alias.name}" for alias in node.names if alias.name != "*")
     return found
 
 

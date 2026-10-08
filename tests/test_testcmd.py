@@ -184,3 +184,20 @@ def test_related_tests_finds_tests_importing_changed_module(tmp_path):
     (tests_dir / "test_feature.py").write_text("from pkg.feature import value\n")
     (tests_dir / "test_other.py").write_text("import os\n")
     assert related_tests(tmp_path, ["src/pkg/feature.py"]) == ["tests/test_feature.py"]
+
+
+def test_related_tests_finds_tests_importing_module_from_package(tmp_path):
+    from issue_runner.testcmd import related_tests
+
+    pkg = tmp_path / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feature.py").write_text("value = 1\n")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text("from pkg import feature\n")
+    (tests_dir / "test_b.py").write_text("from pkg.feature import value\n")
+    assert related_tests(tmp_path, ["src/pkg/feature.py"]) == [
+        "tests/test_a.py",
+        "tests/test_b.py",
+    ]
