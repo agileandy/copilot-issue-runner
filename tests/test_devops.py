@@ -269,6 +269,18 @@ def test_commit_ticket_commits_an_already_staged_deletion(git_repo):
     assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
 
 
+def test_commit_ticket_commits_an_unstaged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    (git_repo / "seed.txt").unlink()
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
 def test_commit_changes_commits_an_already_staged_deletion(git_repo):
     from issue_runner.phases.devops import commit_changes, files_in_commit
 
