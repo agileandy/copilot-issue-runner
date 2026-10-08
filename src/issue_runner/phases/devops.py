@@ -457,7 +457,12 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
     if not merge_in_progress(repo_dir):
         raise DevopsError("no merge is in progress")
     paths = changed_paths(repo_dir)
-    incidental = incidental_paths(repo_dir, paths)
+    merged = (
+        _git(repo_dir, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD", "--", *paths).stdout
+        if paths
+        else ""
+    )
+    incidental = incidental_paths(repo_dir, paths, wanted={p for p in merged.split("\0") if p})
     if incidental:
         discard_paths(repo_dir, incidental)
         paths = changed_paths(repo_dir)

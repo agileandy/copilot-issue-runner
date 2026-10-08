@@ -194,3 +194,21 @@ def test_untracked_uv_lock_stays_out_of_the_branch_update_merge_commit(git_repo)
     merge_in(git_repo, "main", "merge main")
     sha = finish_merge(git_repo, "feature/151-x")
     assert files_in_commit(git_repo, sha) == ["other.txt"]
+
+
+def test_uv_lock_tracked_by_merged_ref_stays_in_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    (git_repo / "feature.txt").write_text("feature")
+    git("add", "uv.lock", "feature.txt")
+    git("commit", "-m", "add uv.lock and feature")
+    git("checkout", "feature/151-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["feature.txt", "uv.lock"]
