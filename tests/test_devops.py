@@ -176,3 +176,21 @@ def test_untracked_uv_lock_stays_out_of_the_review_fix_commit(git_repo):
     (git_repo / "uv.lock").write_text("version = 1\n")
     sha = commit_changes(git_repo, "fix(review): r1", "feature/151-x")
     assert files_in_commit(git_repo, sha) == ["seed.txt"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "other.txt").write_text("other")
+    git("add", "other.txt")
+    git("commit", "-m", "other")
+    git("checkout", "feature/151-x")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["other.txt"]

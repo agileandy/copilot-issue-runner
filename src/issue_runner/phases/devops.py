@@ -457,6 +457,10 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
     if not merge_in_progress(repo_dir):
         raise DevopsError("no merge is in progress")
     paths = changed_paths(repo_dir)
+    incidental = incidental_paths(repo_dir, paths)
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     _validate_paths(repo_dir, paths)
     _git(repo_dir, "add", "-A", "--", *paths)
     _git(repo_dir, "commit", "--no-edit")
