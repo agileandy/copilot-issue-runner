@@ -178,6 +178,11 @@ def test_real_call_success_yields_cached_tokens():
     assert usage["cached_tokens"] == 11
 
 
+def test_real_call_success_yields_reported_model():
+    usage = parse("model.model_call_success", **REAL_CALL_SUCCESS)[3]
+    assert usage.get("models") == ["claude-opus-5"]
+
+
 def test_anthropic_style_token_names_are_still_accepted():
     _, _, _, usage = parse(
         "model.model_call_success",

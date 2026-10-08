@@ -126,6 +126,8 @@ def merge_usage(total: dict | None, new: dict | None) -> dict | None:
     merged["costed_model_calls"] = merged.get("costed_model_calls", 0) + (
         new.get("costed_model_calls") or 0
     )
+    if "models" in merged or "models" in new:
+        merged["models"] = list(dict.fromkeys([*merged.get("models", []), *new.get("models", [])]))
     return merged
 
 
@@ -154,6 +156,7 @@ class CallRecord:
     model_calls: int | None = None  # model calls inside this one CLI invocation
     costed_model_calls: int | None = None  # of those, how many reported a charge
     cost_complete: bool | None = None  # False => nano_aiu is a lower bound
+    models: tuple[str, ...] = ()  # models copilot reported, else the requested model
 
 
 class UsageLedger:
@@ -172,6 +175,9 @@ class UsageLedger:
         usage: dict | None,
     ) -> None:
         usage = usage or {}
+        models = tuple(usage.get("models") or ())
+        if not models and model:
+            models = (model,)
         self.calls.append(
             CallRecord(
                 role=role,
@@ -188,6 +194,7 @@ class UsageLedger:
                 model_calls=usage.get("model_calls"),
                 costed_model_calls=usage.get("costed_model_calls"),
                 cost_complete=cost_is_complete(usage),
+                models=models,
             )
         )
 
@@ -222,7 +229,12 @@ class UsageLedger:
         roles = {}
         for call in self.calls:
             roles.setdefault(call.role, []).append(call)
-        return {role: self._bucket(calls) for role, calls in roles.items()}
+        result = {}
+        for role, calls in roles.items():
+            bucket = self._bucket(calls)
+            bucket["models"] = sorted({m for c in calls for m in c.models})
+            result[role] = bucket
+        return result
 
     def by_ticket(self) -> dict[int | None, dict]:
         tickets = {}
@@ -249,11 +261,17 @@ class UsageLedger:
         if totals["model_calls"] and totals["model_calls"] != totals["calls"]:
             parts.append(f"model calls: {totals['model_calls']}")
         roles = ", ".join(
-            f"{role}={data['calls']}" for role, data in sorted(self.by_role().items())
+            self._role_entry(role, data["calls"])
+            for role, data in sorted(self.by_role().items())
         )
         if roles:
             parts.append(f"by-role: {roles}")
         return "usage — " + ", ".join(parts)
+
+    def _role_entry(self, role: str, calls: int) -> str:
+        models = sorted({m for c in self.calls if c.role == role for m in c.models})
+        entry = f"{role}={calls}"
+        return f"{entry} ({'/'.join(models)})" if models else entry
 
     def run_entry(self) -> dict:
         return {
