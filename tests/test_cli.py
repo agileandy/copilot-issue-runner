@@ -1308,3 +1308,31 @@ def test_update_pr_rejects_run_only_flags(tmp_path, monkeypatch, capsys):
         ["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path), "--dry-run", "--plan-only"]
     )
     assert (rc, called, "--dry-run, --plan-only" in capsys.readouterr().err) == (2, False, True)
+
+
+def test_update_pr_applies_max_ai_credits_and_max_run_credits(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    seen = {}
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        seen["caps"] = (client.budget.limit, cfg.max_ai_credits)
+        return "abc"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        [
+            "--update-pr",
+            "5",
+            "--repo",
+            "o/n",
+            "--dir",
+            str(tmp_path),
+            "--max-ai-credits",
+            "3",
+            "--max-run-credits",
+            "20",
+        ]
+    )
+    assert (rc, seen.get("caps")) == (0, (20, 3))

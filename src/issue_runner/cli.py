@@ -14,6 +14,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .budget import BudgetExhausted
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
@@ -407,6 +408,10 @@ def _update_pr(args) -> int:
         cfg.setup_cmd = args.setup_cmd
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
+    if args.max_ai_credits is not None:
+        cfg.max_ai_credits = args.max_ai_credits
+    if args.max_run_credits is not None:
+        cfg.max_run_credits = args.max_run_credits
     if args.model or args.effort:
         for role in ROLES:
             existing = cfg.roles.get(role, RoleConfig())
@@ -445,7 +450,7 @@ def _update_pr(args) -> int:
             sha = update_pull_request(
                 cfg, CopilotClient(cfg), GitHubFlow(cfg.repo), args.update_pr, repo_dir / ".issue-runner"
             )
-    except (MergeError, CopilotError, DevopsError, GithubError, ProvisionError) as e:
+    except (MergeError, CopilotError, DevopsError, GithubError, ProvisionError, BudgetExhausted) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(sha)
