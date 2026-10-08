@@ -118,7 +118,7 @@ def git_dir(repo_dir: Path) -> Path:
 
 
 @contextmanager
-def _file_lock(path: Path):
+def _file_lock(path: Path, owner: str = "repository"):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         stream = path.open("a+b")
@@ -140,7 +140,7 @@ def _file_lock(path: Path):
                 stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError as e:
-            raise DevopsError(f"another issue-runner owns this repository ({path})") from e
+            raise DevopsError(f"another issue-runner owns this {owner} ({path})") from e
         try:
             yield
         finally:
@@ -156,7 +156,7 @@ def repository_lock(repo_dir: Path):
 
 
 def state_lock(state_dir: Path):
-    return _file_lock(state_dir / "run.lock")
+    return _file_lock(state_dir / "run.lock", owner="state directory")
 
 
 def workspace_digest(repo_dir: Path, *, include_index: bool = True) -> str:
