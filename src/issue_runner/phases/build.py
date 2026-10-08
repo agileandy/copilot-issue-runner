@@ -27,6 +27,7 @@ from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..journal import Journal
 from ..jsonx import JsonExtractError, extract_json_object
+from ..testcmd import related_tests
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
@@ -161,6 +162,18 @@ def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
     """
     command = cfg.test_cmd.format(test_path=shlex.quote(test_path))
     return _run(cfg, command, test_path)
+
+
+def focused_test_command(cfg: RunnerConfig, test_path: str, changed_files: list[str]) -> str:
+    """The ticket's test plus the existing tests that import a changed module.
+
+    A test command without a `{test_path}` placeholder (go, cargo) is returned
+    unchanged.
+    """
+    if "{test_path}" not in cfg.test_cmd:
+        return cfg.test_cmd
+    paths = list(dict.fromkeys([test_path, *related_tests(cfg.repo_dir, changed_files)]))
+    return cfg.test_cmd.format(test_path=" ".join(shlex.quote(p) for p in paths))
 
 
 def run_test_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
