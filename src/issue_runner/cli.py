@@ -120,8 +120,14 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         metavar="NUMBER",
         help="with --agent, post the run summary to this issue (required with --issue-file)",
     )
-    p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
-    p.add_argument("--effort", help="default reasoning effort for all roles")
+    p.add_argument("--model", help="model for every role this run, overriding runner.toml (see 'copilot /model')")
+    p.add_argument("--effort", help="reasoning effort for every role this run, overriding runner.toml")
+    p.add_argument(
+        "--role-model",
+        action="append",
+        metavar="ROLE=MODEL",
+        help="override one role's model for this run, taking precedence over --model (repeatable)",
+    )
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
     p.add_argument(
         "--max-run-credits",
@@ -273,9 +279,19 @@ def main(argv=None) -> int:
         for role in ROLES:
             existing = cfg.roles.get(role, RoleConfig())
             cfg.roles[role] = RoleConfig(
-                model=existing.model or args.model,
-                effort=existing.effort or args.effort,
+                model=args.model or existing.model,
+                effort=args.effort or existing.effort,
             )
+    for value in args.role_model or []:
+        role, _, model_id = value.partition("=")
+        role, model_id = role.strip(), model_id.strip()
+        if not role or not model_id or role not in ROLES:
+            print(
+                f"error: --role-model expects ROLE=MODEL with ROLE one of {', '.join(ROLES)}",
+                file=sys.stderr,
+            )
+            return 2
+        cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
 
     try:
         validate_config(cfg)

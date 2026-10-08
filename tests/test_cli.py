@@ -379,6 +379,155 @@ def test_max_run_credits_flag_reaches_config(tmp_path, monkeypatch):
     assert seen["max_run_credits"] == 120
 
 
+def test_model_and_effort_flags_override_runner_toml_roles(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    (repo / "runner.toml").write_text('[roles.resolver]\nmodel = "cheap"\neffort = "low"\n')
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["client"] = client
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--model",
+            "strong",
+            "--effort",
+            "high",
+        ]
+    )
+    argv = seen["client"]._build_argv("p", role="resolver", read_only=False, session_name="resolver")
+    assert (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]) == (
+        "strong",
+        "high",
+    )
+
+
+def test_runner_toml_roles_kept_without_model_or_effort_flags(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    (repo / "runner.toml").write_text('[roles.resolver]\nmodel = "cheap"\neffort = "low"\n')
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["client"] = client
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(["--issue-file", str(issue_file), "--dir", str(repo), "--no-github-tickets"])
+    argv = seen["client"]._build_argv("p", role="resolver", read_only=False, session_name="resolver")
+    assert (argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]) == ("cheap", "low")
+
+
+def test_role_model_flag_overrides_one_role_over_model_flag(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen["cfg"] = cfg
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--model",
+            "base",
+            "--role-model",
+            "resolver=strong",
+        ]
+    )
+    cfg = seen["cfg"]
+    assert {r: cfg.role(r).model for r in ("resolver", "planner")} == {
+        "resolver": "strong",
+        "planner": "base",
+    }
+
+
+def test_unknown_role_model_role_is_an_invocation_error(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+
+    def must_not_run(*a, **k):
+        pytest.fail("must not run")
+
+    monkeypatch.setattr(cli, "run_issue", must_not_run)
+    rc = cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--role-model",
+            "nosuch=x",
+        ]
+    )
+    assert rc == 2
+
+
+def test_whitespace_only_role_model_id_is_an_invocation_error(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# T\n\nbody")
+
+    def must_not_run(*a, **k):
+        pytest.fail("must not run")
+
+    monkeypatch.setattr(cli, "run_issue", must_not_run)
+    rc = cli.main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--no-github-tickets",
+            "--role-model",
+            "resolver=   ",
+        ]
+    )
+    assert rc == 2
+
+
 def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     repo = tmp_path / "target"
     repo.mkdir()
@@ -419,6 +568,137 @@ def test_usage_summary_and_file_from_an_end_to_end_run(tmp_path, capsys):
     # the usage file must not be mistaken for a ticket state file
     state_files = list((repo / ".issue-runner").glob("issue-*.json"))
     assert len(state_files) == 1
+
+
+def test_usage_log_records_the_model_copilot_reported_not_the_requested_one(tmp_path):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    message = json.dumps({"type": "assistant.message", "data": {"content": plan}})
+    call = json.dumps(
+        {"type": "model.model_call_success", "data": {"modelCall": {"model": "strong-resolved"}}}
+    )
+    fake = tmp_path / "fake-copilot"
+    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{message}\n{call}\nEOF\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    rc = main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--plan-only",
+            "--no-github-tickets",
+            "--role-model",
+            "planner=strong",
+        ]
+    )
+    assert rc == 0
+
+    last = json.loads((repo / ".issue-runner" / "usage.log").read_text().splitlines()[-1])
+    assert last["by_role"]["planner"]["models"] == ["strong-resolved"]
+
+
+def test_usage_summary_line_shows_the_model_copilot_reported_per_role(tmp_path, capsys):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    message = json.dumps({"type": "assistant.message", "data": {"content": plan}})
+    call = json.dumps(
+        {"type": "model.model_call_success", "data": {"modelCall": {"model": "strong-resolved"}}}
+    )
+    fake = tmp_path / "fake-copilot"
+    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{message}\n{call}\nEOF\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    rc = main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--plan-only",
+            "--no-github-tickets",
+            "--role-model",
+            "planner=strong",
+        ]
+    )
+    assert rc == 0
+
+    assert "planner=1 (strong-resolved)" in capsys.readouterr().out
+
+
+def test_usage_falls_back_to_the_role_model_override_when_copilot_reports_no_model(
+    tmp_path, capsys
+):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    message = json.dumps({"type": "assistant.message", "data": {"content": plan}})
+    call = json.dumps({"type": "model.model_call_success", "data": {}})
+    fake = tmp_path / "fake-copilot"
+    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{message}\n{call}\nEOF\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    rc = main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--plan-only",
+            "--no-github-tickets",
+            "--model",
+            "base",
+            "--role-model",
+            "planner=strong",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    last_usage_log_line = (repo / ".issue-runner" / "usage.log").read_text().splitlines()[-1]
+
+    assert (
+        "planner=1 (strong)" in out,
+        json.loads(last_usage_log_line)["by_role"]["planner"]["models"],
+    ) == (True, ["strong"])
 
 
 def test_parser_prog_follows_the_invoked_command_name():
