@@ -100,6 +100,7 @@ gh-runner 17 --repo owner/name --dir ~/src/target-repo
 gh-runner --issue-file ./issue.md --dir . --plan-only   # plan, no build
 gh-runner 17 --dry-run                                  # print the planner call, zero credits
 gh-runner 17 --retry-blocked                            # retry only what blocked last time
+gh-runner --update-pr 42                                # merge the base branch into PR #42
 ```
 
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·

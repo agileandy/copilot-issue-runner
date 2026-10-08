@@ -1249,3 +1249,17 @@ def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, cap
     assert "  review          pass\n" in out
     assert "  merge           FAILED\n" in out
     assert "  criteria_dev    not reached\n" in out
+
+
+def test_update_pr_flag_calls_update_pull_request_with_the_number(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    seen = {}
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        seen["number"] = number
+        return "abc123"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path)])
+    assert (rc, seen.get("number")) == (0, 5)

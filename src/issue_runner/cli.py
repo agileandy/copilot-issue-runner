@@ -4,6 +4,7 @@ Examples:
     issue-runner 17 --repo owner/name --dir ~/src/thing
     issue-runner --issue-file ./issue.md --dir . --plan-only
     issue-runner 17 --model gpt-5-mini --max-ai-credits 30   # frugal mode
+    gh-runner --update-pr 42   # merge the base branch into PR #42's head branch
 """
 
 import argparse
@@ -24,7 +25,9 @@ from .phases import preflight
 from .phases.build import BuildError
 from .phases.delivery import GATE_EXIT
 from .phases.devops import DevopsError
+from .phases.merge import MergeError
 from .phases.plan import PlanError, build_plan_prompt
+from .phases.update_pr import update_pull_request
 from .phases.verify import VerifyError
 from .ticket_mirror import GiteaTickets, GithubTickets
 from .tickets import DOD_GATES, StateError
@@ -106,6 +109,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         type=int,
         metavar="NUMBER",
         help="delete a demo clone and its sub-issues (never the seed)",
+    )
+    p.add_argument(
+        "--update-pr",
+        type=int,
+        metavar="NUMBER",
+        help="merge the base branch into an open pull request's head branch and push it",
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
     p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
@@ -197,6 +206,9 @@ def main(argv=None) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 2
         return 0
+
+    if args.update_pr is not None:
+        return _update_pr(args)
 
     if not args.issue and not args.issue_file and not args.demo:
         print("error: provide an issue number or --issue-file", file=sys.stderr)
@@ -357,6 +369,69 @@ def main(argv=None) -> int:
     )
     with stop_signals(cfg):
         return _execute(cfg, client, issue, args.plan_only, resume, post)
+
+
+def _update_pr(args) -> int:
+    if args.issue or args.issue_file or args.demo or args.deploy:
+        print(
+            "error: --update-pr cannot be used with an issue number, --issue-file, --demo or --deploy",
+            file=sys.stderr,
+        )
+        return 2
+    repo_dir = args.dir.resolve()
+    try:
+        cfg = load_config(repo_dir, args.config)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.repo:
+        cfg.repo = args.repo
+    if args.regression_cmd:
+        cfg.regression_cmd = args.regression_cmd
+    if args.setup_cmd:
+        cfg.setup_cmd = args.setup_cmd
+    if args.copilot_cmd:
+        cfg.copilot_cmd = args.copilot_cmd
+    if args.model or args.effort:
+        for role in ROLES:
+            existing = cfg.roles.get(role, RoleConfig())
+            cfg.roles[role] = RoleConfig(
+                model=args.model or existing.model,
+                effort=args.effort or existing.effort,
+            )
+    for value in args.role_model or []:
+        role, _, model_id = value.partition("=")
+        role, model_id = role.strip(), model_id.strip()
+        if not role or not model_id or role not in ROLES:
+            print(
+                f"error: --role-model expects ROLE=MODEL with ROLE one of {', '.join(ROLES)}",
+                file=sys.stderr,
+            )
+            return 2
+        cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
+    if not cfg.repo:
+        try:
+            info = resolve(repo_dir)
+        except TrackerError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        if info.kind != "github":
+            print(
+                "error: --update-pr needs a GitHub repository (--repo or a github.com origin)",
+                file=sys.stderr,
+            )
+            return 2
+        cfg.repo = info.owner_repo
+    try:
+        with stop_signals(cfg):
+            sha = update_pull_request(
+                cfg, CopilotClient(cfg), GitHubFlow(cfg.repo), args.update_pr, repo_dir / ".issue-runner"
+            )
+    except (MergeError, CopilotError, DevopsError, GithubError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(sha)
+    return 0
 
 
 def _summary_poster(cfg, repo_dir: Path, issue: dict, comment_on: int | None = None):
