@@ -23,7 +23,10 @@ _STAGES = {
     "refine_test": "revising the ticket's test",
     "coder": "writing the code that passes the ticket's test",
     "verifier": "reviewing the change",
-    "regression": "full test-suite check, after the ticket's own test passed review",
+    "regression": (
+        "focused tests, or the full suite when shared files changed, "
+        "after the ticket's own test passed review"
+    ),
     "commit": "committing the approved change",
     "dependencies": "waiting on tickets that cannot finish",
 }

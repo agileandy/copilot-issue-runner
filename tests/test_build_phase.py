@@ -59,6 +59,16 @@ def test_run_test_command_takes_a_complete_command(repo, cfg):
     assert "ok 1" in output
 
 
+def test_run_test_command_sets_uv_no_sync_so_uv_run_never_writes_a_lockfile(repo, cfg):
+    from issue_runner.phases.build import run_test_command
+
+    command = (
+        f"{sys.executable} -c \"import os; print('TAP version 13'); print('1..1'); "
+        f"print(('ok' if os.environ.get('UV_NO_SYNC') == '1' else 'not ok') + ' 1')\""
+    )
+    assert run_test_command(cfg, command)[0] is True
+
+
 def test_the_fixture_checker_runs_the_whole_tree_for_a_regression_gate(repo, cfg):
     """What the parent's regression gate will drive through run_test_command."""
     from issue_runner.phases.build import run_test_command
@@ -294,3 +304,18 @@ def test_the_coder_is_told_it_tampered(repo, cfg):
     client = FakeClient([("done", cheat), ("done", honest)])
     coder_step(client, cfg, ticket(), "test_subtract.py")
     assert "modified the test file" in client.calls[1]["prompt"]
+
+
+def test_focused_test_command_runs_the_ticket_test_and_its_related_tests(tmp_path):
+    from issue_runner.config import RunnerConfig
+    from issue_runner.phases.build import focused_test_command
+
+    (tmp_path / "feature.py").write_text("def existing():\n    return 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_existing.py").write_text("from feature import existing\n")
+    cfg = RunnerConfig(repo_dir=tmp_path, test_cmd="python -m pytest {test_path} -q")
+
+    assert (
+        focused_test_command(cfg, "tests/test_added.py", ["feature.py", "tests/test_added.py"])
+        == "python -m pytest tests/test_added.py tests/test_existing.py -q"
+    )

@@ -54,6 +54,7 @@ class Delivery:
     body_stale: bool = False  # the PR description misses a review round
     waiting_since: float | None = None  # when the wait for the current head began
     handled_threads: list[str] = field(default_factory=list)
+    pending_replies: dict = field(default_factory=dict)  # thread ref -> reply, for an unpushed fix
     merge_attempts: int = 0
     merge_sha: str | None = None
     deploy_run_ids: list[int] = field(default_factory=list)
@@ -107,6 +108,7 @@ class Ticket:
     approved_digest: str | None = None
     approved_tree: str | None = None
     approved_index: str | None = None
+    full_regression_tree: str | None = None
 
     def __post_init__(self) -> None:
         self.status = self._status
@@ -149,6 +151,7 @@ class TicketStore:
         self.last_commit: str | None = None
         self.workspace_ready: bool = False
         self.delivery: Delivery | None = None
+        self.pre_pr_rounds: list[dict] = []
 
     @property
     def state_file(self) -> Path:
@@ -207,6 +210,8 @@ class TicketStore:
             "tickets": [t.to_dict() for t in self.tickets],
             "delivery": self.delivery.to_dict() if self.delivery else None,
         }
+        if self.pre_pr_rounds:
+            payload["pre_pr_rounds"] = self.pre_pr_rounds
         try:
             write_json(self.state_file, payload)
         except OSError as e:
@@ -240,4 +245,5 @@ class TicketStore:
         self.workspace_ready = payload.get("workspace_ready", False)
         self.tickets = tickets
         self.delivery = delivery
+        self.pre_pr_rounds = payload.get("pre_pr_rounds", [])
         return True

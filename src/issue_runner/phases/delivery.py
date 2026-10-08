@@ -17,7 +17,7 @@ from ..copilot import CopilotError
 from ..events import emit
 from ..github_flow import GithubError, GitHubFlow
 from ..tickets import Delivery, Ticket, TicketStore
-from . import acceptance, devops, merge, review
+from . import acceptance, devops, merge, prepr, review
 from .devops import DevopsError
 from .plan import PlanError, plan_extra
 
@@ -270,6 +270,9 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
     flow = make_flow(cfg)
     _sync_push(cfg, store, delivery)
     findings = _review_status(flow, cfg, delivery).findings
+    if delivery.pending_replies and delivery.head_sha == devops.head_commit(cfg.repo_dir):
+        _publish_pending_replies(cfg, flow, store, delivery)
+        return
     if not findings:
         delivery.stage = "reviewing"
         return
@@ -326,15 +329,18 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
                 }
             )
             delivery.body_stale = True
+            replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
+            delivery.pending_replies = dict(replies)
             store.save()
             devops.push_branch(cfg.repo_dir, store.branch)
+            delivery.pending_replies = {}
+            store.save()
             try:
                 flow.update_pull_body(delivery.pr_number, pr_body(issue, store))
                 delivery.body_stale = False
                 store.save()
             except GithubError as e:
                 log.warning("could not update the body of PR #%s: %s", delivery.pr_number, e)
-            replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
         for ref, body in replies.items():
             if ref in delivery.handled_threads:
                 continue
@@ -346,6 +352,29 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
             flow.request_review(delivery.pr_number, _reviewer(cfg))
     except (DevopsError, GithubError) as e:
         raise GateFailed(f"could not publish the review fixes: {e}") from e
+    delivery.review_round += 1
+    delivery.waiting_since = _now()
+    delivery.stage = "reviewing"
+
+
+def _publish_pending_replies(cfg, flow, store: TicketStore, delivery: Delivery) -> None:
+    """Answer a fix round's threads whose commit was saved but whose push had failed."""
+    try:
+        open_threads = {
+            t["id"] for t in flow.review_threads(delivery.pr_number) if not t.get("isResolved")
+        }
+        for ref, body in delivery.pending_replies.items():
+            if ref not in open_threads or ref in delivery.handled_threads:
+                continue
+            flow.reply_to_thread(ref, body)
+            flow.resolve_thread(ref)
+            delivery.handled_threads.append(ref)
+            store.save()
+        if not cfg.preflight.review_on_push:
+            flow.request_review(delivery.pr_number, _reviewer(cfg))
+    except (DevopsError, GithubError) as e:
+        raise GateFailed(f"could not publish the review fixes: {e}") from e
+    delivery.pending_replies = {}
     delivery.review_round += 1
     delivery.waiting_since = _now()
     delivery.stage = "reviewing"
@@ -778,6 +807,14 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    findings = prepr.remaining(store)
+    if findings:
+        lines += ["", "### Remaining pre-PR findings"]
+        for finding in findings:
+            text_lines = prepr.finding_lines(finding)
+            first = text_lines[0] if text_lines else ""
+            lines.append(f"- `{finding['command']}`: {first}")
+            lines.extend(f"  {line}" for line in text_lines[1:])
     for entry in store.delivery.review_rounds if store.delivery else []:
         lines += ["", f"### Review round {entry['round']} (`{entry['sha'][:12]}`)"]
         lines += [f"- `{f['where']}`: {f['reason']}" for f in entry["fixed"]]

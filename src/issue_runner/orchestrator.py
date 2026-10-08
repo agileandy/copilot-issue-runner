@@ -4,14 +4,15 @@ Routing per ticket (Andy's spec):
   builder.tester (red enforced) -> builder.coder (green enforced) -> verifier
     refine_test -> back to tester (red not required: code exists) -> coder if red
     rework_code -> back to coder
-    pass        -> deterministic regression gate -> approved commit, ticket done
+    pass        -> deterministic regression gate (focused tests, or the full suite
+                   when shared files changed) -> approved commit, ticket done
 Unaccepted edits remain in the run workspace and never enter a later ticket.
 """
 
 import base64
 import hashlib
 import logging
-from contextlib import nullcontext
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -25,12 +26,13 @@ from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .journal import Journal
-from .phases import acceptance, delivery, devops
+from .phases import acceptance, delivery, devops, prepr
 from .phases.build import (
     BuildError,
     CoderFailure,
     TestAlreadyPasses,
     coder_step,
+    focused_test_command,
     resolve_test_path,
     run_test_command,
     run_tests,
@@ -116,15 +118,18 @@ def run_issue(
     state_dir = state_dir.resolve()
     store = TicketStore(state_dir, issue_ref=issue_ref)
     report = RunReport(plan_only=plan_only)
-    lock = nullcontext() if plan_only else devops.repository_lock(source)
     try:
-        with devops.state_lock(state_dir), lock:
+        with devops.state_lock(state_dir), ExitStack() as locks:
+            if not plan_only:
+                locks.enter_context(devops.repository_lock(source))
             try:
                 store.load()
                 if store.source_repo and Path(store.source_repo).resolve() != source:
                     raise StateError("saved state belongs to a different source repository")
                 store.source_repo = str(source)
                 if not plan_only:
+                    branch = store.branch or devops.branch_name(issue_ref, branch_slug, branch_kind)
+                    locks.enter_context(devops.branch_lock(source, branch))
                     _prepare_workspace(cfg, store, source, branch_slug, branch_kind)
                     _prepare_toolchain(cfg, source)
                     if client_config is not None:
@@ -414,7 +419,13 @@ def _run_issue(
                     "run branch moved after its last accepted commit; refusing publication"
                 )
             approved_head = devops.head_commit(cfg.repo_dir)
-            _regression_gate(cfg)
+            done = [t for t in store.tickets if t.status == "done"]
+            if not (
+                done
+                and done[-1].full_regression_tree
+                and done[-1].full_regression_tree == devops.head_tree(cfg.repo_dir)
+            ):
+                _regression_gate(cfg)
             cfg.control.check()
             devops.require_clean(cfg.repo_dir)
             if (
@@ -422,6 +433,10 @@ def _run_issue(
                 or devops.current_branch(cfg.repo_dir) != store.branch
             ):
                 raise DevopsError("regression command changed the run branch; refusing publication")
+            if prepr.step(cfg, store, report):
+                _mirror_tickets(cfg, issue, store)
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                continue
             if cfg.deploy:
                 if delivery.run(cfg, client, issue, store, report) == delivery.MORE_TICKETS:
                     # acceptance planned tickets for unmet criteria: build them, then resume
@@ -494,6 +509,14 @@ def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    findings = prepr.remaining(store)
+    if findings:
+        lines += ["", "### Remaining pre-PR findings"]
+        for finding in findings:
+            text_lines = prepr.finding_lines(finding)
+            first = text_lines[0] if text_lines else ""
+            lines.append(f"- `{finding['command']}`: {first}")
+            lines.extend(f"  {line}" for line in text_lines[1:])
     lines += ["", f"Branch `{report.branch}`, opened by issue-runner. Co-authored with AI."]
     return "\n".join(lines)
 
@@ -777,8 +800,17 @@ def _process_ticket(
             if ticket.phase == "regression":
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("workspace changed after verification; refusing approval")
+                full_run = False
                 try:
-                    _regression_gate(cfg)
+                    changed = devops.changed_paths(cfg.repo_dir)
+                    if cfg.ticket_regression == "full" or (
+                        cfg.ticket_regression != "focused"
+                        and devops.shared_changes(cfg.repo_dir, changed, ticket.test_path)
+                    ):
+                        _regression_gate(cfg)
+                        full_run = cfg.ticket_regression != "full"
+                    else:
+                        _focused_gate(cfg, focused_test_command(cfg, ticket.test_path, changed))
                 except RegressionFailure as e:
                     cfg.control.check()
                     ticket.code_feedback = str(e)
@@ -792,6 +824,7 @@ def _process_ticket(
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("regression command modified the workspace; changes retained")
                 devops.approve_changes(cfg.repo_dir, ticket)
+                ticket.full_regression_tree = ticket.approved_tree if full_run else None
                 ticket.phase = "commit"
                 store.save()
                 continue
@@ -947,6 +980,20 @@ def _regression_gate(cfg: RunnerConfig) -> None:
         )
     if "{test_path}" in command:
         raise BuildError("regression_cmd must run the suite without a {test_path} selector")
+    try:
+        passed, output = run_test_command(cfg, command)
+    except BuildError:
+        cfg.control.check()
+        raise
+    cfg.control.check()
+    if not passed:
+        raise RegressionFailure(
+            f"regression gate failed; repair existing behaviour:\n{output[-3000:]}"
+        )
+
+
+def _focused_gate(cfg: RunnerConfig, command: str) -> None:
+    cfg.control.check()
     try:
         passed, output = run_test_command(cfg, command)
     except BuildError:

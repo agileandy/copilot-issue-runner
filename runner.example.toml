@@ -6,6 +6,10 @@
 test_cmd = "pytest {test_path} -q"
 # Full suite gate, without {test_path}. Auto-detected separately when omitted.
 # regression_cmd = "pytest -q"
+# When a ticket runs the full suite: "shared" (only when it changes existing
+# behaviour in shared files), "focused" (never; the final gate still runs it once)
+# or "full" (after every ticket).
+# ticket_regression = "shared"
 isolate_worktree = true # keep the source checkout untouched; --in-place opts out
 max_rounds = 3        # verifier hand-backs per ticket before it is blocked
 tester_retries = 2    # harness bounces (stub/green test) before giving up
@@ -57,3 +61,12 @@ provision_timeout = 900 # seconds per provisioning step
 # dev_check_ext = ".sh"
 # dev_check_guide = "A POSIX sh script. Dev's base URL is $1; use curl against it."
 # dev_check_timeout_sec = 300
+
+# Checks run on the branch before the PR opens. Every key is optional.
+# {base} is the commit the run branched from. A command that cannot start or
+# times out stops the run before the PR opens.
+[pre_pr]
+# A command exiting 0 is clean, exit 2 stops the run as a tool error, any other
+# non-zero exit is a finding.
+# commands = ["gh-code-quality --base {base}"]
+# max_rounds = 2

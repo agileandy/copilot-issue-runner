@@ -727,3 +727,181 @@ def test_an_aborted_run_still_reports_the_work_it_completed(git_repo, cfg):
     assert report.done == 1, "the committed ticket must still be reported"
     assert report.branch, "the branch must be reported so the work can be found"
     assert "first" in " ".join(report.details)
+
+
+def write_test_file(repo, tag):
+    return lambda: (repo / "test_lint.py").write_text(f"assert PASS # {tag}")
+
+
+def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    counter = outside / "count"
+    lint = outside / "lint.py"
+    lint.write_text(
+        "import pathlib, sys\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "n = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(n + 1))\n"
+        "if n == 0:\n"
+        "    print('unused import')\n"
+        "    sys.exit(1)\n"
+    )
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert (
+        len(pull_requests.created),
+        [(t.title, t.status) for t in store.tickets],
+    ) == (1, [("subtract ints", "done"), ("Fix pre-PR finding: unused import", "done")])
+
+
+def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp_path_factory):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    counter = outside / "count"
+    lint = outside / "lint.py"
+    lint.write_text(
+        "import pathlib, sys\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "n = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(n + 1))\n"
+        "if n == 0:\n"
+        "    print('unused import')\n"
+        "    sys.exit(1)\n"
+    )
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    rounds = [d for d in report.details if d.startswith("pre-PR round ")]
+    assert rounds == ["pre-PR round 1: 1 finding(s)", "pre-PR round 2: 0 finding(s)"]
+    assert f"  {sys.executable} {lint}: unused import" in report.details
+
+
+
+def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    from issue_runner.config import PrePrConfig
+
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert (
+        len(pull_requests.created),
+        [t.title for t in store.tickets if t.title == "Fix pre-PR finding: still bad"],
+        len(store.pre_pr_rounds),
+    ) == (1, ["Fix pre-PR finding: still bad"], 2)
+
+
+def test_pull_request_body_lists_remaining_pre_pr_findings(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    from issue_runner.config import PrePrConfig
+
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    body = pull_requests.created[0]["body"]
+    _, heading, after = body.partition("### Remaining pre-PR findings")
+    assert heading and any("still bad" in line for line in after.splitlines())
+
+
+def test_pr_body_lists_every_line_of_a_remaining_pre_pr_finding(tmp_path):
+    from issue_runner import orchestrator
+
+    store = TicketStore(tmp_path / ".state", issue_ref="17")
+    store.pre_pr_rounds = [
+        {
+            "round": 1,
+            "findings": [{"command": "gh-code-quality", "text": "a.py:1 x\nb.py:2 y\nc.py:3 z"}],
+        }
+    ]
+
+    body = orchestrator._pr_body(ISSUE, store, orchestrator.RunReport(branch="b"))
+
+    _, _, after = body.partition("### Remaining pre-PR findings")
+    assert all(line in after for line in ("a.py:1 x", "b.py:2 y", "c.py:3 z"))
+
+
+def test_unset_pre_pr_records_no_rounds_and_no_findings_section(git_repo, cfg, pull_requests):
+    cfg.repo = "owner/repo"
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    state = json.loads(TicketStore(git_repo / ".state", issue_ref="17").state_file.read_text())
+    assert (
+        not any(d.startswith("pre-PR") for d in report.details),
+        "pre_pr_rounds" not in state,
+        "### Remaining pre-PR findings" not in pull_requests.created[0]["body"],
+    ) == (True, True, True)

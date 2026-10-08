@@ -36,11 +36,12 @@ def test_resume_after_verdict_does_not_repeat_verification(tmp_path, monkeypatch
     env, cfg = sandbox(tmp_path)
     original = orchestrator._regression_gate
 
-    def interrupt_gate(cfg):
+    def interrupt_gate(*args, **kwargs):
         raise Interrupted("before regression")
 
     with monkeypatch.context() as scoped:
         scoped.setattr(orchestrator, "_regression_gate", interrupt_gate)
+        scoped.setattr(orchestrator, "_focused_gate", interrupt_gate)
         with pytest.raises(Interrupted):
             run_issue(cfg, DemoClient(cfg), ISSUE)
     assert load_store(env).tickets[0].phase == "regression"

@@ -10,7 +10,7 @@ issue-runner = "issue_runner.cli:main"
 gh-runner = "issue_runner.cli:gh_main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff==0.16.5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -28,7 +28,11 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# factory/ is installer-generated scaffolding; a reinstall overwrites hand edits
+extend-exclude = ["./factory"]
 
 [tool.ruff.lint.per-file-ignores]
 # the spec test imports the module under an alias it asserts against
 "tests/test_build_no_tests_error.py" = ["PLR0402"]
+# the nested pytest.raises keeps the outer lock's entry outside the expected failure
+"tests/test_devops.py" = ["SIM117"]

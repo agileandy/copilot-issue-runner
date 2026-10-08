@@ -155,6 +155,15 @@ Override it with `regression_cmd` or `--regression-cmd`; it must not contain
 `{test_path}`. Unknown projects need an explicit regression command. Both commands
 must report actual test execution, not just exit successfully.
 
+`ticket_regression` controls when a ticket runs the full suite. The run always
+ends with one full regression gate.
+
+| Value | Per-ticket behaviour |
+| --- | --- |
+| `shared` (default) | Focused tests, plus the full suite when the ticket changes existing behaviour in shared files. Changes to existing non-Python files always trigger the full suite, because related-test discovery covers Python imports only |
+| `focused` | Only the ticket's test file and tests that import the changed modules |
+| `full` | The full suite after every ticket |
+
 ### Worktree toolchain
 
 Before any model call, each run worktree gets its own dependencies, so agents

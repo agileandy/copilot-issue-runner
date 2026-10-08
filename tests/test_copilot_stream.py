@@ -209,3 +209,16 @@ def test_streamed_run_records_real_tokens_and_credits(tmp_path):
     assert totals["input_tokens"] == 32854
     assert totals["output_tokens"] == 4
     assert totals["nano_aiu"] == 20543500000
+
+
+def test_agent_process_runs_with_uv_no_sync(tmp_path):
+    captured = {}
+
+    def recording_popen(argv, **kw):
+        captured.update(kw)
+        return FakeProc(SCRIPT)
+
+    cfg = RunnerConfig(repo_dir=tmp_path, events=EventBus())
+    client = CopilotClient(cfg, popen=recording_popen)
+    client.run("check", role="verifier", read_only=True)
+    assert captured.get("env", {}).get("UV_NO_SYNC") == "1"

@@ -63,7 +63,10 @@ def test_blocked_reports_headline_and_distinct_causes(tmp_path):
         {
             "id": 1,
             "title": "add x",
-            "stage": "full test-suite check, after the ticket's own test passed review",
+            "stage": (
+                "focused tests, or the full suite when shared files changed, "
+                "after the ticket's own test passed review"
+            ),
             "reason": "no usable test result from `pytest -q`: pytest reported 7 collection/setup error(s)",
             "causes": [
                 "ModuleNotFoundError: No module named 'openpyxl'",

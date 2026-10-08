@@ -27,6 +27,7 @@ from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..journal import Journal
 from ..jsonx import JsonExtractError, extract_json_object
+from ..testcmd import related_tests
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
@@ -35,7 +36,9 @@ _TEST_TIMEOUT = 600
 # runner (vitest, jest --watch) would hang until the timeout, and ANSI codes can
 # split the very summary lines the report parser reads. CI=1 is what the JS
 # ecosystem checks for "batch run, do not prompt"; stdin is closed so anything
-# that still asks a question fails instead of blocking.
+# that still asks a question fails instead of blocking. UV_NO_SYNC=1 stops a
+# `uv run` test command from syncing the project and writing a uv.lock into
+# the worktree, which would otherwise show up as an unrequested change.
 _RUN_ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "CI": "1",
@@ -44,6 +47,7 @@ _RUN_ENV = {
     "NPM_CONFIG_COLOR": "false",
     "PY_COLORS": "0",
     "TERM": "dumb",
+    "UV_NO_SYNC": "1",
 }
 # language-agnostic emptiness check: cheap pre-filter only — execution evidence
 # is the real gate, so this never has to know what an assertion looks like.
@@ -163,6 +167,18 @@ def run_tests(cfg: RunnerConfig, test_path: str) -> tuple[bool, str]:
     return _run(cfg, command, test_path)
 
 
+def focused_test_command(cfg: RunnerConfig, test_path: str, changed_files: list[str]) -> str:
+    """The ticket's test plus the existing tests that import a changed module.
+
+    A test command without a `{test_path}` placeholder (go, cargo) is returned
+    unchanged.
+    """
+    if "{test_path}" not in cfg.test_cmd:
+        return cfg.test_cmd
+    paths = list(dict.fromkeys([test_path, *related_tests(cfg.repo_dir, changed_files)]))
+    return cfg.test_cmd.format(test_path=" ".join(shlex.quote(p) for p in paths))
+
+
 def run_test_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
     """Run an already-formatted command (e.g. the full-suite regression gate)."""
     return _run(cfg, command)
@@ -271,7 +287,7 @@ def tester_step(
             description=ticket.description,
             test_assertion=ticket.test_assertion,
             files_hint=", ".join(ticket.files_hint) or "explore the repo",
-            rules=workspace_rules(cfg),
+            rules=workspace_rules(cfg, ticket=True),
             feedback=extra,
         )
         reply = client.run(prompt, role="builder.tester", session_name=f"tester-t{ticket.id}")
