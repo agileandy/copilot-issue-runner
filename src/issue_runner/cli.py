@@ -409,19 +409,22 @@ def _update_pr(args) -> int:
             )
             return 2
         cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
+    try:
+        info = resolve(repo_dir)
+    except TrackerError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if info.kind != "github":
+        print(
+            "error: --update-pr needs a GitHub repository (--repo or a github.com origin)",
+            file=sys.stderr,
+        )
+        return 2
     if not cfg.repo:
-        try:
-            info = resolve(repo_dir)
-        except TrackerError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
-        if info.kind != "github":
-            print(
-                "error: --update-pr needs a GitHub repository (--repo or a github.com origin)",
-                file=sys.stderr,
-            )
-            return 2
         cfg.repo = info.owner_repo
+    elif info.owner_repo.lower() != cfg.repo.lower():
+        print(f"error: --update-pr: origin is {info.owner_repo}, not {cfg.repo}", file=sys.stderr)
+        return 2
     try:
         with stop_signals(cfg):
             sha = update_pull_request(
