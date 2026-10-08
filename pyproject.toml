@@ -10,7 +10,7 @@ issue-runner = "issue_runner.cli:main"
 gh-runner = "issue_runner.cli:gh_main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff==0.16.5"]
 
 [build-system]
 requires = ["hatchling"]
