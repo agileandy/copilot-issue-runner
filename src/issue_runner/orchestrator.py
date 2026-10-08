@@ -26,7 +26,7 @@ from .demo.seed import is_seed
 from .events import emit, ticket_snapshot
 from .github_io import GithubError
 from .journal import Journal
-from .phases import acceptance, delivery, devops
+from .phases import acceptance, delivery, devops, prepr
 from .phases.build import (
     BuildError,
     CoderFailure,
@@ -433,6 +433,10 @@ def _run_issue(
                 or devops.current_branch(cfg.repo_dir) != store.branch
             ):
                 raise DevopsError("regression command changed the run branch; refusing publication")
+            if prepr.step(cfg, store, report):
+                _mirror_tickets(cfg, issue, store)
+                emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
+                continue
             if cfg.deploy:
                 if delivery.run(cfg, client, issue, store, report) == delivery.MORE_TICKETS:
                     # acceptance planned tickets for unmet criteria: build them, then resume
@@ -505,6 +509,14 @@ def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    findings = prepr.remaining(store)
+    if findings:
+        lines += ["", "### Remaining pre-PR findings"]
+        for finding in findings:
+            text_lines = prepr.finding_lines(finding)
+            first = text_lines[0] if text_lines else ""
+            lines.append(f"- `{finding['command']}`: {first}")
+            lines.extend(f"  {line}" for line in text_lines[1:])
     lines += ["", f"Branch `{report.branch}`, opened by issue-runner. Co-authored with AI."]
     return "\n".join(lines)
 

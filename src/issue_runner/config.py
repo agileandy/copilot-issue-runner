@@ -66,6 +66,14 @@ class DeployConfig:
     max_acceptance_rounds: int = 1
 
 
+@dataclass
+class PrePrConfig:
+    """The `[pre_pr]` table: checks run on the branch before the PR opens."""
+
+    commands: list[str] = field(default_factory=list)  # {base}: the commit the run branched from
+    max_rounds: int = 2
+
+
 _DEPLOY_INTS = (
     "review_timeout_min",
     "max_review_rounds",
@@ -118,6 +126,7 @@ class RunnerConfig:
     # the [deploy] settings; only used when `deploy` is set by --deploy
     deploy_settings: DeployConfig = field(default_factory=DeployConfig)
     deploy: bool = False
+    pre_pr: PrePrConfig = field(default_factory=PrePrConfig)
     preflight: object | None = None  # set by the CLI for --deploy; never from runner.toml
     control: RunControl = field(default_factory=RunControl, repr=False)
 
@@ -186,6 +195,8 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         )
     if "deploy" in data:
         cfg.deploy_settings = _load_deploy(data["deploy"])
+    if "pre_pr" in data:
+        cfg.pre_pr = _load_pre_pr(data["pre_pr"])
     return cfg
 
 
@@ -197,6 +208,19 @@ def _load_deploy(table) -> DeployConfig:
     if unknown:
         raise ConfigError(f"unknown [deploy] setting(s): {', '.join(unknown)}")
     return DeployConfig(**table)
+
+
+def _load_pre_pr(table) -> PrePrConfig:
+    if not isinstance(table, dict):
+        raise ConfigError("[pre_pr] must be a table")
+    known = set(PrePrConfig.__dataclass_fields__)
+    unknown = sorted(set(table) - known)
+    if unknown:
+        raise ConfigError(f"unknown [pre_pr] setting(s): {', '.join(unknown)}")
+    values = dict(table)
+    if isinstance(values.get("commands"), str):
+        values["commands"] = [values["commands"]]
+    return PrePrConfig(**values)
 
 
 def validate_config(cfg: RunnerConfig) -> None:
@@ -226,6 +250,7 @@ def validate_config(cfg: RunnerConfig) -> None:
         if type(getattr(cfg, name)) is not bool:
             raise ConfigError(f"{name} must be true or false")
     _validate_deploy(cfg.deploy_settings)
+    _validate_pre_pr(cfg.pre_pr)
 
 
 def _validate_deploy(d: DeployConfig) -> None:
@@ -251,3 +276,12 @@ def _validate_deploy(d: DeployConfig) -> None:
         raise ConfigError(f"[deploy] merge_method must be one of {', '.join(MERGE_METHODS)}")
     if type(d.dispatch_if_not_triggered) is not bool:
         raise ConfigError("[deploy] dispatch_if_not_triggered must be true or false")
+
+
+def _validate_pre_pr(p: PrePrConfig) -> None:
+    if type(p.max_rounds) is not int or p.max_rounds < 0:
+        raise ConfigError("[pre_pr] max_rounds must be a non-negative integer")
+    if not isinstance(p.commands, list) or not all(
+        isinstance(c, str) and c.strip() for c in p.commands
+    ):
+        raise ConfigError("[pre_pr] commands must be a list of non-empty commands")

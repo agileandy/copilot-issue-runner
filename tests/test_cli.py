@@ -1258,3 +1258,29 @@ def test_ticket_regression_reads_from_runner_toml(tmp_path):
         'test_cmd = "pytest -q"\nticket_regression = "focused"\n'
     )
     assert load_config(tmp_path).ticket_regression == "focused"
+
+
+def test_load_config_reads_pre_pr_table(tmp_path):
+    from issue_runner.config import PrePrConfig, load_config
+
+    (tmp_path / "runner.toml").write_text(
+        "[pre_pr]\ncommands = ['gh-code-quality --base {base}']\nmax_rounds = 3\n"
+    )
+    assert load_config(tmp_path).pre_pr == PrePrConfig(
+        commands=["gh-code-quality --base {base}"], max_rounds=3
+    )
+
+
+def test_load_config_defaults_pre_pr_when_the_table_is_absent(tmp_path):
+    from issue_runner.config import PrePrConfig, load_config
+
+    (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\n')
+    assert load_config(tmp_path).pre_pr == PrePrConfig(commands=[], max_rounds=2)
+
+
+def test_validate_config_rejects_a_negative_pre_pr_max_rounds(tmp_path):
+    from issue_runner.config import ConfigError, load_config, validate_config
+
+    (tmp_path / "runner.toml").write_text("[pre_pr]\nmax_rounds = -1\n")
+    with pytest.raises(ConfigError, match="pre_pr.*max_rounds"):
+        validate_config(load_config(tmp_path))

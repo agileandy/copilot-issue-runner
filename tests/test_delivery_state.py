@@ -178,3 +178,29 @@ def test_a_deploy_run_with_blocked_tickets_fails_the_tickets_gate(git_repo, cfg)
     )
     assert report.dod_failed_gate == "tickets"
     assert _exit_code(report) == 3
+
+
+def test_the_deploy_pr_body_lists_remaining_pre_pr_findings(tmp_path):
+    store = TicketStore(tmp_path, "7")
+    ticket = Ticket(id=1, title="t", description="d", test_assertion="a")
+    ticket.status = "done"
+    store.tickets = [ticket]
+    store.pre_pr_rounds = [
+        {"round": 1, "findings": [{"command": "gh-code-quality", "text": "py/unused-import at a.py:3"}]}
+    ]
+    body = delivery.pr_body(ISSUE, store)
+    assert "### Remaining pre-PR findings" in body and (
+        "`gh-code-quality`: py/unused-import at a.py:3" in body
+    )
+
+
+def test_the_deploy_pr_body_lists_every_line_of_a_remaining_pre_pr_finding(tmp_path):
+    store = TicketStore(tmp_path, "7")
+    ticket = Ticket(id=1, title="t", description="d", test_assertion="a")
+    ticket.status = "done"
+    store.tickets = [ticket]
+    store.pre_pr_rounds = [
+        {"round": 1, "findings": [{"command": "gh-code-quality", "text": "a.py:1 x\nb.py:2 y\nc.py:3 z"}]}
+    ]
+    body = delivery.pr_body(ISSUE, store)
+    assert all(line in body for line in ("a.py:1 x", "b.py:2 y", "c.py:3 z"))
