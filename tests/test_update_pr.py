@@ -52,3 +52,15 @@ def test_update_pr_branch_pushes_the_merge_of_base_to_the_pr_branch(pr_branch, c
         text=True,
     ).stdout.strip()
     assert subject == f"chore: merge origin/main into {BRANCH}"
+
+
+def test_update_pr_branch_does_not_push_a_merge_that_fails_the_regression_suite(pr_branch, cfg):
+    import dataclasses
+
+    failing = dataclasses.replace(cfg, regression_cmd='python3 -c "import sys; sys.exit(1)"')
+    before = _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip()
+
+    with pytest.raises(merge.MergeError):
+        merge.update_pr_branch(FakeClient([]), failing, BRANCH, "main")
+
+    assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before

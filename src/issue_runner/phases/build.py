@@ -54,6 +54,10 @@ class BuildError(RuntimeError):
     pass
 
 
+class NoTestsError(BuildError):
+    """The test command ran but executed no test case."""
+
+
 class CoderFailure(BuildError):
     """The coder exhausted its retries against the accepted test.
 
@@ -139,7 +143,8 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
         return True, output
     if report.status is Status.FAILED:
         return False, output
-    raise BuildError(
+    error = NoTestsError if report.status is Status.NO_TESTS else BuildError
+    raise error(
         f"no usable test result from `{command}`: {report.detail}\n"
         f"(exit {result.returncode})\n{output[-2000:]}"
     )

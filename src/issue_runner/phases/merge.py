@@ -107,6 +107,10 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     repo = cfg.repo_dir
     devops.fetch(repo)
     devops.merge_in(repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}")
+    problem = green_problem(cfg, [], allow_empty_suite=True)
+    if problem is not None:
+        devops.abort_merge(repo)
+        raise MergeError(f"could not merge origin/{base}: {problem}")
     sha = devops.finish_merge(repo, branch)
     devops.push_branch(repo, branch)
     return sha
