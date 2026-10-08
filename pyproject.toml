@@ -28,3 +28,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# the spec test imports the module under an alias it asserts against
+"tests/test_build_no_tests_error.py" = ["PLR0402"]
