@@ -323,3 +323,17 @@ def git_repo(repo):
     git("add", "-A")
     git("commit", "-m", "seed")
     return repo
+
+
+def test_merge_usage_keeps_distinct_models_in_first_seen_order():
+    from issue_runner.usage import merge_usage
+
+    two_models = merge_usage(
+        merge_usage(None, {"model_calls": 1, "models": ["a"]}),
+        {"model_calls": 1, "models": ["b"]},
+    )
+    same_model = merge_usage(
+        merge_usage(None, {"model_calls": 1, "models": ["a"]}),
+        {"model_calls": 1, "models": ["a"]},
+    )
+    assert (two_models.get("models"), same_model.get("models")) == (["a", "b"], ["a"])

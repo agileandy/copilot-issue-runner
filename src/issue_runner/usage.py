@@ -126,6 +126,8 @@ def merge_usage(total: dict | None, new: dict | None) -> dict | None:
     merged["costed_model_calls"] = merged.get("costed_model_calls", 0) + (
         new.get("costed_model_calls") or 0
     )
+    if "models" in merged or "models" in new:
+        merged["models"] = list(dict.fromkeys([*merged.get("models", []), *new.get("models", [])]))
     return merged
 
 
