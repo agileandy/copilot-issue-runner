@@ -781,7 +781,9 @@ def _process_ticket(
                     raise BuildError("workspace changed after verification; refusing approval")
                 try:
                     changed = devops.changed_paths(cfg.repo_dir)
-                    if devops.shared_changes(cfg.repo_dir, changed, ticket.test_path):
+                    if cfg.ticket_regression != "focused" and devops.shared_changes(
+                        cfg.repo_dir, changed, ticket.test_path
+                    ):
                         _regression_gate(cfg)
                     else:
                         _focused_gate(cfg, focused_test_command(cfg, ticket.test_path, changed))

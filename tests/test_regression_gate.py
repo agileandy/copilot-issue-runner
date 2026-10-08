@@ -137,3 +137,25 @@ def test_new_files_only_run_focused_tests_per_ticket_then_full_suite_once(tmp_pa
         cfg.test_cmd.format(test_path="tests/test_added.py"),
         cfg.regression_cmd,
     ]
+
+
+def test_focused_ticket_regression_runs_focused_tests_even_for_shared_changes(
+    tmp_path, monkeypatch
+):
+    _env, cfg, client = regression_scenario(tmp_path, break_existing=False)
+    cfg.ticket_regression = "focused"
+    real = orchestrator.run_test_command
+    commands = []
+
+    def recording(cfg_arg, command):
+        commands.append(command)
+        return real(cfg_arg, command)
+
+    monkeypatch.setattr("issue_runner.orchestrator.run_test_command", recording)
+
+    run_issue(cfg, client, ISSUE)
+
+    assert commands == [
+        cfg.test_cmd.format(test_path="tests/test_added.py tests/test_existing.py"),
+        cfg.regression_cmd,
+    ]
