@@ -28,3 +28,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# the nested pytest.raises keeps the outer lock's entry outside the expected failure
+"tests/test_devops.py" = ["SIM117"]

@@ -156,6 +156,64 @@ def test_worktree_state_reports_untracked_file(git_repo):
     }
 
 
+def test_untracked_uv_lock_stays_out_of_the_ticket_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "real.py").write_text("x = 1")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["real.py"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_review_fix_commit(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "seed.txt").write_text("seed changed")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "other.txt").write_text("other")
+    git("add", "other.txt")
+    git("commit", "-m", "other")
+    git("checkout", "feature/151-x")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["other.txt"]
+
+
+def test_uv_lock_tracked_by_merged_ref_stays_in_the_branch_update_merge_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/151-x")
+    git("checkout", "main")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    (git_repo / "feature.txt").write_text("feature")
+    git("add", "uv.lock", "feature.txt")
+    git("commit", "-m", "add uv.lock and feature")
+    git("checkout", "feature/151-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["feature.txt", "uv.lock"]
+
+
 def test_shared_changes_reports_only_committed_source_with_other_tests(git_repo):
     from issue_runner.phases.devops import shared_changes
 
@@ -197,3 +255,136 @@ def test_shared_changes_treats_existing_non_python_source_as_shared(git_repo):
     shared = shared_changes(git_repo, ["app.js", "tests/test_added.py"], "tests/test_added.py")
 
     assert shared == ["app.js"]
+
+
+def test_branch_lock_is_shared_by_every_worktree_of_a_repository(tmp_path):
+    from contextlib import ExitStack
+
+    from issue_runner.phases import devops
+    from tests.hardening_support import git, sandbox
+
+    env, _ = sandbox(tmp_path)
+    linked = tmp_path / "linked"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-linked", str(linked))
+    branch = "feature/17-add-statistics"
+    with devops.branch_lock(env.repo_dir, branch), ExitStack() as stack:
+        with pytest.raises(DevopsError, match=f"another issue-runner owns this branch {branch}"):
+            stack.enter_context(devops.branch_lock(linked, branch))
+
+
+def test_ensure_excluded_keeps_every_pattern_when_worktrees_race(tmp_path, monkeypatch):
+    import pathlib
+    import threading
+
+    from issue_runner.phases import devops
+    from tests.hardening_support import git, sandbox
+
+    env, _ = sandbox(tmp_path)
+    worktree_a = tmp_path / "a"
+    worktree_b = tmp_path / "b"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-a", str(worktree_a))
+    git(env.repo_dir, "worktree", "add", "-b", "wt-b", str(worktree_b))
+    exclude = devops.git_common_dir(env.repo_dir) / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    if not exclude.exists():
+        exclude.write_text("")
+
+    barrier = threading.Barrier(2, timeout=1)
+    original_read_text = pathlib.Path.read_text
+
+    def racing_read_text(self, *args, **kwargs):
+        existing = original_read_text(self, *args, **kwargs)
+        if self.name == "exclude":
+            # Wait after reading: without the lock both threads then write from the same snapshot.
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                # With the lock the other thread is kept out, so the wait times out.
+                pass
+        return existing
+
+    monkeypatch.setattr(pathlib.Path, "read_text", racing_read_text)
+    threads = [
+        threading.Thread(target=devops.ensure_excluded, args=(worktree_a, "/.issue-runner-a/")),
+        threading.Thread(target=devops.ensure_excluded, args=(worktree_b, "/.issue-runner-b/")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    monkeypatch.undo()
+
+    lines = exclude.read_text().splitlines()
+    assert {"/.issue-runner-a/", "/.issue-runner-b/"} <= set(lines)
+
+
+def test_commit_ticket_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    subprocess.run(["git", "rm", "-q", "seed.txt"], cwd=git_repo, check=True, capture_output=True)
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
+def test_commit_ticket_commits_an_unstaged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    (git_repo / "seed.txt").unlink()
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
+
+
+def test_commit_changes_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    git("add", "uv.lock")
+    git("commit", "-m", "add uv.lock")
+    create_branch(git_repo, "feature/150-x")
+    git("rm", "-q", "uv.lock")
+    (git_repo / "seed.txt").write_text("seed changed")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
+
+
+def test_commit_changes_commits_an_unstaged_deletion(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    git("add", "uv.lock")
+    git("commit", "-m", "add uv.lock")
+    create_branch(git_repo, "feature/150-x")
+    (git_repo / "uv.lock").unlink()
+    (git_repo / "seed.txt").write_text("seed changed")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt", "uv.lock"]
+
+
+def test_finish_merge_commits_a_deletion_from_the_merged_ref(git_repo):
+    from issue_runner.phases.devops import files_in_commit, finish_merge, merge_in
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    create_branch(git_repo, "feature/150-x")
+    git("checkout", "main")
+    git("rm", "-q", "seed.txt")
+    git("commit", "-m", "remove seed")
+    git("checkout", "feature/150-x")
+    merge_in(git_repo, "main", "merge main")
+    sha = finish_merge(git_repo, "feature/150-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]

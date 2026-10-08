@@ -113,8 +113,12 @@ def git_common_dir(repo_dir: Path) -> Path:
     return Path(raw).resolve()
 
 
+def git_dir(repo_dir: Path) -> Path:
+    return Path(_git(repo_dir, "rev-parse", "--absolute-git-dir").stdout.strip()).resolve()
+
+
 @contextmanager
-def _file_lock(path: Path):
+def _file_lock(path: Path, owner: str = "repository", *, blocking: bool = False):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         stream = path.open("a+b")
@@ -125,7 +129,9 @@ def _file_lock(path: Path):
             if os.name == "posix":
                 import fcntl
 
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(
+                    stream.fileno(), fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
             else:
                 import msvcrt
 
@@ -134,9 +140,10 @@ def _file_lock(path: Path):
                     stream.write(b"\0")
                     stream.flush()
                 stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+                msvcrt.locking(stream.fileno(), mode, 1)
         except OSError as e:
-            raise DevopsError(f"another issue-runner owns this repository ({path})") from e
+            raise DevopsError(f"another issue-runner owns this {owner} ({path})") from e
         try:
             yield
         finally:
@@ -148,11 +155,19 @@ def _file_lock(path: Path):
 
 
 def repository_lock(repo_dir: Path):
-    return _file_lock(git_common_dir(repo_dir) / "issue-runner.lock")
+    return _file_lock(git_dir(repo_dir) / "issue-runner.lock")
+
+
+def branch_lock(repo_dir: Path, branch: str):
+    # Hash the name so slashes stay out of the path. The common dir is shared by every worktree.
+    name = hashlib.sha256(branch.encode()).hexdigest()[:32] + ".lock"
+    return _file_lock(
+        git_common_dir(repo_dir) / "issue-runner-branches" / name, owner=f"branch {branch}"
+    )
 
 
 def state_lock(state_dir: Path):
-    return _file_lock(state_dir / "run.lock")
+    return _file_lock(state_dir / "run.lock", owner="state directory")
 
 
 def workspace_digest(repo_dir: Path, *, include_index: bool = True) -> str:
@@ -194,7 +209,30 @@ def _validate_paths(repo_dir: Path, paths: list[str]) -> None:
             raise DevopsError(f"ticket path escapes the workspace: {name}")
 
 
+TOOL_BYPRODUCTS = ("uv.lock",)
+
+
+def incidental_paths(repo_dir: Path, paths: list[str], wanted=()) -> list[str]:
+    """Tool byproducts that HEAD does not track and the ticket did not ask for."""
+    incidental = []
+    for name in paths:
+        if Path(name).name not in TOOL_BYPRODUCTS or name in wanted:
+            continue
+        tracked = subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{name}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            incidental.append(name)
+    return incidental
+
+
 def approve_changes(repo_dir: Path, ticket: Ticket) -> None:
+    incidental = incidental_paths(repo_dir, changed_paths(repo_dir), wanted=ticket.files_hint)
+    if incidental:
+        discard_paths(repo_dir, incidental)
     ticket.changed_files = changed_paths(repo_dir)
     _validate_paths(repo_dir, ticket.changed_files)
     ticket.approved_digest = workspace_digest(repo_dir, include_index=False)
@@ -359,10 +397,14 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     if branch != expected_branch or not is_run_branch(branch):
         raise DevopsError(f"refusing to commit on {branch} — the run must be on {expected_branch}")
     paths = changed_paths(repo_dir)
+    incidental = incidental_paths(repo_dir, paths)
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     if not paths:
         raise DevopsError("nothing to commit")
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "-m", message)
     require_clean(repo_dir)
     return head_commit(repo_dir)
@@ -435,8 +477,17 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
     if not merge_in_progress(repo_dir):
         raise DevopsError("no merge is in progress")
     paths = changed_paths(repo_dir)
+    merged = (
+        _git(repo_dir, "ls-tree", "-r", "-z", "--name-only", "MERGE_HEAD", "--", *paths).stdout
+        if paths
+        else ""
+    )
+    incidental = incidental_paths(repo_dir, paths, wanted={p for p in merged.split("\0") if p})
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "--no-edit")
     require_clean(repo_dir)
     return head_commit(repo_dir)
@@ -485,10 +536,24 @@ def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     exclude = Path(raw)
     if not exclude.is_absolute():
         exclude = Path(repo_dir) / exclude
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text() if exclude.exists() else ""
-    if pattern not in existing.splitlines():
-        exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
+    lock = git_common_dir(repo_dir) / "issue-runner-exclude.lock"
+    with _file_lock(lock, owner="exclude file", blocking=True):
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text() if exclude.exists() else ""
+        if pattern not in existing.splitlines():
+            exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
+
+
+def _stage_paths(repo_dir: Path, paths, env=None) -> None:
+    """Stage paths, skipping those whose deletion is already staged."""
+    if not paths:
+        return
+    indexed = set(
+        filter(None, _git(repo_dir, "ls-files", "-z", "--cached", "--", *paths, env=env).stdout.split("\0"))
+    )
+    kept = [p for p in paths if p in indexed or os.path.lexists(Path(repo_dir) / p)]
+    if kept:
+        _git(repo_dir, "add", "-A", "--", *kept, env=env)
 
 
 def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = None) -> str:
@@ -507,8 +572,7 @@ def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = 
     ):
         raise DevopsError("the index changed outside the approved commit step")
     _validate_paths(repo_dir, ticket.changed_files)
-    if ticket.changed_files:
-        _git(repo_dir, "add", "--", *ticket.changed_files)
+    _stage_paths(repo_dir, ticket.changed_files)
     staged_paths = _git(repo_dir, "diff", "--cached", "--name-only", "--no-renames", "-z").stdout
     if set(filter(None, staged_paths.split("\0"))) != set(ticket.changed_files):
         raise DevopsError("the staged change set does not match the approved ticket")
