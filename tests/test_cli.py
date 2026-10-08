@@ -1271,6 +1271,13 @@ def test_load_config_reads_pre_pr_table(tmp_path):
     )
 
 
+def test_load_config_defaults_pre_pr_when_the_table_is_absent(tmp_path):
+    from issue_runner.config import PrePrConfig, load_config
+
+    (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\n')
+    assert load_config(tmp_path).pre_pr == PrePrConfig(commands=[], max_rounds=2)
+
+
 def test_validate_config_rejects_a_negative_pre_pr_max_rounds(tmp_path):
     from issue_runner.config import ConfigError, load_config, validate_config
 

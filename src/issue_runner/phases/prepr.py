@@ -29,15 +29,14 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
                 check=False,
             )
         except (OSError, ValueError, subprocess.TimeoutExpired) as e:
-            findings.append({"command": cmd, "text": str(e)})
-            result = None
+            raise devops.DevopsError(f"pre-PR command {cmd} could not run: {e}") from e
         if guarded:
             changed = devops.changed_paths(cfg.repo_dir)
             if changed:
                 raise devops.DevopsError(
                     f"pre-PR command {cmd} changed the run worktree: {', '.join(changed)}"
                 )
-        if result is None or result.returncode == 0:
+        if result.returncode == 0:
             continue
         text = strip_ansi((result.stdout or "") + (result.stderr or "")).strip()
         findings.append({"command": cmd, "text": text[-MAX_FINDING_CHARS:]})

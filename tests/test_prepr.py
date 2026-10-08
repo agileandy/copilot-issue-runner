@@ -40,3 +40,16 @@ def test_run_checks_refuses_when_command_changes_worktree(tmp_path):
 
     with pytest.raises(DevopsError, match=r"pre-PR command.*stray\.txt"):
         run_checks(cfg, "base")
+
+
+def test_run_checks_refuses_when_command_cannot_start(tmp_path):
+    import pytest
+
+    from issue_runner.phases.devops import DevopsError
+    from issue_runner.phases.prepr import run_checks
+
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cfg.pre_pr.commands = ["/nonexistent-pre-pr-tool-xyz --base {base}"]
+
+    with pytest.raises(DevopsError, match=r"pre-PR command.*could not run"):
+        run_checks(cfg, "abc")
