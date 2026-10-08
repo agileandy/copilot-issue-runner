@@ -272,6 +272,25 @@ def test_update_pull_request_refuses_a_closed_pr_before_creating_a_worktree(
     assert (git_repo / ".state" / "worktrees" / f"pr-{number}").exists() is False
 
 
+def test_update_pull_request_refuses_a_fork_pr_before_creating_a_worktree(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    fake.pulls[number]["head"]["repo"] = {"full_name": "fork/n"}
+
+    with pytest.raises(merge.MergeError, match="fork/n"):
+        update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+    assert (git_repo / ".state" / "worktrees" / f"pr-{number}").exists() is False
+
+
 def test_update_pull_request_runs_the_conflict_resolver_inside_the_pr_worktree(
     conflicting_pr_branch, git_repo, cfg  # noqa: F811
 ):

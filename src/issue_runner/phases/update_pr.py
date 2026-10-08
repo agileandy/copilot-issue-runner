@@ -16,6 +16,13 @@ def update_pull_request(cfg: RunnerConfig, client, flow, number: int, state_dir:
     if pr.get("state") != "open" or pr.get("merged"):
         state = "merged" if pr.get("merged") else pr.get("state")
         raise MergeError(f"PR #{number} is {state}")
+    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
+    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name")
+    if not head_repo or head_repo.lower() != (base_repo or "").lower():
+        raise MergeError(
+            f"PR #{number} comes from {head_repo or 'a deleted repository'}, not {base_repo}; "
+            "only same-repository PRs can be updated"
+        )
     branch = pr["head"]["ref"]
     base = pr["base"]["ref"]
     wt = devops.checkout_branch_worktree(
