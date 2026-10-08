@@ -11,6 +11,7 @@ import { helpText } from "./help"
 import {
   applyEvent,
   artefactLines,
+  gateLines,
   initialState,
   metricsLines,
   pipelineChips,
@@ -366,6 +367,9 @@ export function createApp(renderer: CliRenderer): App {
     }
     if (label === "tickets") color = summary.blocked ? theme.bad : theme.ok
     if (label === "state") color = rest.startsWith("dirty") ? theme.warn : theme.ok
+    if (label === "gate") {
+      color = rest.endsWith(" pass") ? theme.ok : rest.endsWith(" FAILED") ? theme.bad : theme.dim
+    }
     return t`  ${fg(theme.dim)(label)} ${fg(color)(rest)}`
   }
 
@@ -378,7 +382,9 @@ export function createApp(renderer: CliRenderer): App {
     summaryOutcomeText.content = t`${bold(fg(tone)(`${glyph} run finished — ${outcome.text}`))}`
     summarySubtitle.content = t`${fg(theme.dim)(`${state.issueRef} ${state.issue}`.trim())}`
     const why = whyLines(summary)
+    const gates = gateLines(summary)
     const sections: [string, string[]][] = [
+      ...(gates.length ? [["definition of done", gates] as [string, string[]]] : []),
       ...(why.length ? [["why it stopped", why] as [string, string[]]] : []),
       ["run metrics", metricsLines(state)],
       ["artefacts", artefactLines(summary)],

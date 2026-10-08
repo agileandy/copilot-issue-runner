@@ -66,6 +66,11 @@ export interface Summary {
   stateDir: string
   blockedTickets: BlockedTicket[]
   notes: string[]
+  /** --deploy runs only: the Definition of Done and each of its gates */
+  deploy?: boolean
+  dodMet?: boolean
+  dodFailedGate?: string
+  gates?: Record<string, string | null>
 }
 
 export interface ViewState {
@@ -83,9 +88,31 @@ export interface ViewState {
   callStartedAt: number | null
   /** epoch ms the run started; shifted by a replayed stats snapshot */
   startedAt: number
+  /** a --deploy run, which shows its delivery stages in the pipeline */
+  deploy: boolean
 }
 
 export const PHASES = ["plan", "branch", "build", "finished"] as const
+
+/** The --deploy delivery stages, as the pipeline groups them. */
+export const DEPLOY_PHASES = ["criteria", "pr", "review", "merge", "deploy", "verify"] as const
+const DEPLOY_STAGE_CHIP: Record<string, string> = {
+  built: "criteria",
+  dev_checks: "criteria",
+  accepted: "pr",
+  reviewing: "review",
+  revising: "review",
+  merging: "merge",
+  deploying: "deploy",
+  verifying: "verify",
+}
+
+/** The Definition of Done gates, in the order a --deploy run decides them. */
+export const DOD_GATES = ["tickets", "criteria_tests", "review", "merge", "deploy", "criteria_dev"]
+
+export function phasesFor(state: ViewState): string[] {
+  return state.deploy ? ["plan", "branch", "build", ...DEPLOY_PHASES, "finished"] : [...PHASES]
+}
 
 /** Appended to the output pane by the event fold, not by the renderer. */
 export interface Applied {
@@ -107,6 +134,7 @@ export function initialState(now: number = Date.now()): ViewState {
     currentRole: null,
     callStartedAt: null,
     startedAt: now,
+    deploy: false,
   }
 }
 
@@ -174,6 +202,7 @@ export function applyEvent(
       break
     case "phase":
       state.phase = String(p.name ?? state.phase)
+      if (state.phase in DEPLOY_STAGE_CHIP) state.deploy = true
       boardChanged = true
       break
     case "stop_requested":
@@ -241,7 +270,12 @@ export function applyEvent(
         stateDir: String(p.state_dir ?? ""),
         blockedTickets: foldBlockedTickets(p.blocked_tickets),
         notes: ((p.notes ?? []) as unknown[]).map(String),
+        deploy: Boolean(p.deploy),
+        dodMet: Boolean(p.dod_met),
+        dodFailedGate: String(p.dod_failed_gate ?? ""),
+        gates: (p.gates ?? {}) as Record<string, string | null>,
       }
+      if (p.deploy) state.deploy = true
       boardChanged = true
       break
     case "stats_snapshot":
@@ -278,8 +312,9 @@ export interface Chip {
 
 export function pipelineChips(state: ViewState): Chip[] {
   let reached = true
-  return PHASES.map((phase) => {
-    if (phase === state.phase) {
+  const current = DEPLOY_STAGE_CHIP[state.phase] ?? state.phase
+  return phasesFor(state).map((phase) => {
+    if (phase === current) {
       reached = false
       return { label: phase, state: "current" as const }
     }
@@ -313,6 +348,11 @@ export function summaryOutcome(summary: SummaryCore): { text: string; tone: "ok"
   if (summary.stopped) return { text: "stopped by user; work saved", tone: "plain" }
   if (summary.budgetExhausted) return { text: "stopped: credit budget exhausted", tone: "bad" }
   if (summary.planOnly) return { text: "plan ready (no tickets executed)", tone: "plain" }
+  if (summary.deploy) {
+    return summary.dodMet
+      ? { text: "definition of done met", tone: "ok" }
+      : { text: `definition of done FAILED at ${summary.dodFailedGate || "tickets"}`, tone: "bad" }
+  }
   if (summary.blocked) return { text: `${summary.blocked} blocked`, tone: "bad" }
   return { text: "all tickets done", tone: "ok" }
 }
@@ -348,12 +388,19 @@ export function metricsLines(state: ViewState, now: number = Date.now()): string
   return [
     `outcome ${summaryOutcome(state.summary).text}`,
     `duration ${formatClock((now - state.startedAt) / 1000)}`,
-    `phases ${PHASES.join(" → ")}`,
+    `phases ${phasesFor(state).join(" → ")}`,
     `tickets done ${state.summary.done} · blocked ${state.summary.blocked}`,
     `model calls ${s.calls}`,
     `tokens in ${s.inputTokens.toLocaleString("en-US")} / out ${s.outputTokens.toLocaleString("en-US")}`,
     s.nanoAiu !== null ? `credits ${formatAiu(s.nanoAiu)}` : "credits unknown",
   ]
+}
+
+/** Each Definition of Done gate of a --deploy run and its result. */
+export function gateLines(summary: Summary): string[] {
+  if (!summary.deploy) return []
+  const shown: Record<string, string> = { pass: "pass", fail: "FAILED" }
+  return DOD_GATES.map((gate) => `gate ${gate} ${shown[summary.gates?.[gate] ?? ""] ?? "not reached"}`)
 }
 
 /** What the run produced: branch, pull request, commits and changed files. */
@@ -384,7 +431,9 @@ export function summaryReport(state: ViewState, now: number = Date.now()): strin
   const summary = state.summary
   if (!summary) return ""
   const why = whyLines(summary)
+  const gates = gateLines(summary)
   const sections: string[][] = [
+    ...(gates.length ? [["## definition of done", ...gates]] : []),
     ...(why.length ? [["## why it stopped", ...why]] : []),
     ["## run metrics", ...metricsLines(state, now)],
     ["## artefacts", ...artefactLines(summary)],

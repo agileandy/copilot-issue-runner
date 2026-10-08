@@ -90,6 +90,21 @@ CHECKER_SRC = textwrap.dedent("""\
 """)
 
 
+@pytest.fixture(autouse=True)
+def no_real_github(monkeypatch):
+    """A --deploy delivery never reaches the real GitHub from a test.
+
+    Tests that script GitHub install their own FakeGitHub over this one.
+    """
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases import delivery
+    from tests.fake_github import FakeGitHub
+
+    fake = FakeGitHub()
+    monkeypatch.setattr(delivery, "make_flow", lambda cfg: GitHubFlow(fake.repo, run=fake))
+    return fake
+
+
 @pytest.fixture
 def repo(tmp_path):
     (tmp_path / "checker.py").write_text(CHECKER_SRC)

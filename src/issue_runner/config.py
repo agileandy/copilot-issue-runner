@@ -15,7 +15,16 @@ from pathlib import Path
 from .control import RunControl
 from .testcmd import DEFAULT_TEST_CMD, detect_test_cmd
 
-ROLES = ("planner", "builder.tester", "builder.coder", "verifier")
+ROLES = (
+    "planner",
+    "builder.tester",
+    "builder.coder",
+    "verifier",
+    "acceptor",
+    "acceptance.tester",
+    "reviser",
+    "resolver",
+)
 
 log = logging.getLogger("issue_runner")
 
@@ -28,6 +37,54 @@ class ConfigError(ValueError):
 class RoleConfig:
     model: str | None = None
     effort: str | None = None
+
+
+MERGE_METHODS = ("auto", "squash", "merge", "rebase")
+
+
+@dataclass
+class DeployConfig:
+    """The `[deploy]` table: how a --deploy run reviews, merges and watches Dev."""
+
+    review_bot: str = "copilot-pull-request-reviewer"
+    pr_title: str = "feat: {title}"  # under squash merge this becomes the commit subject
+    review_timeout_min: int = 30
+    max_review_rounds: int = 3
+    merge_method: str = "auto"
+    max_merge_attempts: int = 3
+    workflow: str = "dev-deployment.yaml"
+    environment: str = "development"
+    deploy_start_grace_min: int = 10
+    deploy_timeout_min: int = 60
+    dispatch_if_not_triggered: bool = False
+    dev_url: str = ""
+    dev_check_cmd: str = ""  # runs one Dev check: {check_path}, {dev_url}, {criterion}
+    dev_check_ext: str = ".sh"  # file extension of a written check
+    dev_check_guide: str = ""  # how checks are written for this repository
+    dev_check_timeout_sec: int = 300
+    poll_seconds: int = 30
+    max_acceptance_rounds: int = 1
+
+
+_DEPLOY_INTS = (
+    "review_timeout_min",
+    "max_review_rounds",
+    "max_merge_attempts",
+    "deploy_start_grace_min",
+    "deploy_timeout_min",
+    "poll_seconds",
+    "dev_check_timeout_sec",
+)
+_DEPLOY_STRS = (
+    "review_bot",
+    "pr_title",
+    "workflow",
+    "environment",
+    "dev_url",
+    "dev_check_cmd",
+    "dev_check_ext",
+    "dev_check_guide",
+)
 
 
 @dataclass
@@ -57,6 +114,10 @@ class RunnerConfig:
     tickets_backend: object | None = None  # set by the CLI, never from runner.toml
     events: object | None = None  # EventBus, set by the CLI; never from runner.toml
     retry_blocked: bool = False
+    # the [deploy] settings; only used when `deploy` is set by --deploy
+    deploy_settings: DeployConfig = field(default_factory=DeployConfig)
+    deploy: bool = False
+    preflight: object | None = None  # set by the CLI for --deploy; never from runner.toml
     control: RunControl = field(default_factory=RunControl, repr=False)
 
     def role(self, name: str) -> RoleConfig:
@@ -121,7 +182,19 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         cfg.roles[role_name] = RoleConfig(
             model=role_data.get("model"), effort=role_data.get("effort")
         )
+    if "deploy" in data:
+        cfg.deploy_settings = _load_deploy(data["deploy"])
     return cfg
+
+
+def _load_deploy(table) -> DeployConfig:
+    if not isinstance(table, dict):
+        raise ConfigError("[deploy] must be a table")
+    known = set(DeployConfig.__dataclass_fields__)
+    unknown = sorted(set(table) - known)
+    if unknown:
+        raise ConfigError(f"unknown [deploy] setting(s): {', '.join(unknown)}")
+    return DeployConfig(**table)
 
 
 def validate_config(cfg: RunnerConfig) -> None:
@@ -148,3 +221,29 @@ def validate_config(cfg: RunnerConfig) -> None:
     for name in ("isolate_worktree", "provision"):
         if type(getattr(cfg, name)) is not bool:
             raise ConfigError(f"{name} must be true or false")
+    _validate_deploy(cfg.deploy_settings)
+
+
+def _validate_deploy(d: DeployConfig) -> None:
+    for name in _DEPLOY_INTS:
+        value = getattr(d, name)
+        if type(value) is not int or value <= 0:
+            raise ConfigError(f"[deploy] {name} must be a positive integer")
+    if type(d.max_acceptance_rounds) is not int or d.max_acceptance_rounds < 0:
+        raise ConfigError("[deploy] max_acceptance_rounds must be a non-negative integer")
+    for name in _DEPLOY_STRS:
+        if not isinstance(getattr(d, name), str):
+            raise ConfigError(f"[deploy] {name} must be a string")
+    for name in ("review_bot", "workflow", "environment"):
+        if not getattr(d, name).strip():
+            raise ConfigError(f"[deploy] {name} must not be empty")
+    if not d.dev_check_ext.startswith(".") or "/" in d.dev_check_ext:
+        raise ConfigError("[deploy] dev_check_ext must be a file extension such as '.sh'")
+    try:
+        d.pr_title.format(title="t", number=1)
+    except (KeyError, IndexError, ValueError) as e:
+        raise ConfigError(f"[deploy] pr_title may use only {{title}} and {{number}}: {e}") from e
+    if d.merge_method not in MERGE_METHODS:
+        raise ConfigError(f"[deploy] merge_method must be one of {', '.join(MERGE_METHODS)}")
+    if type(d.dispatch_if_not_triggered) is not bool:
+        raise ConfigError("[deploy] dispatch_if_not_triggered must be true or false")

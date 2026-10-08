@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan: --deploy mode, issue to Dev with a strict Definition of Done</title>
+<style>
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #d8e2ef;
+  --accent: #2563eb;
+  --accent-2: #0f766e;
+  --danger: #b91c1c;
+  --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 32rem), var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+main {
+  width: min(1120px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0 5rem;
+}
+
+header, section, .phase {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow);
+  margin: 1.25rem 0;
+  padding: 1.5rem;
+}
+
+h1, h2, h3, h4 { line-height: 1.2; }
+h1 { font-size: clamp(2rem, 4vw, 3.5rem); margin: 0 0 1rem; }
+h2 { color: var(--accent); margin-top: 0; }
+h3 { margin-bottom: 0.5rem; }
+
+code, pre { font-family: var(--font-mono); }
+code { background: var(--surface-muted); border-radius: 0.35rem; padding: 0.1rem 0.3rem; }
+pre.code {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  overflow-x: auto;
+  padding: 1rem;
+}
+pre.code code { background: none; padding: 0; }
+
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid var(--border); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; }
+th { background: var(--surface-muted); }
+
+.meta dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+}
+
+.meta dt { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 0.75rem; }
+.meta dd { margin: 0; }
+
+figure.diagram {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.06), rgba(15, 118, 110, 0.06));
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  margin: 1.25rem 0;
+  padding: 1rem;
+}
+
+.mermaid,
+.mermaid-source-code {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 0.85rem;
+  color: var(--text);
+  overflow-x: auto;
+  padding: 1rem;
+  white-space: pre;
+}
+
+.mermaid-rendered {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  display: flex;
+  justify-content: center;
+  min-height: 220px;
+  overflow-x: auto;
+  padding: 1rem;
+}
+
+.mermaid-rendered svg {
+  height: auto;
+  max-width: 100%;
+}
+
+.mermaid[data-processed="true"] {
+  align-items: center;
+  border-style: solid;
+  display: flex;
+  justify-content: center;
+  white-space: normal;
+}
+
+.mermaid svg {
+  height: auto;
+  max-width: 100%;
+}
+
+.diagram-source summary {
+  color: var(--muted);
+  cursor: pointer;
+  margin-top: 0.75rem;
+}
+
+figcaption {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+.tag {
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.1rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.tag.existing { background: #dbeafe; color: #1d4ed8; }
+.tag.new { background: #ccfbf1; color: #0f766e; }
+.status { color: var(--accent-2); font-weight: 700; }
+.checklist { list-style: none; padding-left: 0; }
+.checklist li { margin: 0.45rem 0; }
+.fail { color: var(--danger); font-weight: 700; }
+.loop {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 0.85rem;
+  margin-top: 1rem;
+  padding: 1rem;
+}
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ===== HEADER + UPDATABLE METADATA ===== -->
+  <header>
+    <h1>Plan: <code>--deploy</code> mode, issue to Dev with a strict Definition of Done</h1>
+    <p>Extend the runner so one command takes an issue through acceptance criteria, Copilot code review, merge and the Dev deployment. The run succeeds only when every gate passes. Anything else is a failure with evidence.</p>
+    <details class="meta">
+      <summary>Metadata</summary>
+      <dl>
+        <dt>created</dt>      <dd>2026-10-05T16:54:25+08:00</dd>
+        <dt>modified</dt>     <dd>2026-10-05T16:54:25+08:00, 2026-10-06T09:11:22+08:00, 2026-10-06T10:05:00+08:00, 2026-10-06T10:50:00+08:00, 2026-10-06T11:30:00+08:00, 2026-10-06T13:10:00+08:00, 2026-10-06T14:20:00+08:00, 2026-10-06T15:30:00+08:00, 2026-10-06T16:40:00+08:00, 2026-10-06T17:30:00+08:00, 2026-10-06T18:10:00+08:00, 2026-10-07T09:20:00+08:00</dd>
+        <dt>commits</dt>      <dd>fdbdcb1 (branch feature/agent-mode, plan written against this head), 4070037 (base of feature/deploy-mode, PR #142 head), 5100c9d, dfbaea6 (Phase 1), 735879d (Phase 2), e9f141a (Phase 3), 83f57ef (Phase 4), 4cd085c (Phase 5), 4a89444 (Phase 6), adc6de9 (Phase 7), 702190f (Phase 8 part 1), example-org/example-sandbox 79c8fe6 (seed) and 2f92de0 (live run merge), 54d9f67 (live run record), example-org/example-sandbox 80827fe (live run 2 merge)</dd>
+        <dt>agent name</dt>        <dd>GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5), GitHub Copilot CLI (Claude Opus 5.5)</dd>
+        <dt>session id</dt>      <dd>90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d, 90d4a981-5127-43b2-9486-6eb7ca0e048d</dd>
+        <dt>back refs</dt>    <dd><code>.claude/plans/2026-08-30-issue-runner.md</code> (original runner plan), #110 and PR #129 (run summary, used as the acceptance-criteria gap example), example-org/example-app#101 and example-org/example-app#102 (first target repo, reference run), <code>--agent</code> mode commits 0018126 and fdbdcb1</dd>
+        <dt>forward refs</dt> <dd>example-org/example-sandbox (live proof repo, Phase 8), PR #142 (feature/agent-mode, the base this work is stacked on), PR #143 (this work, draft)</dd>
+      </dl>
+    </details>
+  </header>
+
+  <!-- Hero diagram -->
+  <figure class="diagram">
+    <pre class="mermaid" aria-label="Hero diagram">
+flowchart LR
+  issue([Issue]) --&gt; plan[Plan + criteria map]
+  plan --&gt; build[Build tickets]
+  build --&gt; accept1{Criteria met in tests}
+  accept1 --&gt; pr[Open PR]
+  pr --&gt; review{Review clean}
+  review -- findings --&gt; fix[Fix + push]
+  fix --&gt; review
+  review --&gt; merge[Merge]
+  merge --&gt; deploy{Dev deploy}
+  deploy --&gt; accept2{Criteria met in Dev}
+  accept2 --&gt; done([DoD met])
+  accept1 -. no .-&gt; fail([FAIL])
+  review -. rounds exhausted .-&gt; fail
+  deploy -. failed .-&gt; fail
+  accept2 -. no .-&gt; fail
+    </pre>
+    <figcaption>One command, six gates. Exit 0 only at "DoD met". Every other exit is a failure that records the gate it stopped at.</figcaption>
+  </figure>
+
+  <!-- ===== PURPOSE / PROBLEM / SOLUTION ===== -->
+  <section id="purpose">
+    <h2>Purpose</h2>
+    <p>Add a <code>--deploy</code> flag. Without it the runner behaves as today. With it, after the tickets are built the runner also:</p>
+    <ol>
+      <li>opens a pull request,</li>
+      <li>watches the code review and CI, and fixes what they raise,</li>
+      <li>merges the PR when the review passes, resolving any merge conflicts,</li>
+      <li>watches the Dev deployment that the merge triggers, until the work is live in Dev.</li>
+    </ol>
+    <p><strong>Definition of Done:</strong> the issue passes its acceptance criteria, the PR passes code review, the merge succeeds, and the Dev deployment succeeds. <span class="fail">Everything else is a fail.</span></p>
+  </section>
+
+  <section id="problem">
+    <h2>Problem</h2>
+    <p>Today a run finishes the moment it opens a pull request (<code>orchestrator._open_pull_request</code>). Four things are missing:</p>
+    <ul>
+      <li><strong>Acceptance criteria are never checked.</strong> The planner reads the issue once. Nothing maps criteria to tickets, and nothing checks the finished change against them. For #110 three criteria were only partly tested. example-org/example-app issues keep their criteria under <code>## Acceptance criteria</code> as checkboxes (15 of the last 22 issues), and many criteria can only be checked in Dev ("In Dev at 1920x1080 …").</li>
+      <li><strong>The review is ignored.</strong> The example-org/example-app ruleset "Copilot review for default branch" requests a Copilot review when a PR opens, with <code>review_on_push: false</code>. The runner never reads it, never fixes its findings and never asks for a re-review.</li>
+      <li><strong>Nobody merges.</strong> example-org/example-app allows squash merges only and needs 0 approvals. A merge is a single permitted step that the runner never takes.</li>
+      <li><strong>Nobody watches Dev.</strong> <code>dev-deployment.yaml</code> runs on a push to <code>main</code> (with a <code>paths</code> filter), deploys to environment <code>development</code> and records a GitHub deployment. Runs can be cancelled when a newer merge supersedes them (run 37261581216, <code>ea9e9377</code>).</li>
+    </ul>
+    <p>The PR body also says <code>Closes #n</code>, so GitHub closes the issue at merge, even if the deployment fails afterwards.</p>
+    <figure class="diagram">
+      <pre class="mermaid" aria-label="Problem diagram">
+flowchart LR
+  build[Tickets built] --&gt; pr[PR opened]
+  pr --&gt; stop([Run ends])
+  pr -.-&gt; gap1[Review unread]
+  pr -.-&gt; gap2[No merge]
+  gap2 -.-&gt; gap3[Dev unwatched]
+  build -.-&gt; gap4[Criteria unchecked]
+  classDef gap fill:#fee2e2,stroke:#b91c1c,color:#0f172a
+  class gap1,gap2,gap3,gap4 gap
+      </pre>
+      <figcaption>Today the run ends at "PR opened". The red steps happen by hand or not at all.</figcaption>
+    </figure>
+  </section>
+
+  <section id="solution">
+    <h2>Solution</h2>
+    <p>Add a <strong>delivery stage machine</strong> that runs after the ticket loop when <code>--deploy</code> is set. It reuses what the runner already does well: deterministic gates around every agent step, saved state for each stage so a stopped run resumes, and bounded rounds.</p>
+    <ul>
+      <li><strong>Criteria first.</strong> Parse the acceptance criteria into <code>AC1..ACn</code>. The planner must map every criterion to tickets (checked in tests) or to a Dev check (checked after deployment). Unmapped criteria reject the plan. Before the PR opens, a read-only acceptor agent judges every test-checked criterion against the whole change.</li>
+      <li><strong>Dev checks are written before merge and must fail first.</strong> For criteria checked in Dev, an <code>acceptance.tester</code> writes an executable check before the PR opens. Run against Dev now, it must fail, since Dev does not have the change yet. After the deployment it must pass. This is the tester's red-then-green rule applied to Dev.</li>
+      <li><strong>Review loop.</strong> Poll the PR. The review passes only when a fixed rule holds (Phase 4). Each finding goes to a <code>reviser</code> agent under the same guards as the coder: frozen ticket tests, a regression run, safe paths, no force-push. Then the runner replies to the thread, resolves it and requests a new Copilot review.</li>
+      <li><strong>Merge.</strong> If the PR is behind or conflicted, merge the base into the branch. A <code>resolver</code> agent fixes any conflicts. Conflict markers, ticket tests and the regression suite are checked in code. Every new head goes back through review. Merge with the repository's permitted method and <code>--match-head-commit</code>.</li>
+      <li><strong>Deploy watch.</strong> Find the deployment run for the merge commit and follow it. It succeeds only when a GitHub deployment to the configured environment reports <code>success</code> for a SHA that contains the merge commit. That covers runs that are superseded or cancelled.</li>
+      <li><strong>Close-out.</strong> Run the Dev checks. Tick each criterion that passed in the issue body. Close the issue only if every gate passed. The PR says <code>Refs #n</code> in deploy mode, so the merge alone never closes the issue.</li>
+    </ul>
+    <figure class="diagram">
+      <pre class="mermaid" aria-label="Solution diagram">
+stateDiagram-v2
+  [*] --&gt; built
+  built --&gt; accepted : criteria pass in tests
+  accepted --&gt; reviewing : PR opened
+  reviewing --&gt; revising : findings
+  revising --&gt; reviewing : pushed + re-requested
+  reviewing --&gt; merging : review passed
+  merging --&gt; reviewing : base merged, new head
+  merging --&gt; deploying : merged
+  deploying --&gt; verifying : deployed to Dev
+  verifying --&gt; done : Dev checks pass
+  done --&gt; [*]
+  built --&gt; failed
+  accepted --&gt; failed
+  reviewing --&gt; failed
+  merging --&gt; failed
+  deploying --&gt; failed
+  verifying --&gt; failed
+  failed --&gt; [*]
+      </pre>
+      <figcaption>Delivery stages are saved in the run state. A stopped or crashed run resumes at its saved stage. Every stage can fail, and a failure records its evidence.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== RELEVANT FILES ===== -->
+  <section id="files" class="files">
+    <h2>Relevant Files</h2>
+
+    <h3>Existing Files</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/cli.py</code>: adds <code>--deploy</code>, checks it against other flags (<code>--no-pr</code>, <code>--plan-only</code>, <code>--issue-file</code>, a Gitea origin), runs preflight, and maps delivery outcomes to the new exit codes.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/config.py</code>: adds a <code>[deploy]</code> table (review bot, timeouts, round limits, workflow, environment, Dev check command) to <code>RunnerConfig</code> with validation.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/orchestrator.py</code>: <code>_run_issue</code> hands over to the delivery stage machine after the regression gate. In deploy mode <code>_pr_body</code> uses <code>Refs #n</code> and lists the criteria.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/tickets.py</code>: <code>TicketStore</code> gains a <code>delivery</code> record and saves it as state version 3. <code>Ticket</code> gains <code>criteria: list[str]</code>.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/phases/plan.py</code>: the planner prompt receives the parsed criteria. <code>_validate</code> enforces coverage.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/phases/build.py</code>: reuses <code>run_tests</code>, <code>run_test_command</code> and the coder's frozen-test guard for the reviser and resolver.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/phases/devops.py</code>: adds <code>merge_base_into_branch</code>, <code>conflicted_paths</code>, <code>has_conflict_markers</code> and <code>is_ancestor</code>. Reuses <code>push_branch</code>, <code>workspace_digest</code> and <code>require_clean</code>.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/github_io.py</code>: the existing <code>gh</code> wrapper with an injectable <code>run</code>. New API calls follow the same pattern.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/journal.py</code>: records review findings, replies and resolver hand-backs on the ticket and issue threads.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/budget.py</code> and <code>control.py</code>: credit and stop checks between every poll and every agent call.</li>
+      <li><span class="tag existing">existing</span> <code>src/issue_runner/events.py</code>, <code>runsummary.py</code>, <code>apps/visual/src/model.ts</code>: new phases <code>pr → review → merge → deploy → verify</code> and a DoD gate table in the summary and the <code>--agent</code> comment.</li>
+      <li><span class="tag existing">existing</span> <code>README.md</code>, <code>runner.example.toml</code>: document deploy mode, config and exit codes.</li>
+    </ul>
+
+    <h3>New Files</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>src/issue_runner/criteria.py</code>: parses acceptance criteria from an issue body, assigns IDs, checks coverage and ticks issue checkboxes.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/github_flow.py</code>: typed reads and writes for the PR, reviews, review threads (GraphQL), check runs, re-review requests, merge, workflow runs, deployments and statuses. Fully injectable for tests.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/preflight.py</code>: the read-only preflight and a small reader for the workflow's <code>on:</code> block. The runner has no third-party dependencies, so it does not use a YAML library.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/delivery.py</code>: the stage machine (<code>accepted → reviewing → merging → deploying → verifying → done | failed</code>) and the DoD record.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/acceptance.py</code>: the pre-PR acceptor verdict and the Dev check writer and runner (red before merge, green after deploy).</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/review.py</code>: the review gate rule, the finding collector and the reviser step.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/merge.py</code>: base merge, the resolver step and the merge call.</li>
+      <li><span class="tag new">new</span> <code>src/issue_runner/phases/deploy.py</code>: run discovery, following superseded runs and the deployment success rule.</li>
+      <li><span class="tag new">new</span> <code>tests/fake_github.py</code>: an in-memory GitHub (PR, reviews, threads, checks, runs, deployments) driven by scenario scripts.</li>
+      <li><span class="tag new">new</span> <code>tests/test_criteria.py</code>, <code>tests/test_deploy_preflight.py</code>, <code>tests/test_delivery_state.py</code>, <code>tests/test_review_loop.py</code>, <code>tests/test_merge_step.py</code>, <code>tests/test_deploy_watch.py</code>, <code>tests/test_dev_acceptance.py</code>, <code>tests/test_deploy_e2e.py</code>: one suite per phase.</li>
+    </ul>
+  </section>
+
+  <!-- ===== IMPLEMENTATION PHASES ===== -->
+  <section id="phases">
+    <h2>Implementation Phases</h2>
+    <p><strong>IMPORTANT:</strong> Execute every phase and task step by step, in order, top to bottom.</p>
+    <p>Status markers: <code>[]</code> idle · <code>[wip]</code> in progress · <code>[x]</code> complete · <code>[f]</code> failed. All start as <code>[]</code>; the Build Plan workflow updates them as it works.</p>
+
+    <!-- Phase 1 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 1: Flag, config, preflight and delivery state</h3>
+      <p>Build the skeleton first: the flag, the config, a preflight that fails before any credit is spent, the saved stage machine and the fake GitHub every later phase tests against. No delivery behaviour yet. Every stage is a stub that fails with <code>not implemented</code>.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid" aria-label="Phase 1 diagram">
+flowchart LR
+  start([&quot;--deploy&quot;]) --&gt; flags{Flags valid}
+  flags -- no --&gt; exit2([exit 2])
+  flags --&gt; pre{Preflight}
+  pre -- no --&gt; exit2
+  pre --&gt; run[Plan and build]
+  run --&gt; machine[Delivery stages]
+        </pre>
+        <figcaption>Flag and preflight problems exit with code 2 before any model call. That saves credits on runs that could never finish.</figcaption>
+      </figure>
+
+      <h4>1. CLI flag and config</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Add <code>--deploy</code> ("take the issue through review, merge and the Dev deployment"). It implies <code>open_pr = true</code>.</li>
+        <li><code class="status">[x]</code> Reject <code>--deploy</code> with <code>--no-pr</code>, <code>--plan-only</code>, <code>--issue-file</code>, <code>--demo</code> and <code>--in-place</code>, and on a Gitea origin. Exit 2 with one line naming the conflict. Allow <code>--dry-run</code>, which prints the preflight result and exits.</li>
+        <li><code class="status">[x]</code> Add a <code>[deploy]</code> table to <code>RunnerConfig</code>, validated in <code>validate_config</code>:
+<pre class="code"><code>[deploy]
+review_bot = "copilot-pull-request-reviewer"   # login whose review counts
+review_timeout_min = 30      # max wait for a review on a new head
+max_review_rounds = 3        # reviser rounds before failing
+merge_method = "auto"        # auto | squash | merge | rebase
+max_merge_attempts = 3
+workflow = "dev-deployment.yaml"
+environment = "development"
+deploy_start_grace_min = 10  # wait for the run to appear
+deploy_timeout_min = 60
+dispatch_if_not_triggered = false
+dev_url = "https://dev.example.com"
+dev_check_cmd = ""           # runs one Dev check, see Phase 7
+poll_seconds = 30</code></pre></li>
+      </ul>
+
+      <h4>2. Preflight (no model calls)</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>gh auth status</code> works, and the token can write PRs and read Actions (a test call to <code>GET /repos/{r}</code> with <code>permissions.push == true</code>).</li>
+        <li><code class="status">[x]</code> Merge policy: read <code>allow_squash_merge</code>, <code>allow_merge_commit</code> and <code>allow_rebase_merge</code>. Resolve <code>merge_method = auto</code> to the single allowed method. If more than one is allowed, exit 2 and ask for <code>merge_method</code>.</li>
+        <li><code class="status">[x]</code> Review source: find an active ruleset with a <code>copilot_code_review</code> rule on the default branch, or fall back to requesting the reviewer through the API. Record <code>review_on_push</code>, which decides whether re-reviews must be requested.</li>
+        <li><code class="status">[x]</code> Branch protection: record <code>required_approving_review_count</code> and the required status checks. Treat a 404 as "unprotected".</li>
+        <li><code class="status">[x]</code> The deploy workflow exists, its <code>on.push.branches</code> includes the default branch, and the environment exists. Record the <code>on.push.paths</code> filter.</li>
+        <li><code class="status">[x]</code> The issue has at least one acceptance criterion (Phase 2 parser). Without one, exit 2: the DoD cannot be met.</li>
+      </ul>
+
+      <h4>3. Delivery state</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Add <code>TicketStore.delivery</code>, saved as state <code>version: 3</code>. Versions 1 and 2 still load with <code>delivery = None</code>.
+<pre class="code"><code>delivery = {
+  "stage": "accepted|reviewing|revising|merging|deploying|verifying|done|failed",
+  "failed_gate": None, "failed_reason": None,
+  "criteria": [{"id": "AC1", "text": "...", "where": "tests|dev",
+                "tickets": [1, 2], "pre_merge": None, "dev": None,
+                "evidence": []}],
+  "pr_number": None, "head_sha": None,
+  "review_round": 0, "handled_threads": [],
+  "merge_attempts": 0, "merge_sha": None,
+  "deploy_run_ids": [], "deployed_sha": None, "deployment_id": None,
+  "gates": {"tickets": None, "criteria_tests": None, "review": None,
+            "merge": None, "deploy": None, "criteria_dev": None},
+}</code></pre></li>
+        <li><code class="status">[x]</code> <code>phases/delivery.py</code> drives the stages from the saved <code>stage</code>, saves state after each step, and calls <code>cfg.control.check()</code> and the budget check between polls and agent calls.</li>
+        <li><code class="status">[x]</code> New exit codes: <code>5</code> criteria failed, <code>6</code> review failed, <code>7</code> merge failed, <code>8</code> deploy failed. <code>0</code> means every DoD gate passed. Existing codes 1, 2, 3, 4 and 130 are unchanged and also count as DoD failures.</li>
+        <li><code class="status">[x]</code> <code>tests/fake_github.py</code>: an in-memory model of the PR, reviews, review threads, check runs, workflow runs and deployments. Tests write scenarios such as <code>fake.after_push(review(comments=1))</code>. It plugs into <code>github_flow</code> through the same <code>run=</code> injection <code>github_io</code> already uses.</li>
+      </ul>
+
+      <h4>4. Testing Strategy</h4>
+      <p>Unit tests with the fake GitHub and the existing fake Copilot binary. Edge cases: each flag conflict, more than one merge method allowed, a missing ruleset, a missing workflow or environment, an issue without criteria, and loading v2 state.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_deploy_preflight.py tests/test_delivery_state.py -q</code>: preflight rejects every invalid setup with exit 2 and makes no model call. State round-trips and v2 state still loads.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_cli.py -q -k deploy</code>: the flag conflicts and the dry-run preflight output.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest -q</code>: nothing outside deploy mode changed.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 2 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 2: Acceptance criteria traceability</h3>
+      <p>Every criterion becomes an ID that the plan must cover. Before the PR opens, the runner proves that each criterion checked in tests has passing tests that a read-only agent agrees cover it.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid" aria-label="Phase 2 diagram">
+flowchart LR
+  body[Issue body] --&gt; parse[AC1..ACn]
+  parse --&gt; planner[Planner]
+  planner --&gt; cover{Every AC mapped}
+  cover -- no --&gt; retry[Replan, bounded]
+  cover --&gt; tickets[Tickets built]
+  tickets --&gt; acceptor{Acceptor verdict}
+  acceptor -- unmet --&gt; extra[Extra tickets, bounded]
+  extra --&gt; tickets
+  acceptor --&gt; ok([criteria_tests pass])
+        </pre>
+        <figcaption>Coverage is checked in code. Whether the tests really satisfy a criterion is judged by an agent, and its reply must cite real test IDs.</figcaption>
+      </figure>
+
+      <h4>1. Parse criteria</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>criteria.parse(body)</code>: find the first heading or bold line matching <code>acceptance criteria</code> (any case). Take each top-level list item until the next heading. Accept <code>- [ ]</code>, <code>- [x]</code>, <code>-</code>, <code>*</code> and numbered items. Keep the original line so it can be ticked later.</li>
+        <li><code class="status">[x]</code> Assign <code>AC1..ACn</code> in order. Mark a criterion <code>where = "dev"</code> when the planner says it can only be observed in a deployed environment. The parser stays neutral and the planner decides.</li>
+      </ul>
+
+      <h4>2. Planner maps criteria</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Add the criteria list to <code>PLAN_PROMPT</code>. The reply adds <code>"criteria": [{"id": "AC1", "where": "tests|dev"}]</code> and <code>"criteria": ["AC1"]</code> on each ticket.</li>
+        <li><code class="status">[x]</code> <code>_validate</code>: every <code>tests</code> criterion is named by at least one ticket. Every <code>dev</code> criterion is listed. No unknown IDs. Ticket <code>depends_on</code> IDs exist (this also closes the earlier gap R4). A failure is fed back to the planner on its existing retry.</li>
+      </ul>
+
+      <h4>3. Pre-PR acceptor</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> After the final regression gate, a read-only <code>acceptor</code> agent receives the issue, the criteria, the full diff against <code>initial_head</code> and the list of accepted test files. It replies with <code>{"criteria": [{"id", "verdict": "met|unmet", "tests": ["path::name"], "reason"}]}</code>.</li>
+        <li><code class="status">[x]</code> Checked in code: one verdict per <code>tests</code> criterion. Every cited test file is an accepted ticket test or an existing file. The cited tests pass when run with <code>test_cmd</code>. A <code>met</code> verdict that cites no test counts as <code>unmet</code>.</li>
+        <li><code class="status">[x]</code> For <code>unmet</code> criteria, ask the planner for extra tickets limited to those criteria (at most <code>max_acceptance_rounds</code>, default 1), build them and run the acceptor again. If any are still unmet, the <code>criteria_tests</code> gate fails with exit 5 and no PR opens.</li>
+      </ul>
+
+      <h4>4. Testing Strategy</h4>
+      <p>Parser tests use real issue bodies (example-org/example-app#101, #110), checkbox and plain lists, missing sections and nested lists. Planner and acceptor tests use canned fake-Copilot replies.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_criteria.py -q</code>: the parser takes exactly the 3 criteria from the #101 body and the 3 from #110, and ignores the "Required behaviour" list.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_plan_verify.py -q</code>: a plan missing a criterion, citing an unknown ID or naming an unknown dependency is rejected and retried.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k pre_pr</code>: an acceptor reply that cites a missing or failing test is treated as unmet. An unmet criterion triggers one extra-ticket round and then exit 5.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 3 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 3: Dev checks written before merge (red)</h3>
+      <p>Each <code>dev</code> criterion gets an executable check before the PR opens. The check must fail against Dev now. A check that already passes proves nothing about this change, the same rule the tester follows.</p>
+
+      <h4>1. Check writer</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> The <code>acceptance.tester</code> role writes one check per <code>dev</code> criterion to <code>&lt;state_dir&gt;/acceptance/&lt;issue&gt;/AC&lt;n&gt;.*</code>, outside the worktree so it is never committed. Its prompt names <code>dev_url</code> and the harness that <code>dev_check_cmd</code> runs.</li>
+        <li><code class="status">[x]</code> Run the check with <code>dev_check_cmd</code>, for example <code>"pw-win -s=accept run-code --filename {check_path}"</code>, with <code>{check_path}</code> and <code>{dev_url}</code> substituted. The command must print a final line <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL &lt;reason&gt;</code>. Only that last line is read; grepping the whole output gives false passes.</li>
+        <li><code class="status">[x]</code> Red rule: before the PR opens, every check must print <code>ACCEPT-FAIL</code>. A check that passes is rejected back to the writer with the output, bounded like <code>tester_retries</code>. Snapshot and hash each accepted check so it is frozen, as ticket tests are.</li>
+        <li><code class="status">[x]</code> If <code>dev_check_cmd</code> is empty while <code>dev</code> criteria exist, preflight fails with exit 2. A criterion that cannot be checked cannot meet the DoD.</li>
+      </ul>
+
+      <h4>2. Testing Strategy</h4>
+      <p>A stub <code>dev_check_cmd</code> script reads a fixture file that says whether "Dev" has the feature. That covers red and green without a real environment.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py -q -k red</code>: a check that passes before merge is rejected. A check edited after acceptance is detected by its hash. Only the last output line counts, so <code>ACCEPT-PASS</code> elsewhere in the output is ignored.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 4 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 4: PR, review watch and fix loop</h3>
+      <p>Open the PR, then poll until the review passes or the rounds run out. "Review passed" is a fixed rule over GitHub data, never an agent's opinion.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid" aria-label="Phase 4 diagram">
+sequenceDiagram
+  participant R as Runner
+  participant G as GitHub
+  participant C as Copilot review
+  participant V as Reviser
+  R-&gt;&gt;G: open PR (Refs #n)
+  G-&gt;&gt;C: ruleset requests review
+  loop until gate passes or rounds exhausted
+    R-&gt;&gt;G: poll checks, reviews, threads
+    G--&gt;&gt;R: findings on head
+    R-&gt;&gt;V: findings + guards
+    V--&gt;&gt;R: change
+    R-&gt;&gt;R: frozen tests + regression
+    R-&gt;&gt;G: push, reply, resolve
+    R-&gt;&gt;G: re-request review
+  end
+        </pre>
+        <figcaption>The runner owns every GitHub write. The reviser only edits files in the worktree, and each push passes the same gates as a ticket.</figcaption>
+      </figure>
+
+      <h4>1. Open the PR for delivery</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Push and open a ready (non-draft) PR. In deploy mode the body uses <code>Refs #n</code> rather than <code>Closes #n</code> and lists each criterion with its tickets. Under squash merge the title becomes the commit subject, so build it as a Conventional Commit (<code>feat: &lt;issue title&gt;</code>, or a <code>pr_title</code> template from config).</li>
+        <li><code class="status">[x]</code> Save <code>pr_number</code> and <code>head_sha</code>. On resume, find the existing PR for the branch and never open a second one.</li>
+      </ul>
+
+      <h4>2. Review gate rule</h4>
+      <pre class="code"><code>def review_passed(pr, head_sha, cfg) -&gt; bool:
+    checks = check_runs(head_sha)
+    if not checks or any(c.status != "completed" for c in checks):
+        return False                                  # still running
+    if any(c.conclusion not in ("success", "neutral", "skipped") for c in checks):
+        return False                                  # failing check = finding
+    bot = [r for r in reviews(pr) if r.author == cfg.review_bot]
+    if not bot or bot[-1].commit_id != head_sha:
+        return False                                  # no review on this head yet
+    if comments_in_review(bot[-1]) &gt; 0:
+        return False                                  # new findings on this head
+    if any(not t.is_resolved for t in review_threads(pr)):
+        return False                                  # older findings left open
+    latest_human = latest_review_per_human(pr)
+    if any(r.state == "CHANGES_REQUESTED" for r in latest_human):
+        return False
+    if approvals(pr) &lt; protection.required_approving_review_count:
+        return False                                  # wait for a person
+    return True</code></pre>
+
+      <h4>3. Collect findings and run the reviser</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Findings are the unresolved review threads (GraphQL <code>reviewThreads</code>: path, line, body, thread id) and failing checks (name and the tail of the log from <code>gh run view --log-failed</code>), plus any <code>CHANGES_REQUESTED</code> body.</li>
+        <li><code class="status">[x]</code> The <code>reviser</code> agent gets all current findings in one prompt and edits the worktree. Checked in code afterwards: no ticket test changed (hash), no Dev check changed, every ticket test passes, the regression gate passes, changed paths are safe, and HEAD and the branch are untouched by the agent.</li>
+        <li><code class="status">[x]</code> The reviser replies per thread with <code>fixed</code> or <code>not_applicable</code> and a reason. A read-only verifier must agree to each <code>not_applicable</code>. Without that agreement the thread stays a finding.</li>
+        <li><code class="status">[x]</code> The runner commits <code>fix(review): &lt;summary&gt;</code>, pushes (never with force), replies on each handled thread with the commit SHA or the agreed reason, resolves it, and saves its ID in <code>handled_threads</code>.</li>
+        <li><code class="status">[x]</code> When <code>review_on_push</code> is false, request a new review with <code>POST /pulls/{n}/requested_reviewers</code> and the bot reviewer. <code>gh</code> 2.46 has no <code>--add-reviewer @copilot</code>.</li>
+        <li><code class="status">[x]</code> Limits: <code>max_review_rounds</code>, and <code>review_timeout_min</code> per head without a review. Hitting either fails the <code>review</code> gate with exit 6. The PR stays open with a comment listing the open findings.</li>
+      </ul>
+
+      <h4>4. Testing Strategy</h4>
+      <p>Fake GitHub scenarios plus a local bare repo as <code>origin</code>, so pushes are real git operations.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_review_loop.py -q</code>: a clean first review passes at once. One finding is fixed, pushed, resolved and re-reviewed, then passes. A failing CI check is a finding. A reviser edit to a frozen test is rejected and restored. An unagreed <code>not_applicable</code> stays open. Exhausted rounds give exit 6. A review left on an old head does not count. Resume mid-loop does not repeat handled threads.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_delivery_pr.py -q</code>: deploy-mode body has <code>Refs #n</code> and the criteria table. Resume reuses the existing PR.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 5 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 5: Merge with conflict resolution</h3>
+      <p>Merge only a head that passed the review gate. If the base moved and the PR is behind or conflicted, merge the base in, resolve, re-gate and try again.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid" aria-label="Phase 5 diagram">
+flowchart LR
+  gate([Review passed]) --&gt; mstate{Mergeable}
+  mstate -- clean --&gt; merge[Merge, match head]
+  mstate -- behind or dirty --&gt; base[Merge base in]
+  base --&gt; conflict{Conflicts}
+  conflict -- yes --&gt; resolver[Resolver agent]
+  resolver --&gt; checks[Markers, tests, regression]
+  conflict -- no --&gt; checks
+  checks --&gt; push[Push new head]
+  push --&gt; back([Back to review gate])
+  merge --&gt; merged([merge_sha saved])
+        </pre>
+        <figcaption>Every new head goes back through the review gate, so the merged code is always the reviewed code.</figcaption>
+      </figure>
+
+      <h4>1. Base merge and resolver</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Read <code>mergeable</code> and <code>mergeable_state</code> (poll while <code>UNKNOWN</code>). On <code>behind</code> or <code>dirty</code>: <code>git fetch origin</code>, then <code>git merge origin/&lt;base&gt; -m "chore: merge origin/&lt;base&gt; into &lt;branch&gt;"</code> in the worktree.</li>
+        <li><code class="status">[x]</code> On conflicts, the <code>resolver</code> agent gets the conflicted paths, both sides and the issue and ticket context. Checked in code afterwards: <code>git diff --name-only --diff-filter=U</code> is empty, no <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>, <code>=======</code> or <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code> lines remain in changed files, every ticket test passes, and the regression gate passes. Commit the merge and push. Never rebase or force.</li>
+        <li><code class="status">[x]</code> If the resolver fails within its retries, abort the merge with <code>git merge --abort</code>. That only discards the runner's own merge attempt. The <code>merge</code> gate fails with exit 7.</li>
+      </ul>
+
+      <h4>2. Merge</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>gh pr merge &lt;n&gt; --&lt;method&gt; --match-head-commit &lt;head_sha&gt;</code>. Never <code>--admin</code> and never <code>--auto</code>. The runner merges only after it has seen the gate pass.</li>
+        <li><code class="status">[x]</code> Confirm <code>state == MERGED</code> and save <code>mergeCommit.oid</code> as <code>merge_sha</code>. A head mismatch (someone pushed) sends the run back to the review gate. <code>max_merge_attempts</code> bounds the loop.</li>
+      </ul>
+
+      <h4>3. Testing Strategy</h4>
+      <p>Real git conflicts in a temporary bare <code>origin</code> with a diverging <code>main</code>. GitHub merge responses come from the fake.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_merge_step.py -q</code>: a clean merge saves <code>merge_sha</code>. A behind branch is updated and re-gated. A conflict is resolved and checked for markers. A resolver that leaves a marker is rejected. A resolver that breaks a ticket test is rejected. Exhausted attempts give exit 7. A head mismatch goes back to review. No call ever uses <code>--admin</code> or a force push.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 6 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 6: Deploy watch</h3>
+      <p>Follow the deployment the merge triggers until a GitHub deployment to the configured environment succeeds for a SHA that contains <code>merge_sha</code>.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid" aria-label="Phase 6 diagram">
+sequenceDiagram
+  participant R as Runner
+  participant A as Actions
+  participant D as Deployments
+  R-&gt;&gt;A: runs for workflow, push, head_sha = merge_sha
+  alt no run within grace
+    R-&gt;&gt;R: paths filter matched?
+    R-&gt;&gt;A: dispatch (only if enabled)
+  end
+  loop until completed or timeout
+    R-&gt;&gt;A: run status
+  end
+  alt cancelled or superseded
+    R-&gt;&gt;A: newer run whose head contains merge_sha
+  end
+  R-&gt;&gt;D: deployment for environment, SHA contains merge_sha
+  D--&gt;&gt;R: latest status success
+        </pre>
+        <figcaption>Success is a deployment status, not just a green workflow, and any newer SHA that contains the merge counts.</figcaption>
+      </figure>
+
+      <h4>1. Find and follow the run</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>GET /actions/workflows/{workflow}/runs?event=push&amp;branch=&lt;base&gt;&amp;head_sha=&lt;merge_sha&gt;</code>, polled for <code>deploy_start_grace_min</code>.</li>
+        <li><code class="status">[x]</code> No run found: compare the merged files with the <code>on.push.paths</code> filter. If nothing matched, the deploy was never going to start. With <code>dispatch_if_not_triggered</code>, dispatch the workflow on the base branch and follow that run. Otherwise fail the <code>deploy</code> gate with exit 8 and the reason "merge did not trigger a deployment".</li>
+        <li><code class="status">[x]</code> Follow the run until it completes, up to <code>deploy_timeout_min</code>. On <code>cancelled</code>, look for newer runs of the same workflow on the base branch whose <code>head_sha</code> contains <code>merge_sha</code> (<code>devops.is_ancestor</code> after a fetch) and follow the newest. On <code>failure</code>, fail with the failed job names and log tail.</li>
+      </ul>
+
+      <h4>2. Deployment success rule</h4>
+      <pre class="code"><code>def deployed(merge_sha, cfg) -&gt; Deployment | None:
+    for d in deployments(environment=cfg.environment):      # newest first
+        if not is_ancestor(merge_sha, d.sha):
+            continue
+        status = latest_status(d)
+        if status.state == "success":
+            return d                     # deployed_sha = d.sha
+        if status.state in ("failure", "error"):
+            return None                  # caller fails the gate
+    return None                          # keep polling until timeout</code></pre>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Save <code>deploy_run_ids</code>, <code>deployed_sha</code> and <code>deployment_id</code>. Resume continues polling from saved state and never dispatches twice.</li>
+      </ul>
+
+      <h4>3. Testing Strategy</h4>
+      <p>Fake GitHub scenarios for runs and deployments. Ancestry comes from the local bare repo.</p>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_deploy_watch.py -q</code>: covers a normal success, a run cancelled then superseded by a later success, a workflow that succeeded with a failing deployment status (exit 8), a run that never appears with no paths match (exit 8, or a dispatch when enabled), a timeout (exit 8), and a resume that does not dispatch twice.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 7 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 7: Dev acceptance and close-out</h3>
+      <p>Run the frozen Dev checks against the deployed environment, then record the verdict on the issue.</p>
+
+      <h4>1. Dev checks (green)</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Check each frozen Dev check's hash, then run it with <code>dev_check_cmd</code>. Every one must print <code>ACCEPT-PASS</code>, retrying up to 3 times over 5 minutes because CDNs and caches lag. Save the output and any screenshots as evidence on the criterion.</li>
+        <li><code class="status">[x]</code> Any failure fails the <code>criteria_dev</code> gate with exit 5. No automatic revert happens. The summary names the criterion, the check and its output.</li>
+      </ul>
+
+      <h4>2. Close-out</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Tick each passed criterion in the issue body by rewriting only its <code>- [ ]</code> line to <code>- [x]</code>, reading the body fresh first to avoid a lost update.</li>
+        <li><code class="status">[x]</code> Post the DoD comment: a table of all six gates with pass or fail, PR, merge SHA, deployment and run links, and evidence per criterion. In <code>--agent</code> mode this replaces the printed summary.</li>
+        <li><code class="status">[x]</code> Close the issue as <code>completed</code> only if all six gates passed. Otherwise leave it open. Sub-issues close as today.</li>
+      </ul>
+
+      <h4>3. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_dev_acceptance.py tests/test_criteria.py -q</code>: a green run ticks exactly the passed lines and leaves other text alone. A tampered check fails. A flaky check passes on retry. Any failure leaves the issue open with exit 5.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+
+    <!-- Phase 8 -->
+    <div class="phase">
+      <h3><code class="status">[x]</code> Phase 8: Visibility, docs and live proof</h3>
+      <p>Make the long tail visible (a deploy-mode run can take an hour or more) and prove the whole flow once against a real GitHub repo before pointing it at example-org/example-app.</p>
+
+      <h4>1. Events, summary, docs</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Emit <code>phase</code> events <code>pr</code>, <code>review</code>, <code>merge</code>, <code>deploy</code> and <code>verify</code>, plus a <code>gate</code> event per DoD gate. Add the phases to <code>apps/visual/src/model.ts</code> <code>PHASES</code> when deploy mode is on, and show the gate table in the summary overlay.</li>
+        <li><code class="status">[x]</code> Show the DoD table in <code>_summary_lines</code>, so it appears in the printed summary and in the <code>--agent</code> comment.</li>
+        <li><code class="status">[x]</code> README: a "Deploy mode" section with the DoD, every gate's rule, the <code>[deploy]</code> config, the new exit codes and the resume behaviour. Add <code>[deploy]</code> to <code>runner.example.toml</code>.</li>
+      </ul>
+
+      <h4>2. Live sandbox</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> Sandbox repo <code>example-org/example-sandbox</code> created 2026-10-06, private and empty, with the operator as admin. Org members cannot create internal repos or delete repos, so when the work is done, archive it (the operator can) or ask an org owner to delete it.</li>
+        <li><code class="status">[x]</code> Set up the sandbox with an active <code>copilot_code_review</code> ruleset, a CI workflow, and a <code>dev-deployment.yaml</code> that creates a GitHub deployment to <code>development</code> and publishes a static page through GitHub Pages as "Dev".</li>
+        <li><code class="status">[x]</code> Seed one issue whose criteria include one tested in code and one checked in Dev. Use a <code>dev_check_cmd</code> that fetches the Pages URL with <code>curl</code> and prints <code>ACCEPT-PASS</code> or <code>ACCEPT-FAIL</code>.</li>
+        <li><code class="status">[x]</code> Run once clean, and once with a deliberate review finding and a conflicting commit pushed to <code>main</code> mid-run, to exercise the reviser and resolver live.</li>
+      </ul>
+
+      <h4>3. Testing Strategy</h4>
+      <ul class="checklist">
+        <li><code class="status">[x]</code> <code>cd apps/visual &amp;&amp; bun test</code>: the deploy phases and gate table render.</li>
+        <li><code class="status">[x]</code> <code>uv run pytest tests/test_closeout.py tests/test_review_loop.py tests/test_merge_step.py tests/test_deploy_watch.py -q</code> (planned as <code>test_deploy_e2e.py</code>): a full scenario on the fake GitHub from plan to DoD met, plus one failure scenario per gate with the correct exit code.</li>
+        <li><code class="status">[x]</code> <code>gh-runner &lt;n&gt; --repo example-org/example-sandbox --deploy --agent; echo $?</code>: prints <code>0</code>. The issue is closed with all criteria ticked and has a DoD comment showing six passes.</li>
+        <li><code class="status">[x]</code> <code>gh api "repos/example-org/example-sandbox/deployments?environment=development" --jq '.[0].sha'</code>: contains the PR's merge commit, and its latest status is <code>success</code>.</li>
+      </ul>
+      <div class="loop">
+        🔁 <strong>Do not exit this phase until every box above is checked.</strong>
+        If any command fails, fix the cause and re-run. Loop until all pass.
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== GLOBAL VALIDATION ===== -->
+  <section id="validation">
+    <h2>Validation Commands</h2>
+    <p>Execute these commands to validate the entire plan is complete:</p>
+    <ul class="checklist">
+      <li><code class="status">[x]</code> <code>uv run pytest -q</code>: the full suite passes, including every new deploy-mode suite.</li>
+      <li><code class="status">[x]</code> <code>uv run ruff check src tests</code>: no findings beyond the 7 already on <code>main</code> (5 PLW1510 in <code>tests/test_visual_*</code>, 2 RUF100).</li>
+      <li><code class="status">[x]</code> <code>uv run ruff format --check src tests</code>: no files to reformat beyond the 2 already on <code>main</code>.</li>
+      <li><code class="status">[x]</code> <code>cd apps/visual &amp;&amp; bun test</code>: the visual app tests pass.</li>
+      <li><code class="status">[x]</code> <code>gh-runner 17 --deploy --no-pr; echo $?</code>: prints <code>2</code> with a flag-conflict message and no model call.</li>
+      <li><code class="status">[x]</code> Live sandbox run (Phase 8): exit <code>0</code>, the issue is closed, all criteria are ticked, and the DoD comment shows six passes.</li>
+      <li><code class="status">[x]</code> Live sandbox failure run: a Dev check that cannot pass gives exit <code>5</code>, the issue stays open, and the DoD comment names the failing criterion.</li>
+      <li><code class="status">[x]</code> <code>gh repo archive example-org/example-sandbox --yes</code>: run once the live proof is done. Deletion needs an org owner.</li>
+    </ul>
+    <div class="loop">
+      🔁 <strong>The plan is not complete until every box is checked and every command passes. If for some reason a step is not possible to complete, mark it with [f] and move on if possible.</strong>
+    </div>
+  </section>
+
+  <!-- ===== NOTES ===== -->
+  <section id="notes">
+    <h2>Notes</h2>
+
+    <h3>Definition of Done as gates</h3>
+    <table>
+      <tr><th>Gate</th><th>Passes when</th><th>Fail exit</th></tr>
+      <tr><td><code>tickets</code></td><td>Every ticket is done, none blocked, and the regression suite passes.</td><td>3 (blocked), 4 (budget), 1 (abort)</td></tr>
+      <tr><td><code>criteria_tests</code></td><td>Every <code>tests</code> criterion is <code>met</code> with cited tests that run and pass.</td><td>5</td></tr>
+      <tr><td><code>review</code></td><td><code>review_passed()</code> holds on the head that gets merged.</td><td>6</td></tr>
+      <tr><td><code>merge</code></td><td>The PR is <code>MERGED</code> at the reviewed head, and <code>merge_sha</code> is saved.</td><td>7</td></tr>
+      <tr><td><code>deploy</code></td><td>A deployment to the configured environment reports <code>success</code> for a SHA that contains <code>merge_sha</code>.</td><td>8</td></tr>
+      <tr><td><code>criteria_dev</code></td><td>Every frozen Dev check prints <code>ACCEPT-PASS</code> against Dev.</td><td>5</td></tr>
+    </table>
+    <p>A stop request (Ctrl+C, exit 130) is not a failure verdict. The run state is saved, and re-running the same command resumes at the saved stage.</p>
+
+    <h3>Defaults chosen in this plan (change before building if wrong)</h3>
+    <ol>
+      <li><strong>Issue closes only after the DoD passes.</strong> In deploy mode the PR says <code>Refs #n</code>, and the runner closes the issue at the end.</li>
+      <li><strong>Declining a review comment</strong> needs a read-only verifier to agree. Otherwise the thread stays open and the review gate cannot pass.</li>
+      <li><strong>A failed deploy or Dev check after merge is not auto-reverted.</strong> The runner reports, comments and exits non-zero. Reverting is left to a person, because a revert is itself a merge to <code>main</code> that triggers another deploy. A hotfix loop is a possible follow-up.</li>
+      <li><strong>A merge that triggers no deploy</strong> (because of the <code>paths</code> filter) fails by default. <code>dispatch_if_not_triggered</code> is opt-in.</li>
+      <li><strong>Criteria checked in Dev need <code>dev_check_cmd</code>.</strong> Without it preflight fails. For example-org/example-app this means an Edge and Playwright harness (<code>pw-win</code> with an Entra sign-in) on the machine that runs the runner.</li>
+      <li><strong>Required human approvals</strong> (currently 0 on example-org/example-app) are waited for up to <code>review_timeout_min</code>. The runner never approves its own PR.</li>
+      <li><strong>Copilot review counts as clean</strong> when its latest review on the current head has zero comments and no thread is unresolved. GitHub only ever marks it <code>COMMENTED</code>, as on example-org/example-app#102.</li>
+    </ol>
+
+    <h3>Facts this plan relies on (checked 2026-10-05)</h3>
+    <ul>
+      <li>example-org/example-app allows squash merge only. <code>delete_branch_on_merge</code> is false and <code>allow_auto_merge</code> is false. Branch protection requires 0 approvals and has no required status checks.</li>
+      <li>Ruleset 21702720 "Copilot review for default branch" sets <code>copilot_code_review</code> with <code>review_on_push: false</code> and <code>review_draft_pull_requests: true</code>.</li>
+      <li><code>dev-deployment.yaml</code> runs on a push to <code>main</code> under a <code>paths</code> filter. Its jobs are <code>ci</code>, then <code>development</code>, which calls <code>deploy-web-application-base.yaml</code> with environment <code>development</code> and concurrency group <code>application-dev</code>. Deployments are recorded per SHA (for example 6854019104 for <code>9a17d7f0</code>, the merge of #102).</li>
+      <li>Local <code>gh</code> is 2.46.0. Re-requesting the Copilot review goes through the REST API.</li>
+    </ul>
+
+    <h3>Risks</h3>
+    <ul>
+      <li><strong>Wall-clock time.</strong> A review takes minutes and a deploy about 6 minutes on example-org/example-app. With review rounds a run can exceed an hour. Every wait is bounded and resumable, and the credit budget only counts agent calls.</li>
+      <li><strong>Shared <code>main</code>.</strong> Other merges can land between the review gate and the merge. <code>--match-head-commit</code> protects the head. Base movement is handled by the behind/dirty loop, and deploy supersession by the ancestry rule.</li>
+      <li><strong>Authority.</strong> The runner merges to <code>main</code> and so triggers a deploy, using the operator's <code>gh</code> token. Preflight checks write access, and every merge is logged in the DoD comment with the gate evidence that allowed it.</li>
+      <li><strong>Agent dismissing findings.</strong> This is limited by the verifier agreement rule, and every decline is listed in the DoD comment for a person to audit.</li>
+    </ul>
+
+    <figure class="diagram">
+      <pre class="mermaid" aria-label="Notes diagram">
+flowchart LR
+  subgraph pre[Before merge, reversible]
+    t[tickets] --&gt; ct[criteria_tests] --&gt; rv[review]
+  end
+  subgraph post[After merge, not reversible]
+    mg[merge] --&gt; dp[deploy] --&gt; cd[criteria_dev]
+  end
+  rv --&gt; mg
+      </pre>
+      <figcaption>Everything that can fail cheaply is checked before the merge. After the merge, a failure is reported but not undone.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== AMENDMENTS ===== -->
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <details>
+      <summary>2026-10-06T09:11:22+08:00: sandbox repo moved to example-org/example-sandbox</summary>
+      <p>The live-proof sandbox (Phase 8 and the global validation) is now <code>example-org/example-sandbox</code>, private, rather than the proposed <code>agileandy/issue-runner-sandbox</code>. The user first asked for <code>example-user/example-sandbox</code>, then for an internal org repo. Org members cannot create internal repos (<code>members_can_create_internal_repositories: false</code>) or delete repos (<code>members_can_delete_repositories: false</code>). The org is on the Enterprise plan, so private repos there support the Copilot review ruleset and private Pages. The repo was created empty and its setup stays in Phase 8. A cleanup step (archive) was added to the global validation.</p>
+    </details>
+    <details>
+      <summary>2026-10-06T10:05:00+08:00: Phase 1 built, with four differences from the plan</summary>
+      <p>Phase 1 is built on <code>feature/deploy-mode</code> in the worktree <code>copilot-issue-runner-deploy</code>, stacked on PR #142. Differences from the plan:</p>
+      <ol>
+        <li><code>criteria.parse</code> and <code>criteria.tick</code> were built in Phase 1, because the preflight needs the criteria. Phase 2 keeps the planner mapping and the acceptor.</li>
+        <li>The preflight lives in a new <code>phases/preflight.py</code>. It reads review, approval and required-check rules through <code>GET /repos/{r}/rules/branches/{branch}</code>, which covers repo and org rulesets with read access only. Classic protection is added when readable, and a 403 is ignored. It reads the workflow's <code>on.push</code> with a small built-in reader rather than a YAML library.</li>
+        <li>The delivery stages start at <code>built</code>, which decides the <code>criteria_tests</code> gate. A failed stage keeps its stage, so re-running the same command retries it. A budget stop pauses delivery without failing a gate.</li>
+        <li>The check that <code>dev_check_cmd</code> is set when Dev criteria exist moved to Phase 3, because the planner decides which criteria are Dev criteria after preflight has run.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T10:50:00+08:00: Phase 2 built, with five differences from the plan</summary>
+      <ol>
+        <li>Dependency checks reject only unknown or self dependencies. A dependency on a later ticket stays allowed, because the runner already orders tickets by dependency and blocks cycles at run time (<code>tests/test_dependencies.py</code>). That closes the unknown-ID part of R4.</li>
+        <li>The acceptor runs each cited test file with <code>test_cmd</code>, not the single test named after <code>::</code>, so the check works for every supported test framework. A file that fails, does not run or does not exist makes the criterion unmet.</li>
+        <li>An extra-ticket round goes back through the normal build loop. <code>orchestrator._build_tickets</code> was moved out unchanged, and the delivery returns <code>MORE_TICKETS</code> to send new tickets round again. The round is counted only after the new tickets are saved, so a budget pause does not use it up.</li>
+        <li><code>max_acceptance_rounds</code> may be 0 (no extra round). <code>acceptor</code> joined <code>ROLES</code>, so <code>--model</code> and <code>--effort</code> apply to it.</li>
+        <li>The planner prompt is unchanged when there are no criteria. In deploy mode it gains a criteria block, and <code>--dry-run</code> shows it.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T11:30:00+08:00: Phase 3 built, with four differences from the plan</summary>
+      <ol>
+        <li><code>acceptance.tester</code> is read-only and replies with the check's content. The runner writes it to <code>&lt;state_dir&gt;/acceptance/issue-&lt;n&gt;/&lt;AC&gt;&lt;dev_check_ext&gt;</code>, so the agent never writes files and the check is never committed.</li>
+        <li>New <code>[deploy]</code> settings: <code>dev_check_ext</code> (default <code>.sh</code>), <code>dev_check_guide</code> (how checks are written for the repository, shown to the agent), and <code>dev_check_timeout_sec</code> (default 300). <code>dev_check_cmd</code> accepts <code>{check_path}</code>, <code>{dev_url}</code> and <code>{criterion}</code>. The verdict is the last non-empty line of stdout only.</li>
+        <li>The missing-harness check runs right after planning instead of in preflight, since only the plan says which criteria are Dev criteria. It fails before any ticket is built (exit 5), and fixing the config resumes from the saved plan.</li>
+        <li>The delivery gained a <code>dev_checks</code> stage (gate <code>criteria_dev</code>) between <code>built</code> and <code>accepted</code>. A check that still passes against Dev after all retries fails the gate. The plan treats that as "already met or a weak check" and the runner never guesses which.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T13:10:00+08:00: Phase 4 built, with six differences from the plan</summary>
+      <ol>
+        <li>Copilot's review always has the state <code>COMMENTED</code>, but its body starts with an overview verdict. On example-org/example-app about 90 reviews show three verdicts: "🟢 Approval recommended", "🟡 Changes recommended" and "🔵 Needs a closer look". The review passes only on "Approval recommended". Any other verdict becomes a finding carrying the overview's summary sentence, so a 🔵 review with no inline comments still gives the reviser something to act on. A review without an overview heading falls back to its threads.</li>
+        <li>The review rule is the pure function <code>review.evaluate</code>. Live on example-org/example-app it passes PR #102 and returns PR #103's verdict plus its 4 open threads.</li>
+        <li>Findings are numbered T1.. for the reviser: checks and statuses, then the review verdict, then threads. A new <code>reviser</code> role (write access) is held to the same guards as a ticket: frozen tests are restored, Dev checks must be unchanged, HEAD and the branch must not move, and every ticket test and the regression suite must pass. A "fixed" claim with no change is rejected.</li>
+        <li>A new <code>[deploy] pr_title</code> setting (default <code>feat: {title}</code>) controls the title, which becomes the squash commit subject. The PR tests live in <code>tests/test_review_loop.py</code> rather than a separate <code>test_delivery_pr.py</code>.</li>
+        <li>The PR merged or closed outside the runner, or its head moved, fails the review gate. A GitHub read error is treated as still waiting, up to the timeout. If findings exist when the timeout hits, the reviser acts on them instead of failing.</li>
+        <li>Re-requesting the review uses <code>POST /pulls/{n}/requested_reviewers</code> with <code>copilot-pull-request-reviewer[bot]</code>. That call is only proven against the fake. The Phase 8 live run must confirm GitHub accepts it.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T14:20:00+08:00: Phase 5 built, with five differences from the plan</summary>
+      <ol>
+        <li>The base is merged with <code>--no-commit</code>, so a clean merge is also checked (markers, frozen tests, Dev checks, ticket tests, regression) before the runner commits it. Upstream code that breaks this issue's tests also goes to the resolver.</li>
+        <li>The runner acts only on the <code>mergeable_state</code> GitHub reports. "behind" appears only when branch protection requires up-to-date branches, which example-org/example-app does not, so there a merely-behind PR merges as it is. "dirty" (a conflict) always triggers the base merge.</li>
+        <li>A test file that was itself in conflict is re-frozen at its merged content once every check passes. Other frozen tests are restored if touched.</li>
+        <li>A 405 "not mergeable" from GitHub is retried after a poll, within <code>max_merge_attempts</code>. A 409 head mismatch fails the gate. A PR merged outside the runner counts only if its head is the reviewed head. Merging requires the saved review gate to be <code>pass</code>, and any base merge resets it.</li>
+        <li>The fake GitHub merges for real in the bare remote (<code>git merge-tree --write-tree</code> plus <code>commit-tree</code>). <code>test_session_controls.py::test_completion_while_detached_returns_to_the_shell</code> flaked once in a full run under load and passed 3 times out of 3 alone. It is unrelated to this work.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T15:30:00+08:00: Phase 6 built, with four differences from the plan</summary>
+      <ol>
+        <li>The newest deployment to the environment whose SHA contains the merge decides the gate: <code>success</code> passes, <code>failure</code> or <code>error</code> fails, anything else waits. Run state supports this, and a failed newest run fails with its failed jobs and log tail. A cancelled run counts as superseded, so the watch keeps waiting for the newer run. Live on example-org/example-app, the #102 merge <code>9a17d7f0</code> resolves to deployment 6878920105 of the later <code>6719f78e</code>, state <code>success</code>.</li>
+        <li>Ancestry is checked with git in the run worktree (<code>devops.contains</code>), fetching once when a SHA is unknown. The paths-filter explanation uses the files the merge changed against its first parent (<code>devops.files_in_commit</code>).</li>
+        <li>A failed deploy also comments on the PR. Retrying a failed stage resets its wait start, so a re-run gets the full grace and timeout again. That applies to the review wait too.</li>
+        <li>Earlier stage tests now assert only their own gate, so they stay valid as later stages are built.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T16:40:00+08:00: Phase 7 built, with five differences from the plan</summary>
+      <ol>
+        <li>The DoD comment is posted on every finished outcome, failures at any gate included, not only after Dev checks. The issue therefore always records which gate stopped the run. A budget pause or stop request posts nothing, because those runs are resumable rather than finished.</li>
+        <li>A tests criterion is ticked only once the merge gate has passed, and a Dev criterion only once its check passed in Dev. The issue never claims code that is not on <code>main</code>. Ticking re-reads the issue body and matches criteria by text, so lines edited or inserted since planning are never ticked by mistake.</li>
+        <li>Closing the issue is bookkeeping, not a gate. A GitHub error there is reported in the run details, and <code>closed_out</code> lets a re-run finish it.</li>
+        <li>Dev checks are tried 3 times, 150 s apart (<code>DEV_CHECK_ATTEMPTS</code>, <code>DEV_CHECK_RETRY_SEC</code>), before the criterion fails.</li>
+        <li>Tests: <code>tests/test_closeout.py</code> runs the whole Definition of Done end to end to exit 0 against the fake GitHub. An autouse fixture in <code>tests/conftest.py</code> makes every delivery talk to a fake GitHub, so no test can reach the real API.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T17:30:00+08:00: Phase 8 part 1 (visibility and docs) built</summary>
+      <ol>
+        <li>Pipeline chips group the delivery stages as criteria, pr, review, merge, deploy and verify, and appear once a delivery stage starts. The summary outcome reads "definition of done met" or "definition of done FAILED at &lt;gate&gt;". A "definition of done" section listing every gate leads the overlay and the saved report.</li>
+        <li>The printed summary, and therefore the <code>--agent</code> comment, shows the Definition of Done verdict and a gate table. <code>RunReport.gates</code> carries it for every deploy outcome, including the tickets and missing-harness failures.</li>
+        <li>The README has a Deploy mode section (gates, how each is reached, preflight, resume) and exit codes 5–8. <code>runner.example.toml</code> documents every <code>[deploy]</code> key.</li>
+        <li>The full scenario to exit 0 lives in <code>tests/test_closeout.py</code>, and the per-gate failure scenarios in each phase's suite, rather than a separate <code>test_deploy_e2e.py</code>.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-06T18:10:00+08:00: Phase 8 live proof, first run met the Definition of Done</summary>
+      <p>The sandbox <code>example-org/example-sandbox</code> was seeded at <code>79c8fe6</code>:</p>
+      <ul>
+        <li>a <code>calc</code> module with tests,</li>
+        <li><code>site/build.py</code>, and a <code>dev-deployment</code> workflow (paths filter, environment <code>development</code>) that publishes the page to the <code>deployed/dev</code> branch,</li>
+        <li>CI, a squash-only merge policy and an active <code>copilot_code_review</code> ruleset,</li>
+        <li>a <code>runner.toml</code> whose Dev check reads <code>deployed/dev</code> through <code>gh api</code>.</li>
+      </ul>
+      <p>Dev is a branch rather than a Pages site, because Pages on a private Enterprise repository would not be readable by a plain <code>curl</code>.</p>
+      <p>Issue #201 has one criterion proven by tests and one checked in Dev. <code>issue-runner 201 --repo example-org/example-sandbox --deploy --agent --max-run-credits 800</code> exited 0 and used about 122 AIU. Verified on GitHub:</p>
+      <ul>
+        <li>The plan had 2 tickets, mirrored as sub-issues #202 and #203, both closed.</li>
+        <li>The Dev check for AC2 was red before the PR: "Dev page does not show the line '5 - 3 = 2'".</li>
+        <li>PR #204 was titled "feat: Add subtract to the calculator and show it on Dev", with a body starting <code>Refs #201</code>.</li>
+        <li>The Copilot review of <code>78faacb</code> said "🟢 Approval recommended", and CI, CodeQL and Code Quality were green.</li>
+        <li>It squash-merged at <code>2f92de0</code>. <code>dev-deployment</code> ran on the push, and deployment 6880732137 of <code>2f92de0</code> reported <code>success</code>.</li>
+        <li>The Dev page lists <code>5 - 3 = 2</code>, and the AC2 check then passed.</li>
+        <li>Issue #201 was closed as completed, with both criteria ticked, a "Definition of Done: met" comment showing six passes, and the <code>--agent</code> summary comment.</li>
+      </ul>
+      <p>Not yet exercised live, because the first review approved straight away: the reviser loop, re-requesting the Copilot review (<code>POST /requested_reviewers</code>), the base merge with conflict resolution, and a failing run.</p>
+    </details>
+    <details>
+      <summary>2026-10-07T09:20:00+08:00: Phase 8 live proof, second run covered the review loop, a conflict, a failure and recovery</summary>
+      <p>Sandbox issue #205 (multiply). A watcher script acted the moment PR #208 opened:</p>
+      <ul>
+        <li>it disabled <code>dev-deployment</code>,</li>
+        <li>it pushed a teammate commit <code>36725b1</code> to <code>main</code> that conflicts in <code>calc.py</code> (adds <code>divide</code>),</li>
+        <li>it left a review comment asking for a docstring on <code>multiply</code>.</li>
+      </ul>
+      <p>Result, verified on GitHub:</p>
+      <ul>
+        <li><strong>Reviser loop and re-review request:</strong> the reviser added the docstring as <code>fix(review): address review round 1</code> (<code>570adf8</code>). The runner replied "Fixed: … (570adf86f501)" and resolved the thread, and its <code>POST /requested_reviewers</code> with <code>copilot-pull-request-reviewer[bot]</code> made Copilot review <code>570adf8</code>. That call is now proven live.</li>
+        <li><strong>Conflict resolution:</strong> GitHub reported the PR <code>dirty</code>. The runner merged <code>origin/main</code> as <code>b06390f</code>, keeping both <code>multiply</code> and <code>divide</code>. It requested review again, Copilot approved <code>b06390f</code>, and the PR squash-merged at <code>80827fe</code>.</li>
+        <li><strong>Failing run:</strong> with the workflow disabled, no deploy started. The run exited 8 with "the merge did not start dev-deployment.yml within 10 min" and commented on the PR. Issue #205 stayed open with "Definition of Done: FAILED at deploy", AC1 ticked (merged) and AC2 not.</li>
+        <li><strong>Recovery:</strong> after re-enabling the workflow, the same command with <code>--config</code> setting <code>dispatch_if_not_triggered = true</code> resumed at <code>deploying</code>, dispatched once (<code>workflow_dispatch</code> run on <code>80827fe</code>, success), and the Dev check passed (<code>4 x 3 = 12</code> on Dev). Issue #205 closed as completed with both criteria ticked and a "Definition of Done: met" comment. Exit 0. Run 2 used about 208 AIU.</li>
+      </ul>
+      <p>Follow-ups found live, not fixed here:</p>
+      <ol>
+        <li>A retried <code>deploying</code> stage waits the full <code>deploy_start_grace_min</code> again before dispatching, even when the earlier attempt already proved no run started.</li>
+        <li>Thread replies and review requests are posted as the operator's <code>gh</code> identity, so the PR shows the operator commenting on their own review thread.</li>
+      </ol>
+    </details>
+    <details>
+      <summary>2026-10-08T18:30:00+08:00: plain runs keep their dependency behaviour</summary>
+      <p>The Phase 2 check that rejects an unknown or self <code>depends_on</code> now applies to <code>--deploy</code> planning only (<code>plan_with_criteria</code> and <code>plan_extra</code>). Plain planning accepts such a plan, and the build loop blocks the ticket with its reason, as it did before this work (<code>tests/test_dependencies.py</code>, "Ticket dependencies" in the README). The unknown-ID part of R4 is therefore closed for <code>--deploy</code> runs only.</p>
+    </details>
+  </section>
+
+</main>
+
+<!-- plan-ng:mermaid-runtime -->
+<script type="module">
+  try {
+    const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+    const root = getComputedStyle(document.documentElement);
+    const cssVar = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      fontFamily: cssVar("--font-sans", "Inter, ui-sans-serif, system-ui, sans-serif"),
+      themeVariables: {
+        primaryColor: "#dbeafe",
+        primaryTextColor: cssVar("--text", "#0f172a"),
+        primaryBorderColor: cssVar("--accent", "#2563eb"),
+        lineColor: cssVar("--muted", "#64748b"),
+        secondaryColor: "#ccfbf1",
+        tertiaryColor: cssVar("--surface-muted", "#f8fafc"),
+        background: cssVar("--surface", "#ffffff"),
+        mainBkg: cssVar("--surface", "#ffffff"),
+        clusterBkg: cssVar("--surface-muted", "#f1f5f9"),
+        clusterBorder: cssVar("--border", "#d8e2ef")
+      }
+    });
+    await mermaid.run({ querySelector: "pre.mermaid", suppressErrors: true });
+  } catch (error) {
+    console.error("plan-ng: Mermaid runtime unavailable; showing diagram source instead.", error);
+  }
+</script>
+</body>
+</html>

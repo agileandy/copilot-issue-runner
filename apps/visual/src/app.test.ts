@@ -161,6 +161,27 @@ test("the finished run shows its summary as a modal over the panes", async () =>
   })
 })
 
+test("a --deploy summary leads with its Definition of Done gates", async () => {
+  await withApp({ width: 100, height: 40 }, async (app, setup) => {
+    app.apply({
+      kind: "run_finished",
+      payload: {
+        done: 1,
+        blocked: 0,
+        branch: "issue-9-x",
+        deploy: true,
+        dod_met: false,
+        dod_failed_gate: "deploy",
+        gates: { tickets: "pass", criteria_tests: "pass", review: "pass", merge: "pass", deploy: "fail" },
+      },
+    })
+    const frame = await setup.waitForFrame((value) => value.includes("definition of done"))
+    expect(frame).toContain("definition of done FAILED at deploy")
+    expect(frame).toContain("gate deploy FAILED")
+    expect(frame).toContain("gate criteria_dev not reached")
+  })
+})
+
 test("the summary scrolls to the bottom of a long artefact list", async () => {
   await withApp({ width: 80, height: 20 }, async (app, setup) => {
     const files = Array.from({ length: 60 }, (_, index) => `file-${index}.ts`)

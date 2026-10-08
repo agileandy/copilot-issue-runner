@@ -15,8 +15,65 @@ STATUSES = ("pending", "in_progress", "done", "blocked")
 PHASES = ("tester", "refine_test", "coder", "verifier", "regression", "commit")
 
 
+DELIVERY_STAGES = (
+    "built",
+    "dev_checks",
+    "accepted",
+    "reviewing",
+    "revising",
+    "merging",
+    "deploying",
+    "verifying",
+    "done",
+)
+DOD_GATES = ("tickets", "criteria_tests", "review", "merge", "deploy", "criteria_dev")
+
+
 class StateError(RuntimeError):
     pass
+
+
+@dataclass
+class Delivery:
+    """Where a --deploy run is between "tickets built" and "deployed to Dev".
+
+    `stage` is the next step to run. A failed step keeps its stage and records
+    `failed_gate`, so re-running the same command retries that step.
+    """
+
+    stage: str = "built"
+    failed_gate: str | None = None
+    failed_reason: str | None = None
+    gates: dict = field(default_factory=lambda: dict.fromkeys(DOD_GATES))
+    criteria: list[dict] = field(default_factory=list)
+    acceptance_round: int = 0
+    pr_number: int | None = None
+    head_sha: str | None = None
+    review_round: int = 0
+    waiting_since: float | None = None  # when the wait for the current head began
+    handled_threads: list[str] = field(default_factory=list)
+    merge_attempts: int = 0
+    merge_sha: str | None = None
+    deploy_run_ids: list[int] = field(default_factory=list)
+    dispatched: bool = False
+    deployed_sha: str | None = None
+    deployment_id: int | None = None
+    closed_out: bool = False  # the issue is ticked, commented and closed
+
+    def __post_init__(self) -> None:
+        if self.stage not in DELIVERY_STAGES:
+            raise ValueError(f"invalid delivery stage {self.stage!r}")
+        unknown = set(self.gates) - set(DOD_GATES)
+        if unknown:
+            raise ValueError(f"unknown delivery gate(s) {sorted(unknown)}")
+        self.gates = {gate: self.gates.get(gate) for gate in DOD_GATES}
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Delivery":
+        return cls(**d)
 
 
 @dataclass
@@ -27,6 +84,7 @@ class Ticket:
     test_assertion: str
     files_hint: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
+    criteria: list[str] = field(default_factory=list)  # acceptance criteria it proves
     _status: str = field(default="pending", repr=False)
     rounds: int = 0
     test_path: str | None = None
@@ -88,6 +146,7 @@ class TicketStore:
         self.initial_head: str | None = None
         self.last_commit: str | None = None
         self.workspace_ready: bool = False
+        self.delivery: Delivery | None = None
 
     @property
     def state_file(self) -> Path:
@@ -133,7 +192,7 @@ class TicketStore:
 
     def save(self) -> None:
         payload = {
-            "version": 2,
+            "version": 3,
             "issue_ref": self.issue_ref,
             "branch": self.branch,
             "plan_summary": self.plan_summary,
@@ -144,6 +203,7 @@ class TicketStore:
             "last_commit": self.last_commit,
             "workspace_ready": self.workspace_ready,
             "tickets": [t.to_dict() for t in self.tickets],
+            "delivery": self.delivery.to_dict() if self.delivery else None,
         }
         try:
             write_json(self.state_file, payload)
@@ -155,13 +215,15 @@ class TicketStore:
             return False
         try:
             payload = json.loads(self.state_file.read_text())
-            if not isinstance(payload, dict) or payload.get("version", 1) not in (1, 2):
+            if not isinstance(payload, dict) or payload.get("version", 1) not in (1, 2, 3):
                 raise ValueError("unsupported state format")
             if str(payload.get("issue_ref")) != self.issue_ref:
                 raise ValueError("state belongs to a different issue")
             tickets = [Ticket.from_dict(d) for d in payload["tickets"]]
             if len({t.id for t in tickets}) != len(tickets):
                 raise ValueError("duplicate ticket IDs")
+            raw_delivery = payload.get("delivery")
+            delivery = Delivery.from_dict(raw_delivery) if raw_delivery else None
         except (OSError, ValueError, TypeError, KeyError) as e:
             raise StateError(
                 f"cannot resume from {self.state_file}: {e}; the state file was not changed"
@@ -175,4 +237,5 @@ class TicketStore:
         self.last_commit = payload.get("last_commit")
         self.workspace_ready = payload.get("workspace_ready", False)
         self.tickets = tickets
+        self.delivery = delivery
         return True

@@ -819,3 +819,153 @@ def test_agent_mode_visual_abort_posts_the_error(tmp_path, monkeypatch, capsys):
     assert "error: planner blew up" in capsys.readouterr().err
     [(_, number, body)] = posted
     assert number == 7 and "error: planner blew up" in body
+
+
+DEPLOY_ISSUE = {
+    "number": 7,
+    "title": "T",
+    "body": "## Acceptance criteria\n\n- [ ] it works\n",
+}
+
+
+def _deploy_repo(tmp_path, monkeypatch, fake=None):
+    from issue_runner import cli
+    from issue_runner.github_flow import GitHubFlow
+    from tests.fake_github import FakeGitHub
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    monkeypatch.setattr(cli, "fetch_issue", lambda ref, repo=None: dict(DEPLOY_ISSUE))
+    fake = fake or FakeGitHub()
+    monkeypatch.setattr(cli, "GitHubFlow", lambda name: GitHubFlow(name, run=fake))
+    return repo, fake
+
+
+@pytest.mark.parametrize(
+    "extra, named",
+    [
+        (["7", "--no-pr"], "--no-pr"),
+        (["7", "--plan-only"], "--plan-only"),
+        (["--issue-file", "i.md"], "--issue-file"),
+        (["--demo"], "--demo"),
+        (["7", "--in-place"], "--in-place"),
+    ],
+)
+def test_deploy_rejects_flags_that_cannot_reach_dev(tmp_path, monkeypatch, capsys, extra, named):
+    from issue_runner import cli
+
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
+    rc = cli.main([*extra, "--dir", str(tmp_path), "--deploy"])
+    assert rc == 2
+    assert f"--deploy cannot be used with {named}" in capsys.readouterr().err
+
+
+def test_deploy_needs_a_github_repository(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "http://gitea.local:3000/Org/thing.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.setattr(cli, "fetch_gitea_issue", lambda *a, **k: dict(DEPLOY_ISSUE))
+    monkeypatch.setattr(cli, "run_issue", lambda *a, **k: pytest.fail("must not run"))
+    rc = cli.main(["7", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    assert rc == 2
+    assert "needs a GitHub repository" in capsys.readouterr().err
+
+
+def test_deploy_preflight_failure_stops_before_any_model_call(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    repo, fake = _deploy_repo(tmp_path, monkeypatch)
+    fake.environments.clear()
+    monkeypatch.setattr(cli, "CopilotClient", lambda cfg: pytest.fail("no client before preflight"))
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "preflight failed" in err and "environment 'development' not found" in err
+
+
+def test_deploy_dry_run_prints_the_preflight(tmp_path, monkeypatch, capsys):
+    repo, _ = _deploy_repo(tmp_path, monkeypatch)
+    rc = main(
+        ["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy", "--dry-run"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "deploy preflight passed for o/n" in out
+    assert "AC1: it works" in out
+    assert not (repo / ".issue-runner").exists()
+
+
+@pytest.mark.parametrize(
+    "outcome, code",
+    [({"dod_met": True}, 0), ({"dod_failed_gate": "review"}, 6), ({"blocked": 1}, 3)],
+)
+def test_deploy_exit_code_follows_the_definition_of_done(tmp_path, monkeypatch, outcome, code):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _deploy_repo(tmp_path, monkeypatch)
+    seen = {}
+
+    def capture(cfg, *a, **k):
+        seen.update(deploy=cfg.deploy, open_pr=cfg.open_pr, preflight=cfg.preflight)
+        return RunReport(deploy=True, **outcome)
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    (repo / "runner.toml").write_text("open_pr = false\n")
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    assert rc == code
+    assert seen["deploy"] is True and seen["open_pr"] is True
+    assert seen["preflight"].merge_method == "squash"
+
+
+def test_deploy_settings_load_from_runner_toml(tmp_path):
+    from issue_runner.config import ConfigError, load_config, validate_config
+
+    (tmp_path / "runner.toml").write_text(
+        "[deploy]\nworkflow = 'deploy.yml'\nmax_review_rounds = 5\nmerge_method = 'squash'\n"
+    )
+    cfg = load_config(tmp_path)
+    validate_config(cfg)
+    assert cfg.deploy_settings.workflow == "deploy.yml"
+    assert cfg.deploy_settings.max_review_rounds == 5
+    assert cfg.deploy_settings.environment == "development"
+
+    for bad, message in (
+        ("[deploy]\nreview_bots = 'x'\n", "unknown"),
+        ("[deploy]\nmerge_method = 'yolo'\n", "merge_method"),
+        ("[deploy]\npoll_seconds = 0\n", "poll_seconds"),
+        ("[deploy]\nworkflow = ''\n", "workflow"),
+        ("deploy = 1\n", "must be a table"),
+    ):
+        (tmp_path / "runner.toml").write_text(bad)
+        with pytest.raises(ConfigError, match=message):
+            validate_config(load_config(tmp_path))
+
+
+def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _deploy_repo(tmp_path, monkeypatch)
+    gates = {"tickets": "pass", "criteria_tests": "pass", "review": "pass", "merge": "fail"}
+    monkeypatch.setattr(
+        cli,
+        "run_issue",
+        lambda *a, **k: RunReport(deploy=True, done=1, dod_failed_gate="merge", gates=gates),
+    )
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    out = capsys.readouterr().out
+    assert rc == 7
+    assert "definition of done: FAILED at merge" in out
+    assert "  review          pass\n" in out
+    assert "  merge           FAILED\n" in out
+    assert "  criteria_dev    not reached\n" in out

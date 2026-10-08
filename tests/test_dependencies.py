@@ -207,6 +207,33 @@ def test_dependency_cycle_blocks_both_tickets_without_model_calls(git_repo, cfg)
     assert all(t.blocked_stage == "dependencies" for t in store.tickets)
 
 
+@pytest.mark.parametrize(
+    "depends_on, reason",
+    [([9], "unknown ticket 9"), ([1], "cycle")],
+    ids=["missing-ticket", "itself"],
+)
+def test_plain_run_blocks_a_bad_dependency_instead_of_failing_the_plan(
+    git_repo, cfg, depends_on, reason
+):
+    """Only --deploy planning rejects a bad depends_on up front; a plain run keeps its behaviour."""
+    plan = json.dumps(
+        {
+            "summary": "one bad edge",
+            "tickets": [
+                {"title": "a", "description": "d", "test_assertion": "x", "depends_on": depends_on}
+            ],
+        }
+    )
+    client = FakeClient([(plan, None), (plan, None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.blocked == 1 and report.done == 0
+    assert [c["role"] for c in client.calls] == ["planner"], "the plan is accepted, not re-asked"
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert reason in store.tickets[0].blocked_reason
+    assert store.tickets[0].blocked_stage == "dependencies"
+
+
 def test_budget_stop_leaves_dependents_pending_not_blocked(git_repo, cfg):
     from issue_runner.budget import BudgetExhausted
 
