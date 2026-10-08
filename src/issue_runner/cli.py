@@ -283,7 +283,13 @@ def main(argv=None) -> int:
                 effort=args.effort or existing.effort,
             )
     for value in args.role_model or []:
-        role, model_id = value.split("=", 1)
+        role, _, model_id = value.partition("=")
+        if not role or not model_id or role not in ROLES:
+            print(
+                f"error: --role-model expects ROLE=MODEL with ROLE one of {', '.join(ROLES)}",
+                file=sys.stderr,
+            )
+            return 2
         cfg.roles[role] = RoleConfig(model=model_id, effort=cfg.role(role).effort)
 
     try:
