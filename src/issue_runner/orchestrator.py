@@ -4,7 +4,8 @@ Routing per ticket (Andy's spec):
   builder.tester (red enforced) -> builder.coder (green enforced) -> verifier
     refine_test -> back to tester (red not required: code exists) -> coder if red
     rework_code -> back to coder
-    pass        -> deterministic regression gate -> approved commit, ticket done
+    pass        -> deterministic regression gate (focused tests, or the full suite
+                   when shared files changed) -> approved commit, ticket done
 Unaccepted edits remain in the run workspace and never enter a later ticket.
 """
 
@@ -31,6 +32,7 @@ from .phases.build import (
     CoderFailure,
     TestAlreadyPasses,
     coder_step,
+    focused_test_command,
     resolve_test_path,
     run_test_command,
     run_tests,
@@ -778,7 +780,11 @@ def _process_ticket(
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("workspace changed after verification; refusing approval")
                 try:
-                    _regression_gate(cfg)
+                    changed = devops.changed_paths(cfg.repo_dir)
+                    if devops.shared_changes(cfg.repo_dir, changed, ticket.test_path):
+                        _regression_gate(cfg)
+                    else:
+                        _focused_gate(cfg, focused_test_command(cfg, ticket.test_path, changed))
                 except RegressionFailure as e:
                     cfg.control.check()
                     ticket.code_feedback = str(e)
@@ -947,6 +953,20 @@ def _regression_gate(cfg: RunnerConfig) -> None:
         )
     if "{test_path}" in command:
         raise BuildError("regression_cmd must run the suite without a {test_path} selector")
+    try:
+        passed, output = run_test_command(cfg, command)
+    except BuildError:
+        cfg.control.check()
+        raise
+    cfg.control.check()
+    if not passed:
+        raise RegressionFailure(
+            f"regression gate failed; repair existing behaviour:\n{output[-3000:]}"
+        )
+
+
+def _focused_gate(cfg: RunnerConfig, command: str) -> None:
+    cfg.control.check()
     try:
         passed, output = run_test_command(cfg, command)
     except BuildError:

@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from issue_runner import orchestrator
 from issue_runner.orchestrator import run_issue
 from tests.conftest import FakeClient
 from tests.hardening_support import ISSUE, git, load_store, sandbox
@@ -95,3 +96,44 @@ def test_verifier_cannot_change_the_files_it_approved(tmp_path):
     assert "read-only verifier modified" in load_store(env).tickets[0].blocked_reason
     assert (env.repo_dir / "unreviewed.py").read_text() == "VALUE = 99\n"
     assert "unreviewed.py" not in git(env.repo_dir, "ls-files")
+
+
+def test_new_files_only_run_focused_tests_per_ticket_then_full_suite_once(tmp_path, monkeypatch):
+    env, cfg = sandbox(tmp_path, max_rounds=0)
+    repo = env.repo_dir
+
+    def test():
+        (repo / "tests" / "test_added.py").write_text(
+            "def test_added():\n    from added import added\n\n    assert added() == 42\n"
+        )
+
+    def code():
+        (repo / "added.py").write_text("def added():\n    return 42\n")
+
+    plan = {
+        "summary": "Add behavior",
+        "tickets": [{"title": "add", "description": "d", "test_assertion": "added() == 42"}],
+    }
+    client = FakeClient(
+        [
+            (json.dumps(plan), None),
+            (json.dumps({"test_path": "tests/test_added.py"}), test),
+            ('{"changed_files":["added.py"]}', code),
+            ('{"verdict":"pass","reasons":["target passes"]}', None),
+        ]
+    )
+    real = orchestrator.run_test_command
+    commands = []
+
+    def recording(cfg_arg, command):
+        commands.append(command)
+        return real(cfg_arg, command)
+
+    monkeypatch.setattr("issue_runner.orchestrator.run_test_command", recording)
+
+    run_issue(cfg, client, ISSUE)
+
+    assert commands == [
+        cfg.test_cmd.format(test_path="tests/test_added.py"),
+        cfg.regression_cmd,
+    ]
