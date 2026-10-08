@@ -216,3 +216,16 @@ def test_shared_change_full_ticket_gate_skips_duplicate_final_gate(tmp_path, mon
     run_issue(cfg, client, ISSUE)
 
     assert commands == [cfg.regression_cmd]
+
+
+def test_failing_focused_gate_hands_the_ticket_back(tmp_path):
+    env, cfg, client = regression_scenario(tmp_path)
+    cfg.ticket_regression = "focused"
+
+    report = run_issue(cfg, client, ISSUE)
+
+    blocked_reason = load_store(env).tickets[0].blocked_reason
+    assert (
+        "regression gate failed; repair existing behaviour" in blocked_reason
+        and (report.done, report.blocked) == (0, 1)
+    )
