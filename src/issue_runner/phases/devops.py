@@ -389,7 +389,7 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     if not paths:
         raise DevopsError("nothing to commit")
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "-m", message)
     require_clean(repo_dir)
     return head_commit(repo_dir)
@@ -472,7 +472,7 @@ def finish_merge(repo_dir: Path, expected_branch: str) -> str:
         discard_paths(repo_dir, incidental)
         paths = changed_paths(repo_dir)
     _validate_paths(repo_dir, paths)
-    _git(repo_dir, "add", "-A", "--", *paths)
+    _stage_paths(repo_dir, paths)
     _git(repo_dir, "commit", "--no-edit")
     require_clean(repo_dir)
     return head_commit(repo_dir)
@@ -527,6 +527,18 @@ def ensure_excluded(repo_dir: Path, pattern: str) -> None:
         exclude.write_text(existing.rstrip("\n") + f"\n{pattern}\n")
 
 
+def _stage_paths(repo_dir: Path, paths, env=None) -> None:
+    """Stage paths, skipping those whose deletion is already staged."""
+    if not paths:
+        return
+    indexed = set(
+        filter(None, _git(repo_dir, "ls-files", "-z", "--cached", "--", *paths, env=env).stdout.split("\0"))
+    )
+    kept = [p for p in paths if p in indexed or os.path.lexists(Path(repo_dir) / p)]
+    if kept:
+        _git(repo_dir, "add", "-A", "--", *kept, env=env)
+
+
 def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = None) -> str:
     branch = current_branch(repo_dir)
     if not is_run_branch(branch) or (expected_branch is not None and branch != expected_branch):
@@ -543,8 +555,7 @@ def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = 
     ):
         raise DevopsError("the index changed outside the approved commit step")
     _validate_paths(repo_dir, ticket.changed_files)
-    if ticket.changed_files:
-        _git(repo_dir, "add", "--", *ticket.changed_files)
+    _stage_paths(repo_dir, ticket.changed_files)
     staged_paths = _git(repo_dir, "diff", "--cached", "--name-only", "--no-renames", "-z").stdout
     if set(filter(None, staged_paths.split("\0"))) != set(ticket.changed_files):
         raise DevopsError("the staged change set does not match the approved ticket")
