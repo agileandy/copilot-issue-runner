@@ -249,11 +249,17 @@ class UsageLedger:
         if totals["model_calls"] and totals["model_calls"] != totals["calls"]:
             parts.append(f"model calls: {totals['model_calls']}")
         roles = ", ".join(
-            f"{role}={data['calls']}" for role, data in sorted(self.by_role().items())
+            self._role_entry(role, data["calls"])
+            for role, data in sorted(self.by_role().items())
         )
         if roles:
             parts.append(f"by-role: {roles}")
         return "usage — " + ", ".join(parts)
+
+    def _role_entry(self, role: str, calls: int) -> str:
+        models = sorted({c.model for c in self.calls if c.role == role and c.model})
+        entry = f"{role}={calls}"
+        return f"{entry} ({'/'.join(models)})" if models else entry
 
     def run_entry(self) -> dict:
         return {

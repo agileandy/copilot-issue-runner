@@ -109,6 +109,11 @@ def test_summary_line_flags_failures():
     assert "failed: 1" in ledger_with(a_call(ok=False)).summary_line()
 
 
+def test_summary_line_shows_the_model_used_per_role():
+    ledger = ledger_with(a_call(role="resolver", model="claude-opus-4.5"))
+    assert "resolver=1 (claude-opus-4.5)" in ledger.summary_line()
+
+
 def test_format_duration():
     assert format_duration(9) == "9s"
     assert format_duration(75) == "1m15s"

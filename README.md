@@ -333,7 +333,7 @@ turn within that invocation. The `calls` total counts CLI invocations, not
 internal model turns. The summary prints in both plain and `--visual` modes:
 
 ```
-usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5, builder.tester=6, planner=1, verifier=2
+usage — calls: 14, duration: 4m12s, tokens: 51200 in / 8300 out, by-role: builder.coder=5 (claude-sonnet-4.5), builder.tester=6 (claude-sonnet-4.5), planner=1 (claude-opus-4.5), verifier=2 (claude-opus-4.5)
 ```
 
 Rollups are written to `.issue-runner/usage-issue-<n>.json`, with per-role and
