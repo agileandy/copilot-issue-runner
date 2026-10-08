@@ -255,3 +255,15 @@ def test_shared_changes_treats_existing_non_python_source_as_shared(git_repo):
     shared = shared_changes(git_repo, ["app.js", "tests/test_added.py"], "tests/test_added.py")
 
     assert shared == ["app.js"]
+
+
+def test_commit_ticket_commits_an_already_staged_deletion(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/150-x")
+    subprocess.run(["git", "rm", "-q", "seed.txt"], cwd=git_repo, check=True, capture_output=True)
+    (git_repo / "new.py").write_text("x = 1")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["new.py", "seed.txt"]
