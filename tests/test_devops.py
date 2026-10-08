@@ -166,3 +166,13 @@ def test_untracked_uv_lock_stays_out_of_the_ticket_commit(git_repo):
     approve_changes(git_repo, ticket)
     sha = commit_ticket(git_repo, ticket)
     assert files_in_commit(git_repo, sha) == ["real.py"]
+
+
+def test_untracked_uv_lock_stays_out_of_the_review_fix_commit(git_repo):
+    from issue_runner.phases.devops import commit_changes, files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "seed.txt").write_text("seed changed")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    sha = commit_changes(git_repo, "fix(review): r1", "feature/151-x")
+    assert files_in_commit(git_repo, sha) == ["seed.txt"]

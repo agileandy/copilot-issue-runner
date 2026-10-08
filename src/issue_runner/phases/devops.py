@@ -377,6 +377,10 @@ def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     if branch != expected_branch or not is_run_branch(branch):
         raise DevopsError(f"refusing to commit on {branch} — the run must be on {expected_branch}")
     paths = changed_paths(repo_dir)
+    incidental = incidental_paths(repo_dir, paths)
+    if incidental:
+        discard_paths(repo_dir, incidental)
+        paths = changed_paths(repo_dir)
     if not paths:
         raise DevopsError("nothing to commit")
     _validate_paths(repo_dir, paths)
