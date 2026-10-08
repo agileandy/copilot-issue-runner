@@ -6,6 +6,7 @@ import subprocess
 from ..config import RunnerConfig
 from ..testreport import strip_ansi
 from ..tickets import Ticket, TicketStore
+from . import devops
 
 MAX_FINDING_CHARS = 3000
 
@@ -13,6 +14,7 @@ MAX_FINDING_CHARS = 3000
 def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
     """Run each `[pre_pr]` command; return one finding per failing command, in order."""
     findings: list[dict] = []
+    guarded = (cfg.repo_dir / ".git").exists()
     for cmd in cfg.pre_pr.commands:
         cfg.control.check()
         cmd = cmd.replace("{base}", base)
@@ -28,8 +30,14 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
             )
         except (OSError, ValueError, subprocess.TimeoutExpired) as e:
             findings.append({"command": cmd, "text": str(e)})
-            continue
-        if result.returncode == 0:
+            result = None
+        if guarded:
+            changed = devops.changed_paths(cfg.repo_dir)
+            if changed:
+                raise devops.DevopsError(
+                    f"pre-PR command {cmd} changed the run worktree: {', '.join(changed)}"
+                )
+        if result is None or result.returncode == 0:
             continue
         text = strip_ansi((result.stdout or "") + (result.stderr or "")).strip()
         findings.append({"command": cmd, "text": text[-MAX_FINDING_CHARS:]})
