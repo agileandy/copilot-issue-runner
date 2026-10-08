@@ -11,6 +11,7 @@ from issue_runner.criteria import parse
 from issue_runner.github_flow import GithubError, GitHubFlow
 from issue_runner.orchestrator import run_issue
 from issue_runner.phases import delivery, review
+from issue_runner.phases.devops import DevopsError
 from issue_runner.phases.preflight import Preflight, PushTrigger
 from issue_runner.tickets import Delivery, TicketStore
 from tests.conftest import FakeClient
@@ -510,6 +511,43 @@ def test_a_fix_round_resumed_after_a_failed_reply_is_numbered_round_2(
     assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
         "### Review round 1",
         "### Review round 2",
+    ]
+
+
+def test_a_fix_round_whose_push_failed_is_still_recorded_in_the_pr_body(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    original = delivery.devops.push_branch
+    failures = [DevopsError("push rejected")]
+
+    def push_failing_once_on_the_fix(repo_dir, branch):
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if failures and subject.startswith("fix(review)"):
+            raise failures.pop()
+        return original(repo_dir, branch)
+
+    monkeypatch.setattr(delivery.devops, "push_branch", push_failing_once_on_the_fix)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, _, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+
+    # the fix is committed but never published: the thread is settled by hand and
+    # the reviewer looks at the head the resume pushes
+    fake.threads["PRRT_1"]["isResolved"] = True
+    fake.review_on_push = True
+    _, store, _ = run(cfg, git_repo, [])
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1"
     ]
 
 

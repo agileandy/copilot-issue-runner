@@ -313,8 +313,6 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
                 store.branch,
             )
             delivery.head_sha = store.last_commit = sha
-            store.save()
-            devops.push_branch(cfg.repo_dir, store.branch)
             delivery.review_rounds.append(
                 {
                     "round": len(delivery.review_rounds) + 1,
@@ -329,6 +327,7 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
             )
             delivery.body_stale = True
             store.save()
+            devops.push_branch(cfg.repo_dir, store.branch)
             try:
                 flow.update_pull_body(delivery.pr_number, pr_body(issue, store))
                 delivery.body_stale = False
