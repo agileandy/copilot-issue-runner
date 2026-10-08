@@ -54,6 +54,7 @@ class Delivery:
     body_stale: bool = False  # the PR description misses a review round
     waiting_since: float | None = None  # when the wait for the current head began
     handled_threads: list[str] = field(default_factory=list)
+    pending_replies: dict = field(default_factory=dict)  # thread ref -> reply, for an unpushed fix
     merge_attempts: int = 0
     merge_sha: str | None = None
     deploy_run_ids: list[int] = field(default_factory=list)
