@@ -109,6 +109,8 @@ def step(cfg: RunnerConfig, store: TicketStore, report=None) -> bool:
                 test_assertion=(
                     f"the pre-PR check '{finding['command']}' no longer reports this finding"
                 ),
+                kind="pre_pr",
+                pre_pr_command=finding["command"],
             )
         )
     store.save()
