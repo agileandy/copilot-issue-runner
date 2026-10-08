@@ -20,9 +20,15 @@ def update_pull_request(cfg: RunnerConfig, client, flow, number: int, state_dir:
     wt = devops.checkout_branch_worktree(
         cfg.repo_dir, branch, Path(state_dir) / "worktrees" / f"pr-{number}"
     )
+    client_config = getattr(client, "config", None)
+    original_client_dir = client_config.repo_dir if client_config is not None else None
     try:
+        if client_config is not None:
+            client_config.repo_dir = wt
         return update_pr_branch(client, dataclasses.replace(cfg, repo_dir=wt), branch, base)
     finally:
+        if client_config is not None:
+            client_config.repo_dir = original_client_dir
         _remove_if_clean(cfg.repo_dir, wt)
 
 
