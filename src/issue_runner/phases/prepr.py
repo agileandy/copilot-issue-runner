@@ -43,7 +43,11 @@ def step(cfg: RunnerConfig, store: TicketStore) -> bool:
     if store.delivery is not None and store.delivery.pr_number:
         return False
     findings = run_checks(cfg, store.initial_head or "")
-    store.pre_pr_rounds.append({"round": len(store.pre_pr_rounds) + 1, "findings": findings})
+    round_number = len(store.pre_pr_rounds) + 1
+    store.pre_pr_rounds.append({"round": round_number, "findings": findings})
+    if round_number > cfg.pre_pr.max_rounds:
+        store.save()
+        return False
     for finding in findings:
         next_id = max((t.id for t in store.tickets), default=0) + 1
         lines = finding["text"].splitlines()

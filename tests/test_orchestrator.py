@@ -771,3 +771,36 @@ def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
         [(t.title, t.status) for t in store.tickets],
     ) == (1, [("subtract ints", "done"), ("Fix pre-PR finding: unused import", "done")])
 
+
+
+def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    from issue_runner.config import PrePrConfig
+
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
+            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert (
+        len(pull_requests.created),
+        [t.title for t in store.tickets if t.title == "Fix pre-PR finding: still bad"],
+        len(store.pre_pr_rounds),
+    ) == (1, ["Fix pre-PR finding: still bad"], 2)
