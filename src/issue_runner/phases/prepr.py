@@ -9,6 +9,8 @@ from ..tickets import Ticket, TicketStore
 from . import devops
 
 MAX_FINDING_CHARS = 3000
+TOOL_ERROR_EXIT = 2
+MAX_TOOL_ERROR_CHARS = 500
 
 
 def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
@@ -39,6 +41,11 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
         if result.returncode == 0:
             continue
         text = strip_ansi((result.stdout or "") + (result.stderr or "")).strip()
+        if result.returncode == TOOL_ERROR_EXIT:
+            raise devops.DevopsError(
+                f"pre-PR command {cmd} failed with a tool error "
+                f"(exit {TOOL_ERROR_EXIT}): {text[:MAX_TOOL_ERROR_CHARS]}"
+            )
         findings.append({"command": cmd, "text": text[-MAX_FINDING_CHARS:]})
     return findings
 
