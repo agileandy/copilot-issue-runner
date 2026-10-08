@@ -931,6 +931,10 @@ flowchart LR
         <li>Thread replies and review requests are posted as the operator's <code>gh</code> identity, so the PR shows the operator commenting on their own review thread.</li>
       </ol>
     </details>
+    <details>
+      <summary>2026-10-08T18:30:00+08:00: plain runs keep their dependency behaviour</summary>
+      <p>The Phase 2 check that rejects an unknown or self <code>depends_on</code> now applies to <code>--deploy</code> planning only (<code>plan_with_criteria</code> and <code>plan_extra</code>). Plain planning accepts such a plan, and the build loop blocks the ticket with its reason, as it did before this work (<code>tests/test_dependencies.py</code>, "Ticket dependencies" in the README). The unknown-ID part of R4 is therefore closed for <code>--deploy</code> runs only.</p>
+    </details>
   </section>
 
 </main>
