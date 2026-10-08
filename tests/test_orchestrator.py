@@ -933,3 +933,36 @@ def test_unset_pre_pr_records_no_rounds_and_no_findings_section(git_repo, cfg, p
         "pre_pr_rounds" not in state,
         "### Remaining pre-PR findings" not in pull_requests.created[0]["body"],
     ) == (True, True, True)
+
+
+def test_an_unfixed_pre_pr_ticket_is_handed_back_to_the_coder_until_max_rounds(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    cfg.coder_retries = 0
+    cfg.max_rounds = 1
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"changed_files": [], "notes": "nothing"}), None),
+            (json.dumps({"changed_files": [], "notes": "nothing"}), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    ticket = next(t for t in store.tickets if t.kind == "pre_pr")
+    assert (ticket.status, ticket.blocked_stage, "max_rounds=1" in (ticket.blocked_reason or "")) == (
+        "blocked",
+        "coder",
+        True,
+    )

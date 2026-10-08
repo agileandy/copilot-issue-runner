@@ -710,9 +710,21 @@ def _process_ticket(
                 continue
 
             if ticket.kind == "pre_pr" and ticket.phase == "coder":
-                prepr.fix_step(
-                    client, cfg, ticket, feedback=ticket.code_feedback or None, journal=journal
-                )
+                try:
+                    prepr.fix_step(
+                        client, cfg, ticket, feedback=ticket.code_feedback or None, journal=journal
+                    )
+                except CoderFailure as e:
+                    # there is no tester to refine, so the coder gets the ticket back
+                    cfg.control.check()
+                    ticket.code_feedback = str(e)
+                    ticket.phase = "coder"
+                    journal.post(
+                        ticket, "builder.coder", "harness", str(e), "pre-PR finding not fixed"
+                    )
+                    if not _hand_back(cfg, store, ticket, report, str(e), "coder"):
+                        return
+                    continue
                 ticket.approved_digest = devops.workspace_digest(cfg.repo_dir)
                 ticket.code_feedback = ""
                 journal.post(
