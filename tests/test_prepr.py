@@ -128,3 +128,23 @@ def test_step_persists_findings_as_pre_pr_tickets_with_their_command(tmp_path):
     reloaded.load()
     t = reloaded.tickets[0]
     assert (t.kind, t.pre_pr_command) == ("pre_pr", cmd)
+
+
+def test_finding_for_returns_finding_until_fixed_then_none(tmp_path, tmp_path_factory):
+    from issue_runner.phases import prepr
+
+    script = tmp_path_factory.mktemp("lint-tool") / "fake_lint.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"if pathlib.Path({str(tmp_path / 'fixed')!r}).exists():\n"
+        "    sys.exit(0)\n"
+        "print('src/app.py:1: unused import')\n"
+        "sys.exit(1)\n"
+    )
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cmd = f"{sys.executable} {script}"
+
+    assert (
+        "unused import" in prepr.finding_for(cfg, cmd),
+        (tmp_path / "fixed").touch() or prepr.finding_for(cfg, cmd),
+    ) == (True, None)

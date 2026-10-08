@@ -23,6 +23,41 @@ def finding_lines(finding: dict, limit: int = MAX_FINDING_LINES) -> list[str]:
     return lines[:limit] + [f"… {hidden} more line(s)"]
 
 
+def _run(cfg: RunnerConfig, cmd: str) -> subprocess.CompletedProcess:
+    """Run one already-substituted pre-PR command in the run worktree."""
+    try:
+        return subprocess.run(
+            shlex.split(cmd),
+            cwd=cfg.repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=cfg.timeout,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        raise devops.DevopsError(f"pre-PR command {cmd} could not run: {e}") from e
+
+
+def finding_for(cfg: RunnerConfig, command: str) -> str | None:
+    """Re-run one pre-PR command in a dirty worktree; its finding text, or None when it passes."""
+    guarded = (cfg.repo_dir / ".git").exists()
+    if guarded:
+        digest_before = devops.workspace_digest(cfg.repo_dir)
+    result = _run(cfg, command)
+    if guarded and devops.workspace_digest(cfg.repo_dir) != digest_before:
+        raise devops.DevopsError(f"pre-PR command {command} changed the run worktree")
+    if result.returncode == 0:
+        return None
+    text = strip_ansi((result.stdout or "") + (result.stderr or "")).strip()
+    if result.returncode == TOOL_ERROR_EXIT:
+        raise devops.DevopsError(
+            f"pre-PR command {command} failed with a tool error "
+            f"(exit {TOOL_ERROR_EXIT}): {text[:MAX_TOOL_ERROR_CHARS]}"
+        )
+    return text[-MAX_FINDING_CHARS:]
+
+
 def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
     """Run each `[pre_pr]` command; return one finding per failing command, in order."""
     findings: list[dict] = []
@@ -33,18 +68,7 @@ def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
         if guarded:
             head_before = devops.head_commit(cfg.repo_dir)
             branch_before = devops.current_branch(cfg.repo_dir)
-        try:
-            result = subprocess.run(
-                shlex.split(cmd),
-                cwd=cfg.repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=cfg.timeout,
-                stdin=subprocess.DEVNULL,
-                check=False,
-            )
-        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
-            raise devops.DevopsError(f"pre-PR command {cmd} could not run: {e}") from e
+        result = _run(cfg, cmd)
         if guarded:
             changed = devops.changed_paths(cfg.repo_dir)
             if changed:
