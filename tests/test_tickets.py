@@ -59,3 +59,15 @@ def test_invalid_status_rejected():
     t = make_ticket()
     with pytest.raises(ValueError):
         t.status = "nonsense"
+
+
+def test_pre_pr_rounds_persist_across_save_and_load(tmp_path):
+    rounds = [{"round": 1, "findings": [{"command": "c", "text": "t"}]}]
+    store = TicketStore(tmp_path / "state", issue_ref="17")
+    store.set_tickets([make_ticket(1)])
+    store.pre_pr_rounds = rounds
+    store.save()
+
+    reloaded = TicketStore(tmp_path / "state", issue_ref="17")
+    reloaded.load()
+    assert reloaded.pre_pr_rounds == rounds

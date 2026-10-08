@@ -150,6 +150,7 @@ class TicketStore:
         self.last_commit: str | None = None
         self.workspace_ready: bool = False
         self.delivery: Delivery | None = None
+        self.pre_pr_rounds: list[dict] = []
 
     @property
     def state_file(self) -> Path:
@@ -208,6 +209,8 @@ class TicketStore:
             "tickets": [t.to_dict() for t in self.tickets],
             "delivery": self.delivery.to_dict() if self.delivery else None,
         }
+        if self.pre_pr_rounds:
+            payload["pre_pr_rounds"] = self.pre_pr_rounds
         try:
             write_json(self.state_file, payload)
         except OSError as e:
@@ -241,4 +244,5 @@ class TicketStore:
         self.workspace_ready = payload.get("workspace_ready", False)
         self.tickets = tickets
         self.delivery = delivery
+        self.pre_pr_rounds = payload.get("pre_pr_rounds", [])
         return True
