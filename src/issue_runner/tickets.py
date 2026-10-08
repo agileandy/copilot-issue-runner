@@ -107,6 +107,7 @@ class Ticket:
     approved_digest: str | None = None
     approved_tree: str | None = None
     approved_index: str | None = None
+    full_regression_tree: str | None = None
 
     def __post_init__(self) -> None:
         self.status = self._status

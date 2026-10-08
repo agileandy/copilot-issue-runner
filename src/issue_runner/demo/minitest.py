@@ -10,8 +10,8 @@ the runner can tell "one test executed and failed" from "nothing ran at all"
 instead of guessing from an exit code. Exit codes are kept as they were: 0
 green, 1 a real test failure, 2 nothing executable.
 
-A directory argument runs every `test_*.py` beneath it, which is what a
-whole-suite regression check needs.
+Several arguments run together. A directory argument runs every `test_*.py`
+beneath it, which is what a whole-suite regression check needs.
 """
 
 import importlib.util
@@ -40,9 +40,10 @@ def _load(path: Path):
     return module, None
 
 
-def run(path: Path) -> int:
+def run(*paths: Path) -> int:
     sys.path.insert(0, str(Path.cwd()))
-    files = _collect(path)
+    files = [file for p in paths for file in _collect(p)]
+    path = " ".join(str(p) for p in paths)
     print("TAP version 13")
     if not files:
         print(f"1..0 # no test file under {path}")
@@ -91,10 +92,10 @@ def run(path: Path) -> int:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 1:
-        print("usage: minitest.py <test_file_or_directory>")
+    if not args:
+        print("usage: minitest.py <test_file_or_directory>...")
         return 2
-    return run(Path(args[0]))
+    return run(*(Path(a) for a in args))
 
 
 if __name__ == "__main__":

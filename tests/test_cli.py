@@ -1249,3 +1249,12 @@ def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, cap
     assert "  review          pass\n" in out
     assert "  merge           FAILED\n" in out
     assert "  criteria_dev    not reached\n" in out
+
+
+def test_ticket_regression_reads_from_runner_toml(tmp_path):
+    from issue_runner.config import load_config
+
+    (tmp_path / "runner.toml").write_text(
+        'test_cmd = "pytest -q"\nticket_regression = "focused"\n'
+    )
+    assert load_config(tmp_path).ticket_regression == "focused"

@@ -12,6 +12,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from ..testcmd import related_tests
 from ..tickets import Ticket
 
 
@@ -43,6 +44,10 @@ def current_branch(repo_dir: Path) -> str:
 
 def head_commit(repo_dir: Path) -> str:
     return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
+
+
+def head_tree(repo_dir: Path) -> str:
+    return _git(repo_dir, "rev-parse", "HEAD^{tree}").stdout.strip()
 
 
 def changed_paths(repo_dir: Path) -> list[str]:
@@ -563,3 +568,39 @@ def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = 
         raise DevopsError("a commit hook changed the approved tree; the commit was not accepted")
     require_clean(repo_dir)
     return sha
+
+
+def _existed_at_head(repo_dir: Path, path: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{path}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def _is_test_path(path: str) -> bool:
+    name = Path(path).name
+    if name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")):
+        return True
+    return "tests" in Path(path).parts[:-1]
+
+
+def shared_changes(repo_dir: Path, changed_files: list[str], own_test: str) -> list[str]:
+    """Changed non-test files that existed at HEAD and may affect other tests.
+
+    Related-test discovery covers Python imports only, so an existing non-Python
+    file is always shared. A Python file is shared when another test imports it.
+    """
+    shared: list[str] = []
+    for path in changed_files:
+        if _is_test_path(path) or not _existed_at_head(repo_dir, path):
+            continue
+        if not path.endswith(".py") or any(
+            test != own_test for test in related_tests(repo_dir, [path])
+        ):
+            shared.append(path)
+    return sorted(shared)

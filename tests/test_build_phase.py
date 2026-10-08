@@ -304,3 +304,18 @@ def test_the_coder_is_told_it_tampered(repo, cfg):
     client = FakeClient([("done", cheat), ("done", honest)])
     coder_step(client, cfg, ticket(), "test_subtract.py")
     assert "modified the test file" in client.calls[1]["prompt"]
+
+
+def test_focused_test_command_runs_the_ticket_test_and_its_related_tests(tmp_path):
+    from issue_runner.config import RunnerConfig
+    from issue_runner.phases.build import focused_test_command
+
+    (tmp_path / "feature.py").write_text("def existing():\n    return 1\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_existing.py").write_text("from feature import existing\n")
+    cfg = RunnerConfig(repo_dir=tmp_path, test_cmd="python -m pytest {test_path} -q")
+
+    assert (
+        focused_test_command(cfg, "tests/test_added.py", ["feature.py", "tests/test_added.py"])
+        == "python -m pytest tests/test_added.py tests/test_existing.py -q"
+    )

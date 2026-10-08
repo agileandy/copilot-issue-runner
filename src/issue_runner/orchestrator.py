@@ -4,7 +4,8 @@ Routing per ticket (Andy's spec):
   builder.tester (red enforced) -> builder.coder (green enforced) -> verifier
     refine_test -> back to tester (red not required: code exists) -> coder if red
     rework_code -> back to coder
-    pass        -> deterministic regression gate -> approved commit, ticket done
+    pass        -> deterministic regression gate (focused tests, or the full suite
+                   when shared files changed) -> approved commit, ticket done
 Unaccepted edits remain in the run workspace and never enter a later ticket.
 """
 
@@ -31,6 +32,7 @@ from .phases.build import (
     CoderFailure,
     TestAlreadyPasses,
     coder_step,
+    focused_test_command,
     resolve_test_path,
     run_test_command,
     run_tests,
@@ -414,7 +416,13 @@ def _run_issue(
                     "run branch moved after its last accepted commit; refusing publication"
                 )
             approved_head = devops.head_commit(cfg.repo_dir)
-            _regression_gate(cfg)
+            done = [t for t in store.tickets if t.status == "done"]
+            if not (
+                done
+                and done[-1].full_regression_tree
+                and done[-1].full_regression_tree == devops.head_tree(cfg.repo_dir)
+            ):
+                _regression_gate(cfg)
             cfg.control.check()
             devops.require_clean(cfg.repo_dir)
             if (
@@ -777,8 +785,17 @@ def _process_ticket(
             if ticket.phase == "regression":
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("workspace changed after verification; refusing approval")
+                full_run = False
                 try:
-                    _regression_gate(cfg)
+                    changed = devops.changed_paths(cfg.repo_dir)
+                    if cfg.ticket_regression == "full" or (
+                        cfg.ticket_regression != "focused"
+                        and devops.shared_changes(cfg.repo_dir, changed, ticket.test_path)
+                    ):
+                        _regression_gate(cfg)
+                        full_run = cfg.ticket_regression != "full"
+                    else:
+                        _focused_gate(cfg, focused_test_command(cfg, ticket.test_path, changed))
                 except RegressionFailure as e:
                     cfg.control.check()
                     ticket.code_feedback = str(e)
@@ -792,6 +809,7 @@ def _process_ticket(
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("regression command modified the workspace; changes retained")
                 devops.approve_changes(cfg.repo_dir, ticket)
+                ticket.full_regression_tree = ticket.approved_tree if full_run else None
                 ticket.phase = "commit"
                 store.save()
                 continue
@@ -947,6 +965,20 @@ def _regression_gate(cfg: RunnerConfig) -> None:
         )
     if "{test_path}" in command:
         raise BuildError("regression_cmd must run the suite without a {test_path} selector")
+    try:
+        passed, output = run_test_command(cfg, command)
+    except BuildError:
+        cfg.control.check()
+        raise
+    cfg.control.check()
+    if not passed:
+        raise RegressionFailure(
+            f"regression gate failed; repair existing behaviour:\n{output[-3000:]}"
+        )
+
+
+def _focused_gate(cfg: RunnerConfig, command: str) -> None:
+    cfg.control.check()
     try:
         passed, output = run_test_command(cfg, command)
     except BuildError:
