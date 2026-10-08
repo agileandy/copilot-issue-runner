@@ -177,7 +177,13 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     except BaseException:
         devops.abort_merge(repo)
         raise
-    devops.push_branch(repo, branch)
+    try:
+        devops.push_branch(repo, branch)
+    except devops.DevopsError as e:
+        devops.reset_hard(repo, head)
+        raise MergeError(
+            f"origin/{branch} moved during the update; nothing was pushed, rerun --update-pr"
+        ) from e
     return sha
 
 

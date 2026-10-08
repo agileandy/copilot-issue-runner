@@ -373,6 +373,11 @@ def push_branch(repo_dir: Path, branch: str) -> None:
     _git(repo_dir, "push", "-u", "origin", branch)
 
 
+def reset_hard(repo_dir: Path, ref: str) -> None:
+    """Move the checked-out branch and worktree back to `ref`."""
+    _git(repo_dir, "reset", "--hard", ref)
+
+
 def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
     """Commit every current change on the run branch, after the runner's own checks."""
     branch = current_branch(repo_dir)

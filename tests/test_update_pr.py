@@ -149,6 +149,37 @@ def test_update_pr_branch_rejects_a_resolver_edit_outside_the_conflict(
         merge.update_pr_branch(client, no_retries, BRANCH, "main")
 
 
+def test_update_pr_branch_refuses_the_push_when_origins_pr_branch_moved_and_changes_no_ref(
+    conflicting_pr_branch, git_repo, cfg, tmp_path_factory  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    head = devops.head_commit(git_repo)
+    advanced = {}
+
+    def resolve_while_origin_advances():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        clone = tmp_path_factory.mktemp("racer") / "clone"
+        subprocess.run(["git", "clone", "-q", str(conflicting_pr_branch), str(clone)], check=True)
+        _git(clone, "checkout", "-q", BRANCH)
+        (clone / "racer.py").write_text("z = 3\n")
+        _git(clone, "add", "racer.py")
+        _git(clone, "commit", "-q", "-m", "feat: teammate pushes to the PR branch")
+        _git(clone, "push", "-q", "origin", BRANCH)
+        advanced["sha"] = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    client = FakeClient([('{"notes":"ok"}', resolve_while_origin_advances)])
+
+    with pytest.raises(merge.MergeError, match="moved during the update"):
+        merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    remote_tip = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "rev-parse", BRANCH
+    ).stdout.strip()
+    local_tip = _git(git_repo, "rev-parse", BRANCH).stdout.strip()
+    assert (remote_tip, local_tip) == (advanced["sha"], head)
+
+
 def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
     conflicting_pr_branch, git_repo, cfg  # noqa: F811
 ):
