@@ -154,3 +154,15 @@ def test_worktree_state_reports_untracked_file(git_repo):
         "dirty": True,
         "uncommitted": ["notes.md"],
     }
+
+
+def test_untracked_uv_lock_stays_out_of_the_ticket_commit(git_repo):
+    from issue_runner.phases.devops import files_in_commit
+
+    create_branch(git_repo, "feature/151-x")
+    (git_repo / "real.py").write_text("x = 1")
+    (git_repo / "uv.lock").write_text("version = 1\n")
+    ticket = _ticket()
+    approve_changes(git_repo, ticket)
+    sha = commit_ticket(git_repo, ticket)
+    assert files_in_commit(git_repo, sha) == ["real.py"]
