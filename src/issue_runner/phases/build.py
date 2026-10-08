@@ -284,7 +284,7 @@ def tester_step(
             description=ticket.description,
             test_assertion=ticket.test_assertion,
             files_hint=", ".join(ticket.files_hint) or "explore the repo",
-            rules=workspace_rules(cfg),
+            rules=workspace_rules(cfg, ticket=True),
             feedback=extra,
         )
         reply = client.run(prompt, role="builder.tester", session_name=f"tester-t{ticket.id}")
