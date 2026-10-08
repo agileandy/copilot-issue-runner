@@ -219,6 +219,23 @@ def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
     assert (status, devops.merge_in_progress(git_repo)) == ("", False)
 
 
+def test_update_pr_branch_aborts_the_merge_when_the_snapshot_raises(
+    conflicting_pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    def denied(_repo):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("issue_runner.phases.devops.merge_snapshot", denied)
+
+    with pytest.raises(PermissionError):
+        merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main")
+
+    status = _git(git_repo, "status", "--porcelain").stdout
+    assert (status, devops.merge_in_progress(git_repo)) == ("", False)
+
+
 @pytest.fixture
 def modify_delete_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
     remote = tmp_path_factory.mktemp("origin") / "remote.git"

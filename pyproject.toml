@@ -32,7 +32,5 @@ target-version = "py312"
 extend-exclude = ["./factory"]
 
 [tool.ruff.lint.per-file-ignores]
-# the spec test imports the module under an alias it asserts against
-"tests/test_build_no_tests_error.py" = ["PLR0402"]
 # the nested pytest.raises keeps the outer lock's entry outside the expected failure
 "tests/test_devops.py" = ["SIM117"]

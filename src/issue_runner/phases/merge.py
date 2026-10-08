@@ -141,8 +141,8 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     conflicted = devops.merge_in(
         repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}"
     )
-    snapshot = devops.merge_snapshot(repo)
     try:
+        snapshot = devops.merge_snapshot(repo)
         problem = _pr_problem(cfg, conflicted)
         feedback = ""
         attempts = 0
