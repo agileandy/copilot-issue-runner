@@ -313,8 +313,27 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
                 store.branch,
             )
             delivery.head_sha = store.last_commit = sha
+            delivery.review_rounds.append(
+                {
+                    "round": len(delivery.review_rounds) + 1,
+                    "sha": sha,
+                    "fixed": [
+                        {"where": by_ref[ref].where, "reason": reason}
+                        for ref, (action, reason) in revision.actions.items()
+                        if action == "fixed"
+                    ],
+                    "notes": revision.notes,
+                }
+            )
+            delivery.body_stale = True
             store.save()
             devops.push_branch(cfg.repo_dir, store.branch)
+            try:
+                flow.update_pull_body(delivery.pr_number, pr_body(issue, store))
+                delivery.body_stale = False
+                store.save()
+            except GithubError as e:
+                log.warning("could not update the body of PR #%s: %s", delivery.pr_number, e)
             replies = {ref: f"{body} ({sha[:12]})" for ref, body in replies.items()}
         for ref, body in replies.items():
             if ref in delivery.handled_threads:
@@ -341,6 +360,13 @@ def _merging(cfg, client, issue, store: TicketStore, delivery: Delivery) -> None
     if delivery.gates["review"] != "pass":
         delivery.stage = "reviewing"
         return
+    if delivery.body_stale:
+        try:
+            flow.update_pull_body(number, pr_body(issue, store))
+        except GithubError as e:
+            raise GateFailed(f"could not update the body of PR #{number}: {e}") from e
+        delivery.body_stale = False
+        store.save()
     _sync_push(cfg, store, delivery)
     pr = _settled_pull(cfg, flow, number)
     head = (pr.get("head") or {}).get("sha")
@@ -752,6 +778,11 @@ def pr_body(issue: dict, store: TicketStore) -> str:
     for ticket in store.tickets:
         if ticket.status == "done":
             lines.append(f"- {ticket.id}. {ticket.title} — asserts `{ticket.test_assertion}`")
+    for entry in store.delivery.review_rounds if store.delivery else []:
+        lines += ["", f"### Review round {entry['round']} (`{entry['sha'][:12]}`)"]
+        lines += [f"- `{f['where']}`: {f['reason']}" for f in entry["fixed"]]
+        if entry["notes"]:
+            lines.append(f"Changed behaviour: {entry['notes']}")
     lines += [
         "",
         (
