@@ -270,3 +270,46 @@ def test_branch_lock_is_shared_by_every_worktree_of_a_repository(tmp_path):
     with devops.branch_lock(env.repo_dir, branch), ExitStack() as stack:
         with pytest.raises(DevopsError, match=f"another issue-runner owns this branch {branch}"):
             stack.enter_context(devops.branch_lock(linked, branch))
+
+
+def test_ensure_excluded_keeps_every_pattern_when_worktrees_race(tmp_path, monkeypatch):
+    import pathlib
+    import threading
+
+    from issue_runner.phases import devops
+    from tests.hardening_support import git, sandbox
+
+    env, _ = sandbox(tmp_path)
+    worktree_a = tmp_path / "a"
+    worktree_b = tmp_path / "b"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-a", str(worktree_a))
+    git(env.repo_dir, "worktree", "add", "-b", "wt-b", str(worktree_b))
+    exclude = devops.git_common_dir(env.repo_dir) / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    if not exclude.exists():
+        exclude.write_text("")
+
+    barrier = threading.Barrier(2, timeout=1)
+    original_read_text = pathlib.Path.read_text
+
+    def racing_read_text(self, *args, **kwargs):
+        if self.name == "exclude":
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", racing_read_text)
+    threads = [
+        threading.Thread(target=devops.ensure_excluded, args=(worktree_a, "/.issue-runner-a/")),
+        threading.Thread(target=devops.ensure_excluded, args=(worktree_b, "/.issue-runner-b/")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    monkeypatch.undo()
+
+    lines = exclude.read_text().splitlines()
+    assert {"/.issue-runner-a/", "/.issue-runner-b/"} <= set(lines)
