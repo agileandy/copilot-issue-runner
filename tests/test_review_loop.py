@@ -1,13 +1,14 @@
 """Phase 4: the PR is opened, reviewed, fixed and re-reviewed until the review passes."""
 
 import json
+import re
 import subprocess
 
 import pytest
 
 from issue_runner.cli import _exit_code
 from issue_runner.criteria import parse
-from issue_runner.github_flow import GitHubFlow
+from issue_runner.github_flow import GithubError, GitHubFlow
 from issue_runner.orchestrator import run_issue
 from issue_runner.phases import delivery, review
 from issue_runner.phases.preflight import Preflight, PushTrigger
@@ -181,14 +182,27 @@ def test_pr_body_lists_each_recorded_review_round(tmp_path):
                 "sha": "abc123def4567890",
                 "fixed": [{"where": "impl.py:1", "reason": "None is handled"}],
                 "notes": "subtract now rejects None",
-            }
+            },
+            {
+                "round": 2,
+                "sha": "fedcba9876543210",
+                "fixed": [{"where": "impl.py:2", "reason": "zero is handled"}],
+                "notes": "subtract now rejects zero",
+            },
         ]
     )
-    assert (
+    body = delivery.pr_body(ISSUE, store)
+    first = (
         "### Review round 1 (`abc123def456`)\n"
         "- `impl.py:1`: None is handled\n"
         "Changed behaviour: subtract now rejects None"
-    ) in delivery.pr_body(ISSUE, store)
+    )
+    second = (
+        "### Review round 2 (`fedcba987654`)\n"
+        "- `impl.py:2`: zero is handled\n"
+        "Changed behaviour: subtract now rejects zero"
+    )
+    assert first in body and second in body and body.index(first) < body.index(second)
 
 
 # --- the loop, end to end -----------------------------------------------------------
@@ -440,3 +454,66 @@ def test_a_rerun_reuses_the_open_pr_and_retries_the_review(env, git_repo):  # no
     report, store, _ = run(cfg, git_repo, [])
     assert store.delivery.gates["review"] == "pass"
     assert list(fake.pulls) == [number]
+
+
+def test_a_fix_round_resumed_after_a_failed_reply_is_numbered_round_2(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [
+        Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]),
+        Head(verdict=CHANGES, threads=[("impl.py", 2, "handle zero")]),
+        Head(),
+    ]
+    original = GitHubFlow.reply_to_thread
+    failures = [GithubError("reply failed")]
+
+    def reply_once_failing(self, thread_id, body):
+        if failures:
+            raise failures.pop()
+        return original(self, thread_id, body)
+
+    monkeypatch.setattr(GitHubFlow, "reply_to_thread", reply_once_failing)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, store, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+    assert [r["round"] for r in store.delivery.review_rounds] == [1]
+    assert store.delivery.review_round == 0
+
+    # the unanswered thread from round 1 is still open, so the reviser sees it again
+    resume = [
+        reviser(
+            [("T1", "fixed", "None is handled")], edit(git_repo, content="code, reviewed twice")
+        )
+    ]
+    _, store, client = run(cfg, git_repo, resume)
+    prompt = next(c for c in client.calls if c["role"] == "reviser")["prompt"]
+    assert "T1 [thread] impl.py:1: copilot-pull-request-reviewer: handle None" in prompt
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1",
+        "### Review round 2",
+    ]
+
+
+def test_two_fix_rounds_both_appear_in_the_final_pr_body(env, git_repo):  # noqa: F811
+    fake, _, cfg = env
+    fake.scenarios = [
+        Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]),
+        Head(verdict=CHANGES, threads=[("impl.py", 2, "handle zero")]),
+        Head(),
+    ]
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+        reviser(
+            [("T2", "fixed", "zero is handled")], edit(git_repo, content="code, reviewed twice")
+        ),
+    ]
+    _, store, client = run(cfg, git_repo, script)
+    prompts = [c["prompt"] for c in client.calls if c["role"] == "reviser"]
+    assert "T2 [thread] impl.py:2: copilot-pull-request-reviewer: handle zero" in prompts[1]
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1",
+        "### Review round 2",
+    ]

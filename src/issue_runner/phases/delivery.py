@@ -317,7 +317,7 @@ def _revising(cfg, client, issue, store: TicketStore, delivery: Delivery) -> Non
             devops.push_branch(cfg.repo_dir, store.branch)
             delivery.review_rounds.append(
                 {
-                    "round": delivery.review_round + 1,
+                    "round": len(delivery.review_rounds) + 1,
                     "sha": sha,
                     "fixed": [
                         {"where": by_ref[ref].where, "reason": reason}
