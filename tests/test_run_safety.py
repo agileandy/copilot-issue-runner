@@ -162,3 +162,26 @@ def test_second_run_on_a_shared_state_directory_is_refused(tmp_path):
     ):
         run_issue(cfg_b, client_b, ISSUE, state_dir=shared_state)
     assert client_b.roles == []
+
+
+def test_a_run_cannot_create_a_branch_another_worktree_owns(tmp_path):
+    env, _ = sandbox(tmp_path)
+    linked = tmp_path / "linked"
+    git(env.repo_dir, "worktree", "add", "-b", "wt-b", str(linked))
+    cfg_b = RunnerConfig(
+        repo_dir=linked,
+        copilot_cmd=str(env.copilot_cmd),
+        test_cmd=env.test_cmd,
+        regression_cmd=env.test_cmd.format(test_path="tests"),
+        isolate_worktree=False,
+        github_tickets=False,
+        open_pr=False,
+    )
+    client_b = DemoClient(cfg_b)
+    branch = "feature/17-add-statistics"
+    with (
+        devops.branch_lock(env.repo_dir, branch),
+        pytest.raises(DevopsError, match=f"owns this branch {branch}"),
+    ):
+        run_issue(cfg_b, client_b, ISSUE)
+    assert client_b.roles == [] and devops.branch_exists(env.repo_dir, branch) is False

@@ -12,7 +12,7 @@ Unaccepted edits remain in the run workspace and never enter a later ticket.
 import base64
 import hashlib
 import logging
-from contextlib import nullcontext
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -118,15 +118,18 @@ def run_issue(
     state_dir = state_dir.resolve()
     store = TicketStore(state_dir, issue_ref=issue_ref)
     report = RunReport(plan_only=plan_only)
-    lock = nullcontext() if plan_only else devops.repository_lock(source)
     try:
-        with devops.state_lock(state_dir), lock:
+        with devops.state_lock(state_dir), ExitStack() as locks:
+            if not plan_only:
+                locks.enter_context(devops.repository_lock(source))
             try:
                 store.load()
                 if store.source_repo and Path(store.source_repo).resolve() != source:
                     raise StateError("saved state belongs to a different source repository")
                 store.source_repo = str(source)
                 if not plan_only:
+                    branch = store.branch or devops.branch_name(issue_ref, branch_slug, branch_kind)
+                    locks.enter_context(devops.branch_lock(source, branch))
                     _prepare_workspace(cfg, store, source, branch_slug, branch_kind)
                     _prepare_toolchain(cfg, source)
                     if client_config is not None:
