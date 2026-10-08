@@ -200,3 +200,19 @@ def test_full_ticket_regression_runs_full_suite_per_ticket_for_new_files_only(
     run_issue(cfg, client, ISSUE)
 
     assert commands == [cfg.regression_cmd, cfg.regression_cmd]
+
+
+def test_shared_change_full_ticket_gate_skips_duplicate_final_gate(tmp_path, monkeypatch):
+    _env, cfg, client = regression_scenario(tmp_path, break_existing=False)
+    real = orchestrator.run_test_command
+    commands = []
+
+    def recording(cfg_arg, command):
+        commands.append(command)
+        return real(cfg_arg, command)
+
+    monkeypatch.setattr("issue_runner.orchestrator.run_test_command", recording)
+
+    run_issue(cfg, client, ISSUE)
+
+    assert commands == [cfg.regression_cmd]

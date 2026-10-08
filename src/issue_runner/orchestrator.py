@@ -416,7 +416,13 @@ def _run_issue(
                     "run branch moved after its last accepted commit; refusing publication"
                 )
             approved_head = devops.head_commit(cfg.repo_dir)
-            _regression_gate(cfg)
+            done = [t for t in store.tickets if t.status == "done"]
+            if not (
+                done
+                and done[-1].full_regression_tree
+                and done[-1].full_regression_tree == devops.head_tree(cfg.repo_dir)
+            ):
+                _regression_gate(cfg)
             cfg.control.check()
             devops.require_clean(cfg.repo_dir)
             if (
@@ -779,6 +785,7 @@ def _process_ticket(
             if ticket.phase == "regression":
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("workspace changed after verification; refusing approval")
+                full_run = False
                 try:
                     changed = devops.changed_paths(cfg.repo_dir)
                     if cfg.ticket_regression == "full" or (
@@ -786,6 +793,7 @@ def _process_ticket(
                         and devops.shared_changes(cfg.repo_dir, changed, ticket.test_path)
                     ):
                         _regression_gate(cfg)
+                        full_run = cfg.ticket_regression != "full"
                     else:
                         _focused_gate(cfg, focused_test_command(cfg, ticket.test_path, changed))
                 except RegressionFailure as e:
@@ -801,6 +809,7 @@ def _process_ticket(
                 if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
                     raise BuildError("regression command modified the workspace; changes retained")
                 devops.approve_changes(cfg.repo_dir, ticket)
+                ticket.full_regression_tree = ticket.approved_tree if full_run else None
                 ticket.phase = "commit"
                 store.save()
                 continue

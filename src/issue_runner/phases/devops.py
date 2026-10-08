@@ -46,6 +46,10 @@ def head_commit(repo_dir: Path) -> str:
     return _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
 
 
+def head_tree(repo_dir: Path) -> str:
+    return _git(repo_dir, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+
 def changed_paths(repo_dir: Path) -> list[str]:
     paths = set()
     for args in (
