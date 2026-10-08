@@ -135,38 +135,42 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     conflicted = devops.merge_in(
         repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}"
     )
-    problem = _pr_problem(cfg, conflicted)
-    feedback = ""
-    attempts = 0
-    while problem is not None:
-        if not conflicted or attempts > cfg.coder_retries:
-            devops.abort_merge(repo)
-            raise MergeError(f"could not merge origin/{base}: {problem}")
-        attempts += 1
-        client.run(
-            RESOLVER_PR_PROMPT.format(
-                branch=branch,
-                base=base,
-                conflicted="\n".join(f"  - {p}" for p in conflicted),
-                problem=problem,
-                rules=workspace_rules(cfg),
-                feedback=feedback,
-            ),
-            role="resolver",
-            session_name=f"resolver-pr-{branch}",
-        )
-        if devops.current_branch(repo) != branch or devops.head_commit(repo) != head:
-            devops.abort_merge(repo)
-            raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
-        if not devops.merge_in_progress(repo):
-            raise MergeError("the resolver ended the merge; only the runner finishes it")
-        stray = [p for p in devops.worktree_edits(repo) if p not in conflicted]
-        if stray:
-            problem = f"the resolver edited files outside the conflict: {', '.join(stray)}"
-        else:
-            problem = _pr_problem(cfg, conflicted)
-        feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
-    sha = devops.finish_merge(repo, branch)
+    try:
+        problem = _pr_problem(cfg, conflicted)
+        feedback = ""
+        attempts = 0
+        while problem is not None:
+            if not conflicted or attempts > cfg.coder_retries:
+                devops.abort_merge(repo)
+                raise MergeError(f"could not merge origin/{base}: {problem}")
+            attempts += 1
+            client.run(
+                RESOLVER_PR_PROMPT.format(
+                    branch=branch,
+                    base=base,
+                    conflicted="\n".join(f"  - {p}" for p in conflicted),
+                    problem=problem,
+                    rules=workspace_rules(cfg),
+                    feedback=feedback,
+                ),
+                role="resolver",
+                session_name=f"resolver-pr-{branch}",
+            )
+            if devops.current_branch(repo) != branch or devops.head_commit(repo) != head:
+                devops.abort_merge(repo)
+                raise MergeError("the resolver moved HEAD or the branch; only the runner commits")
+            if not devops.merge_in_progress(repo):
+                raise MergeError("the resolver ended the merge; only the runner finishes it")
+            stray = [p for p in devops.worktree_edits(repo) if p not in conflicted]
+            if stray:
+                problem = f"the resolver edited files outside the conflict: {', '.join(stray)}"
+            else:
+                problem = _pr_problem(cfg, conflicted)
+            feedback = f"\nYOUR PREVIOUS ATTEMPT WAS REJECTED (fix this):\n{problem}" if problem else ""
+        sha = devops.finish_merge(repo, branch)
+    except BaseException:
+        devops.abort_merge(repo)
+        raise
     devops.push_branch(repo, branch)
     return sha
 

@@ -122,3 +122,19 @@ def test_update_pr_branch_rejects_a_resolver_edit_outside_the_conflict(
 
     with pytest.raises(merge.MergeError, match="outside the conflict: other.py"):
         merge.update_pr_branch(client, no_retries, BRANCH, "main")
+
+
+def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.copilot import CopilotError
+    from issue_runner.phases import devops
+
+    def boom():
+        raise CopilotError("boom")
+
+    with pytest.raises(CopilotError):
+        merge.update_pr_branch(FakeClient([('{"notes":"ok"}', boom)]), cfg, BRANCH, "main")
+
+    status = _git(git_repo, "status", "--porcelain").stdout
+    assert (status, devops.merge_in_progress(git_repo)) == ("", False)
