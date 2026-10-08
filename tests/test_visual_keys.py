@@ -22,6 +22,7 @@ def run_bun_test(name: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
+        check=False,
     )
 
 

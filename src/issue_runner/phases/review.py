@@ -177,7 +177,7 @@ HARD RULES:
 Reply with ONLY this JSON (no prose):
 {{
   "threads": [{{"ref": "T1", "action": "fixed" | "not_applicable", "reason": "<one line>"}}],
-  "notes": "<one line about the whole change>"
+  "notes": "<one line: any behaviour this change alters, or what it fixes>"
 }}
 {feedback}"""
 
