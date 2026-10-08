@@ -626,6 +626,54 @@ def test_usage_summary_line_shows_the_model_copilot_reported_per_role(tmp_path, 
     assert "planner=1 (strong-resolved)" in capsys.readouterr().out
 
 
+def test_usage_falls_back_to_the_role_model_override_when_copilot_reports_no_model(
+    tmp_path, capsys
+):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    issue_file = tmp_path / "issue.md"
+    issue_file.write_text("# Add subtract\n\nNeed a subtract function.")
+    plan = json.dumps(
+        {
+            "summary": "one ticket",
+            "tickets": [
+                {"title": "subtract ints", "description": "d", "test_assertion": "sub(5,3)==2"}
+            ],
+        }
+    )
+    message = json.dumps({"type": "assistant.message", "data": {"content": plan}})
+    call = json.dumps({"type": "model.model_call_success", "data": {}})
+    fake = tmp_path / "fake-copilot"
+    fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{message}\n{call}\nEOF\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    rc = main(
+        [
+            "--issue-file",
+            str(issue_file),
+            "--dir",
+            str(repo),
+            "--copilot-cmd",
+            str(fake),
+            "--plan-only",
+            "--no-github-tickets",
+            "--model",
+            "base",
+            "--role-model",
+            "planner=strong",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    last_usage_log_line = (repo / ".issue-runner" / "usage.log").read_text().splitlines()[-1]
+
+    assert (
+        "planner=1 (strong)" in out,
+        json.loads(last_usage_log_line)["by_role"]["planner"]["models"],
+    ) == (True, ["strong"])
+
+
 def test_parser_prog_follows_the_invoked_command_name():
     """`gh-runner --help` must not tell the user to type `issue-runner`."""
     assert build_parser(prog="gh-runner").prog == "gh-runner"
