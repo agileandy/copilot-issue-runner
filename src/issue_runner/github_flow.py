@@ -98,6 +98,9 @@ class GitHubFlow:
     def pull(self, number: int) -> dict:
         return self.api(f"repos/{{repo}}/pulls/{number}")
 
+    def update_pull_body(self, number: int, body: str) -> None:
+        self.api(f"repos/{{repo}}/pulls/{number}", "PATCH", {"body": body})
+
     def reviews(self, number: int) -> list[dict]:
         return self.api(f"repos/{{repo}}/pulls/{number}/reviews?per_page=100") or []
 

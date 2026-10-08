@@ -1,17 +1,19 @@
 """Phase 4: the PR is opened, reviewed, fixed and re-reviewed until the review passes."""
 
 import json
+import re
 import subprocess
 
 import pytest
 
 from issue_runner.cli import _exit_code
 from issue_runner.criteria import parse
-from issue_runner.github_flow import GitHubFlow
+from issue_runner.github_flow import GithubError, GitHubFlow
 from issue_runner.orchestrator import run_issue
 from issue_runner.phases import delivery, review
+from issue_runner.phases.devops import DevopsError
 from issue_runner.phases.preflight import Preflight, PushTrigger
-from issue_runner.tickets import TicketStore
+from issue_runner.tickets import Delivery, TicketStore
 from tests.conftest import FakeClient
 from tests.fake_github import APPROVE, BOT, CHANGES, FakeGitHub, Head
 from tests.test_orchestrator import (
@@ -148,6 +150,62 @@ def test_review_without_an_overview_heading_relies_on_threads():
     assert evaluate(reviews=[dict(copilot(), body="Looks good to me")]).state == "pass"
 
 
+def test_update_pull_body_replaces_the_pr_description(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    git = ["git", "--git-dir", str(remote), "-c", "user.name=t", "-c", "user.email=t@x"]
+    tree = subprocess.run(
+        [*git, "hash-object", "-t", "tree", "-w", "--stdin"],
+        input="",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    commit = subprocess.run(
+        [*git, "commit-tree", tree, "-m", "init"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    for branch in ("main", "b"):
+        subprocess.run([*git, "update-ref", f"refs/heads/{branch}", commit], check=True)
+    fake = FakeGitHub()
+    fake.remote = remote
+    flow = GitHubFlow("o/n", run=fake)
+    pr = flow.create_pull("t", "b", "main", "old")
+    flow.update_pull_body(pr["number"], "new body")
+    assert fake.pulls[pr["number"]]["body"] == "new body"
+
+
+def test_pr_body_lists_each_recorded_review_round(tmp_path):
+    store = TicketStore(tmp_path, "17")
+    store.delivery = Delivery(
+        review_rounds=[
+            {
+                "round": 1,
+                "sha": "abc123def4567890",
+                "fixed": [{"where": "impl.py:1", "reason": "None is handled"}],
+                "notes": "subtract now rejects None",
+            },
+            {
+                "round": 2,
+                "sha": "fedcba9876543210",
+                "fixed": [{"where": "impl.py:2", "reason": "zero is handled"}],
+                "notes": "subtract now rejects zero",
+            },
+        ]
+    )
+    body = delivery.pr_body(ISSUE, store)
+    first = (
+        "### Review round 1 (`abc123def456`)\n"
+        "- `impl.py:1`: None is handled\n"
+        "Changed behaviour: subtract now rejects None"
+    )
+    second = (
+        "### Review round 2 (`fedcba987654`)\n"
+        "- `impl.py:2`: zero is handled\n"
+        "Changed behaviour: subtract now rejects zero"
+    )
+    assert first in body and second in body and body.index(first) < body.index(second)
+
+
 # --- the loop, end to end -----------------------------------------------------------
 
 
@@ -209,8 +267,11 @@ def built_through_acceptance(repo):
     ]
 
 
-def reviser(threads=(), effect=None):
-    reply = {"threads": [{"ref": r, "action": a, "reason": why} for r, a, why in threads]}
+def reviser(threads=(), effect=None, notes=""):
+    reply = {
+        "threads": [{"ref": r, "action": a, "reason": why} for r, a, why in threads],
+        "notes": notes,
+    }
     return (json.dumps(reply), effect)
 
 
@@ -264,6 +325,38 @@ def test_a_thread_is_fixed_pushed_replied_resolved_and_rereviewed(env, git_repo)
     assert reply.startswith("Fixed: None is handled") and head[:12] in reply
     assert fake.threads["PRRT_1"]["isResolved"]
     assert fake.review_requests == [(store.delivery.pr_number, BOT)]
+
+
+def test_a_fixed_round_is_recorded_in_the_pr_body_after_the_push(env, git_repo):  # noqa: F811
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    script = built_through_acceptance(git_repo) + [
+        reviser(
+            [("T2", "fixed", "None is handled")], edit(git_repo), notes="subtract now rejects None"
+        ),
+    ]
+    _, store, _ = run(cfg, git_repo, script)
+    assert (
+        f"### Review round 1 (`{store.delivery.head_sha[:12]}`)\n"
+        "- `impl.py:1`: None is handled\n"
+        "Changed behaviour: subtract now rejects None"
+    ) in fake.pulls[store.delivery.pr_number]["body"]
+
+
+def test_a_failed_pr_body_update_is_retried_before_the_merge(env, git_repo):  # noqa: F811
+    fake, _, cfg = env
+    fake.refuse_body_updates = 1
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    script = built_through_acceptance(git_repo) + [
+        reviser(
+            [("T2", "fixed", "None is handled")], edit(git_repo), notes="subtract now rejects None"
+        ),
+    ]
+    _, store, _ = run(cfg, git_repo, script)
+    assert (
+        f"### Review round 1 (`{store.delivery.head_sha[:12]}`)"
+        in fake.pulls[store.delivery.pr_number]["body"]
+    )
 
 
 def test_a_failing_check_goes_to_the_reviser_with_its_details(env, git_repo):  # noqa: F811
@@ -378,3 +471,103 @@ def test_a_rerun_reuses_the_open_pr_and_retries_the_review(env, git_repo):  # no
     report, store, _ = run(cfg, git_repo, [])
     assert store.delivery.gates["review"] == "pass"
     assert list(fake.pulls) == [number]
+
+
+def test_a_fix_round_resumed_after_a_failed_reply_is_numbered_round_2(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [
+        Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]),
+        Head(verdict=CHANGES, threads=[("impl.py", 2, "handle zero")]),
+        Head(),
+    ]
+    original = GitHubFlow.reply_to_thread
+    failures = [GithubError("reply failed")]
+
+    def reply_once_failing(self, thread_id, body):
+        if failures:
+            raise failures.pop()
+        return original(self, thread_id, body)
+
+    monkeypatch.setattr(GitHubFlow, "reply_to_thread", reply_once_failing)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, store, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+    assert [r["round"] for r in store.delivery.review_rounds] == [1]
+    assert store.delivery.review_round == 0
+
+    # the unanswered thread from round 1 is still open, so the reviser sees it again
+    resume = [
+        reviser(
+            [("T1", "fixed", "None is handled")], edit(git_repo, content="code, reviewed twice")
+        )
+    ]
+    _, store, client = run(cfg, git_repo, resume)
+    prompt = next(c for c in client.calls if c["role"] == "reviser")["prompt"]
+    assert "T1 [thread] impl.py:1: copilot-pull-request-reviewer: handle None" in prompt
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1",
+        "### Review round 2",
+    ]
+
+
+def test_a_fix_round_whose_push_failed_is_still_recorded_in_the_pr_body(
+    env, git_repo, monkeypatch  # noqa: F811
+):
+    fake, _, cfg = env
+    fake.scenarios = [Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]), Head()]
+    original = delivery.devops.push_branch
+    failures = [DevopsError("push rejected")]
+
+    def push_failing_once_on_the_fix(repo_dir, branch):
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if failures and subject.startswith("fix(review)"):
+            raise failures.pop()
+        return original(repo_dir, branch)
+
+    monkeypatch.setattr(delivery.devops, "push_branch", push_failing_once_on_the_fix)
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+    ]
+    report, _, _ = run(cfg, git_repo, script)
+    assert report.dod_failed_gate == "review"
+
+    # the fix is committed but never published: the thread is settled by hand and
+    # the reviewer looks at the head the resume pushes
+    fake.threads["PRRT_1"]["isResolved"] = True
+    fake.review_on_push = True
+    _, store, _ = run(cfg, git_repo, [])
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1"
+    ]
+
+
+def test_two_fix_rounds_both_appear_in_the_final_pr_body(env, git_repo):  # noqa: F811
+    fake, _, cfg = env
+    fake.scenarios = [
+        Head(verdict=CHANGES, threads=[("impl.py", 1, "handle None")]),
+        Head(verdict=CHANGES, threads=[("impl.py", 2, "handle zero")]),
+        Head(),
+    ]
+    script = built_through_acceptance(git_repo) + [
+        reviser([("T2", "fixed", "None is handled")], edit(git_repo)),
+        reviser(
+            [("T2", "fixed", "zero is handled")], edit(git_repo, content="code, reviewed twice")
+        ),
+    ]
+    _, store, client = run(cfg, git_repo, script)
+    prompts = [c["prompt"] for c in client.calls if c["role"] == "reviser"]
+    assert "T2 [thread] impl.py:2: copilot-pull-request-reviewer: handle zero" in prompts[1]
+    assert re.findall(r"### Review round \d+", fake.pulls[store.delivery.pr_number]["body"]) == [
+        "### Review round 1",
+        "### Review round 2",
+    ]
