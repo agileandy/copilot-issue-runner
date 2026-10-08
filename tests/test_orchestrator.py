@@ -803,6 +803,7 @@ def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp
 
     rounds = [d for d in report.details if d.startswith("pre-PR round ")]
     assert rounds == ["pre-PR round 1: 1 finding(s)", "pre-PR round 2: 0 finding(s)"]
+    assert f"  {sys.executable} {lint}: unused import" in report.details
 
 
 

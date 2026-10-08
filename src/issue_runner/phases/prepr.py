@@ -11,6 +11,16 @@ from . import devops
 MAX_FINDING_CHARS = 3000
 TOOL_ERROR_EXIT = 2
 MAX_TOOL_ERROR_CHARS = 500
+MAX_FINDING_LINES = 20
+
+
+def finding_lines(finding: dict, limit: int = MAX_FINDING_LINES) -> list[str]:
+    """The non-empty stripped lines of a finding, bounded to `limit` plus a truncation note."""
+    lines = [line.strip() for line in finding["text"].splitlines() if line.strip()]
+    if len(lines) <= limit:
+        return lines
+    hidden = len(lines) - limit
+    return lines[:limit] + [f"… {hidden} more line(s)"]
 
 
 def run_checks(cfg: RunnerConfig, base: str) -> list[dict]:
@@ -79,9 +89,9 @@ def step(cfg: RunnerConfig, store: TicketStore, report=None) -> bool:
     if report is not None:
         report.details.append(f"pre-PR round {round_number}: {len(findings)} finding(s)")
         for finding in findings:
-            lines = finding["text"].splitlines()
-            first = (lines[0] if lines else "").strip()
-            report.details.append(f"  {finding['command']}: {first}")
+            lines = finding_lines(finding)
+            report.details.append(f"  {finding['command']}: {lines[0] if lines else ''}")
+            report.details.extend(f"    {line}" for line in lines[1:])
     if round_number > cfg.pre_pr.max_rounds:
         store.save()
         return False

@@ -91,3 +91,23 @@ def test_run_checks_raises_tool_error_when_command_exits_2(tmp_path):
 
     with pytest.raises(DevopsError, match=r"pre-PR command.*exit 2"):
         run_checks(cfg, "abc")
+
+
+def test_step_records_every_line_of_a_finding_in_report_details(tmp_path):
+    from issue_runner.orchestrator import RunReport
+    from issue_runner.phases import prepr
+    from issue_runner.tickets import TicketStore
+
+    cmd = (
+        f"{sys.executable} -c "
+        "'print(\"a.py:1 x\"); print(\"b.py:2 y\"); print(\"c.py:3 z\"); "
+        "import sys; sys.exit(1)'"
+    )
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cfg.pre_pr.commands = [cmd]
+    store = TicketStore(tmp_path, "1")
+    report = RunReport()
+
+    prepr.step(cfg, store, report)
+
+    assert {f"  {cmd}: a.py:1 x", "    b.py:2 y", "    c.py:3 z"} <= set(report.details)
