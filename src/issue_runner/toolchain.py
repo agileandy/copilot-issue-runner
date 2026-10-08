@@ -20,11 +20,15 @@ runs pytest and no requirement file names it, pytest is added.
 
 Every step uses uv's or npm's shared cache, is skipped once its marker shows a
 finished install, and is bounded by `provision_timeout`.
+
+`setup_cmd` replaces discovery with the repository's own commands, for steps
+no manifest describes (`run_setup`).
 """
 
 import logging
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -209,3 +213,54 @@ def provision(root: Path, commands: list[str], timeout: int, run=subprocess.run)
             ran.append(step.label)
         _mark_provisioned(root, plan)
     return ran
+
+
+def _without_caller_venv(env: dict) -> dict:
+    """Hide an activated venv of the caller's shell, so `python` and `pip` in
+    setup_cmd can never install into it instead of the worktree."""
+    venv = env.pop("VIRTUAL_ENV", None)
+    if venv:
+        hidden = {os.path.normpath(os.path.join(venv, d)) for d in ("bin", "Scripts")}
+        kept = [
+            p
+            for p in env.get("PATH", "").split(os.pathsep)
+            if p and os.path.normpath(p) not in hidden
+        ]
+        env["PATH"] = os.pathsep.join(kept)
+    return env
+
+
+def run_setup(root: Path, commands: list[str], timeout: int, run=subprocess.run) -> list[str]:
+    """Run the repository's own `setup_cmd` commands in the worktree, in order."""
+    root = Path(root)
+    env = _without_caller_venv(dict(os.environ, CI="1", NO_COLOR="1"))
+    for command in commands:
+        log.info("toolchain: setup_cmd `%s` (in %s, timeout %ss)", command, root, timeout)
+        try:
+            argv = shlex.split(command)
+        except ValueError as e:
+            raise ProvisionError(f"setup_cmd `{command}` could not be parsed: {e}") from e
+        try:
+            result = run(
+                argv,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise ProvisionError(
+                f"setup_cmd `{command}` timed out after {timeout}s in {root}; "
+                "raise provision_timeout"
+            ) from e
+        except OSError as e:
+            raise ProvisionError(f"setup_cmd `{command}` could not start: {e}") from e
+        if result.returncode != 0:
+            detail = ((result.stderr or "") + (result.stdout or "")).strip()[-1500:]
+            raise ProvisionError(
+                f"setup_cmd `{command}` failed (exit {result.returncode}) in {root}:\n{detail}"
+            )
+    return list(commands)

@@ -249,7 +249,7 @@ def _git_repo(path: Path) -> Path:
 
 def test_prepare_toolchain_provisions_the_worktree_and_retargets_tests(tmp_path, monkeypatch):
     source = _git_repo(tmp_path / "source")
-    workspace = tmp_path / "workspace"
+    workspace = _git_repo(tmp_path / "workspace")  # a run worktree is always a git checkout
     (workspace / ".venv" / "bin").mkdir(parents=True)
     (workspace / ".venv" / "bin" / "python").touch()
     (workspace / "pyproject.toml").write_text("[project]\nname='x'\n")

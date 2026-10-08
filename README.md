@@ -105,8 +105,8 @@ gh-runner 17 --retry-blocked                            # retry only what blocke
 Useful flags: `--test-cmd 'pytest {test_path} -q'` · `--max-rounds N` ·
 `--model M --effort low` (defaults for all roles) · `--max-ai-credits 30` ·
 `--max-run-credits 300` · `--issue-file PATH` ·
-`--retry-blocked` · `--visual` · `--demo` ·
-`--regression-cmd 'pytest -q'` · `--in-place` ·
+`--retry-blocked` · `--visual` · `--agent` · `--comment-issue N` · `--demo` ·
+`--regression-cmd 'pytest -q'` · `--setup-cmd 'uv sync'` · `--in-place` ·
 `--no-github-tickets` · `--no-pr` · `--plan-only` · `--dry-run` ·
 `--copilot-cmd /path/to/fake` · `-v`.
 
@@ -174,6 +174,16 @@ provision = true          # false: prepare the worktree yourself
 provision_timeout = 900   # seconds per step
 ```
 
+`setup_cmd` in `runner.toml` (a command or a list of commands) or a repeated
+`--setup-cmd` replaces the discovered steps. It runs even when `provision =
+false`. Use it for steps discovery cannot know, such as copying test helpers
+into the worktree. It shares `provision_timeout`, and a failing command stops the
+run with its output.
+
+Provisioning may only write ignored paths. If the discovered steps or
+`setup_cmd` change any tracked or untracked file in the worktree, the run stops
+and names the files.
+
 `--in-place` runs are never provisioned: they use your own prepared checkout.
 The runner does not delete worktrees or branches.
 
@@ -207,6 +217,18 @@ This needs a GitHub repo (`--repo`, or a github.com `origin`); it is skipped for
 `--plan-only`, `--dry-run`, a budget stop, and Gitea remotes. Disable it with
 `--no-pr` or `open_pr = false` in `runner.toml`. A push or `gh` failure is
 reported, not fatal — the commits are already on the branch.
+
+### Agent mode
+
+`--agent` is for runs driven by another agent or a queue. The run summary is
+not printed; it is posted as a comment on the issue (GitHub via `gh`, Gitea via
+its API). An aborted run posts its error and partial summary the same way. If
+the comment cannot be posted, the summary is printed instead and the exit code
+is unchanged. `--agent` overrides `visual = true` in `runner.toml`, but an
+explicit `--visual` keeps the display: the summary still goes to the issue.
+With `--issue-file` there is no issue of its own, so `--comment-issue NUMBER`
+names the issue to post to; without it `--agent` refuses `--issue-file`.
+`--comment-issue` also redirects a numbered issue's summary.
 
 ### Exit codes
 

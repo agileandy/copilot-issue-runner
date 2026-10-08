@@ -17,6 +17,7 @@ import {
   statsLine,
   summaryOutcome,
   worktreeLines,
+  whyLines,
   trimOutput,
   type RunEvent,
   type Summary,
@@ -319,7 +320,8 @@ export function createApp(renderer: CliRenderer): App {
   function summaryRow(index: number): TextRenderable {
     let row = summaryRows[index]
     if (!row) {
-      row = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "none", height: 1 })
+      // wrap rather than clip: a block reason or a worktree path is read to its end
+      row = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "word" })
       summaryRows[index] = row
       summaryScroll.add(row)
     }
@@ -341,6 +343,11 @@ export function createApp(renderer: CliRenderer): App {
     head: theme.warn,
     uncommitted: theme.warn,
     no: theme.dim,
+    ticket: theme.bad,
+    stage: theme.text,
+    reason: theme.text,
+    cause: theme.warn,
+    note: theme.text,
   }
 
   function headingText(heading: string) {
@@ -370,7 +377,9 @@ export function createApp(renderer: CliRenderer): App {
     const glyph = outcome.tone === "ok" ? "✔" : outcome.tone === "bad" ? "⚠" : "●"
     summaryOutcomeText.content = t`${bold(fg(tone)(`${glyph} run finished — ${outcome.text}`))}`
     summarySubtitle.content = t`${fg(theme.dim)(`${state.issueRef} ${state.issue}`.trim())}`
+    const why = whyLines(summary)
     const sections: [string, string[]][] = [
+      ...(why.length ? [["why it stopped", why] as [string, string[]]] : []),
       ["run metrics", metricsLines(state)],
       ["artefacts", artefactLines(summary)],
       ["worktree", worktreeLines(summary)],

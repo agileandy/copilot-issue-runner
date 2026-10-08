@@ -41,6 +41,14 @@ export interface WorktreeState {
   uncommitted: string[]
 }
 
+export interface BlockedTicket {
+  id: number | string
+  title: string
+  stage: string
+  reason: string
+  causes: string[]
+}
+
 export interface Summary {
   done: number
   blocked: number
@@ -56,6 +64,8 @@ export interface Summary {
   artefacts: Artefacts
   worktreeState: WorktreeState
   stateDir: string
+  blockedTickets: BlockedTicket[]
+  notes: string[]
 }
 
 export interface ViewState {
@@ -123,6 +133,16 @@ function foldArtefacts(raw: unknown, prUrl: string): Artefacts {
     })),
     prUrl: String(a.pr_url ?? prUrl),
   }
+}
+
+function foldBlockedTickets(raw: unknown): BlockedTicket[] {
+  return ((raw ?? []) as Record<string, any>[]).map((b) => ({
+    id: b.id,
+    title: String(b.title ?? ""),
+    stage: String(b.stage ?? ""),
+    reason: String(b.reason ?? ""),
+    causes: ((b.causes ?? []) as unknown[]).map(String),
+  }))
 }
 
 function foldWorktreeState(raw: unknown, fallback: WorktreeState): WorktreeState {
@@ -219,6 +239,8 @@ export function applyEvent(
           uncommitted: [],
         }),
         stateDir: String(p.state_dir ?? ""),
+        blockedTickets: foldBlockedTickets(p.blocked_tickets),
+        notes: ((p.notes ?? []) as unknown[]).map(String),
       }
       boardChanged = true
       break
@@ -284,7 +306,9 @@ export function statsLine(state: ViewState, now: number = Date.now()): string {
   return parts.join("  ·  ")
 }
 
-export function summaryOutcome(summary: Omit<Summary, "artefacts" | "worktreeState" | "stateDir">): { text: string; tone: "ok" | "bad" | "plain" } {
+type SummaryCore = Omit<Summary, "artefacts" | "worktreeState" | "stateDir" | "blockedTickets" | "notes">
+
+export function summaryOutcome(summary: SummaryCore): { text: string; tone: "ok" | "bad" | "plain" } {
   if (summary.error) return { text: "run aborted", tone: "bad" }
   if (summary.stopped) return { text: "stopped by user; work saved", tone: "plain" }
   if (summary.budgetExhausted) return { text: "stopped: credit budget exhausted", tone: "bad" }
@@ -293,7 +317,7 @@ export function summaryOutcome(summary: Omit<Summary, "artefacts" | "worktreeSta
   return { text: "all tickets done", tone: "ok" }
 }
 
-export function summaryLines(summary: Omit<Summary, "artefacts" | "worktreeState" | "stateDir">): string[] {
+export function summaryLines(summary: SummaryCore): string[] {
   const lines = [`tickets done ${summary.done}  ·  blocked ${summary.blocked}`]
   if (summary.error) lines.push(summary.error.slice(0, 300))
   if (summary.branch) lines.push(`branch ${summary.branch}`)
@@ -301,6 +325,19 @@ export function summaryLines(summary: Omit<Summary, "artefacts" | "worktreeState
   if (summary.prUrl) lines.push(`pull request ${summary.prUrl}`)
   if (summary.usage) lines.push(summary.usage)
   if (summary.budget) lines.push(summary.budget)
+  return lines
+}
+
+/** Why the run stopped short: each blocked ticket, its causes, and run-level notes. */
+export function whyLines(summary: Summary): string[] {
+  const lines: string[] = []
+  for (const b of summary.blockedTickets) {
+    lines.push(`ticket #${b.id} ${b.title}`)
+    if (b.stage) lines.push(`stage ${b.stage}`)
+    lines.push(`reason ${b.reason}`)
+    for (const cause of b.causes) lines.push(`cause ${cause}`)
+  }
+  for (const note of summary.notes) lines.push(`note ${note}`)
   return lines
 }
 
@@ -346,7 +383,9 @@ export function worktreeLines(summary: Summary): string[] {
 export function summaryReport(state: ViewState, now: number = Date.now()): string {
   const summary = state.summary
   if (!summary) return ""
+  const why = whyLines(summary)
   const sections: string[][] = [
+    ...(why.length ? [["## why it stopped", ...why]] : []),
     ["## run metrics", ...metricsLines(state, now)],
     ["## artefacts", ...artefactLines(summary)],
     ["## worktree", ...worktreeLines(summary)],

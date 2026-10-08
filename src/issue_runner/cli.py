@@ -18,7 +18,7 @@ from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
 from .copilot import CopilotClient, CopilotError
 from .demo.seed import DemoCleanIncomplete, clean_demo_clone, is_seed, load_demo_issue
-from .github_io import GithubError, fetch_issue, issue_from_file
+from .github_io import GithubError, comment_issue, fetch_issue, issue_from_file
 from .orchestrator import run_issue
 from .phases.build import BuildError
 from .phases.devops import DevopsError
@@ -56,6 +56,11 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, help="runner.toml path (default: <dir>/runner.toml)")
     p.add_argument("--test-cmd", help="test command template, e.g. 'pytest {test_path} -q'")
     p.add_argument("--regression-cmd", help="full regression suite command, with no file selector")
+    p.add_argument(
+        "--setup-cmd",
+        action="append",
+        help="command that prepares the run worktree's dependencies (repeatable)",
+    )
     p.add_argument(
         "--in-place",
         action="store_true",
@@ -96,6 +101,17 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     )
     p.add_argument("--copilot-cmd", help="copilot binary to invoke (default: copilot)")
     p.add_argument("--visual", action="store_true", help="use the interactive visual terminal mode")
+    p.add_argument(
+        "--agent",
+        action="store_true",
+        help="post the run summary as a comment on the issue instead of printing it",
+    )
+    p.add_argument(
+        "--comment-issue",
+        type=int,
+        metavar="NUMBER",
+        help="with --agent, post the run summary to this issue (required with --issue-file)",
+    )
     p.add_argument("--model", help="default model for all roles (see 'copilot /model')")
     p.add_argument("--effort", help="default reasoning effort for all roles")
     p.add_argument("--max-ai-credits", type=int, help="per-call AI credit soft cap (min 30)")
@@ -176,6 +192,17 @@ def main(argv=None) -> int:
         print("error: use --demo without an issue number or --issue-file", file=sys.stderr)
         return 2
 
+    if args.comment_issue is not None and not args.agent:
+        print("error: --comment-issue only applies with --agent", file=sys.stderr)
+        return 2
+
+    if args.agent and args.issue_file and args.comment_issue is None:
+        print(
+            "error: --agent with --issue-file needs --comment-issue NUMBER to post to",
+            file=sys.stderr,
+        )
+        return 2
+
     repo_dir = args.dir.resolve()
     try:
         cfg = load_config(repo_dir, args.config)
@@ -187,6 +214,8 @@ def main(argv=None) -> int:
     if args.test_cmd:
         cfg.test_cmd = args.test_cmd
         cfg.test_cmd_detected = False
+    if args.setup_cmd:
+        cfg.setup_cmd = args.setup_cmd
     if args.regression_cmd:
         cfg.regression_cmd = args.regression_cmd
     if args.in_place:
@@ -201,6 +230,10 @@ def main(argv=None) -> int:
         cfg.retry_blocked = True
     if args.visual:
         cfg.visual = True
+    if args.agent and not args.visual:
+        # a visual mode set in runner.toml would draw to the terminal; an
+        # explicit --visual is the caller asking for the display
+        cfg.visual = False
     if args.copilot_cmd:
         cfg.copilot_cmd = args.copilot_cmd
     if not args.demo and args.copilot_cmd is None:
@@ -231,6 +264,17 @@ def main(argv=None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    post = None
+    if args.agent and not args.dry_run:
+        post = _summary_poster(cfg, repo_dir, issue, args.comment_issue)
+        if post is None:
+            print(
+                "error: --agent cannot comment on this issue: no GitHub repo or Gitea API base "
+                "(set GITEA_URL)",
+                file=sys.stderr,
+            )
+            return 2
+
     client = CopilotClient(cfg)
     if args.dry_run:
         prompt = PLAN_PROMPT.format(
@@ -254,10 +298,46 @@ def main(argv=None) -> int:
         else None
     )
     with stop_signals(cfg):
-        return _execute(cfg, client, issue, args.plan_only, resume)
+        return _execute(cfg, client, issue, args.plan_only, resume, post)
 
 
-def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
+def _summary_poster(cfg, repo_dir: Path, issue: dict, comment_on: int | None = None):
+    """A callable that posts a body as a comment on the run's issue, or None."""
+    number = comment_on or issue.get("number")
+    if not number:
+        return None
+    if cfg.repo:
+        return lambda body: comment_issue(cfg.repo, number, body)
+    import os
+
+    try:
+        info = resolve(repo_dir)
+    except TrackerError:
+        return None
+    if info.kind == "github":
+        # an --issue-file run never sets cfg.repo, but its origin still names it
+        return lambda body: comment_issue(info.owner_repo, number, body)
+    api_base = info.api_base or os.environ.get("GITEA_URL")
+    if not api_base:
+        return None
+    tracker = GiteaTickets(api_base, info.owner_repo)
+    return lambda body: tracker.comment_issue(number, body)
+
+
+def _output(lines: list[str], post=None) -> None:
+    """Print the summary, or in agent mode post it to the issue instead."""
+    if post is not None:
+        body = "**issue-runner run summary**\n\n```text\n" + "\n".join(lines).strip() + "\n```"
+        try:
+            post(body)
+            return
+        except (GithubError, TrackerError, OSError) as e:
+            print(f"warning: could not post the run summary to the issue: {e}", file=sys.stderr)
+    for line in lines:
+        print(line)
+
+
+def _execute(cfg, client, issue, plan_only, resume: str | None, post=None) -> int:
     if cfg.visual and sys.stdout.isatty() and sys.stdin.isatty():
         from .visual_display import VisualUnavailable, run_visual
 
@@ -265,51 +345,57 @@ def _execute(cfg, client, issue, plan_only, resume: str | None) -> int:
             report, error, _detached = run_visual(cfg, client, issue, plan_only=plan_only)
         except VisualUnavailable as e:
             cfg.events = None
-            logging.getLogger("issue_runner").warning(
-                "%s — falling back to the text visual", e
-            )
+            logging.getLogger("issue_runner").warning("%s — falling back to the text visual", e)
         else:
             if error is not None:
                 print(f"error: {error}", file=sys.stderr)
-                _print_abort_usage(client)
-                _print_partial(error)
-                _print_demo_resume(resume)
+                lines = _abort_lines(error, client, resume)
+                if post is not None:
+                    # stderr already has the error; the comment must carry it too
+                    lines = [f"error: {error}", *lines]
+                _output(lines, post)
                 return 1
-            _print_summary(report, resume)
+            _output(_summary_lines(report, resume), post)
             return _exit_code(report)
 
     try:
         report = run_issue(cfg, client, issue, plan_only=plan_only)
     except PipelineError as e:
-        return _report_abort(e, client, resume)
+        return _report_abort(e, client, resume, post=post)
     except Exception as e:  # noqa: BLE001 — a demo must not end in a traceback
         logging.getLogger("issue_runner").debug("unexpected failure", exc_info=True)
-        return _report_abort(e, client, resume, unexpected=True)
+        return _report_abort(e, client, resume, unexpected=True, post=post)
 
-    _print_summary(report, resume)
+    _output(_summary_lines(report, resume), post)
     return _exit_code(report)
 
 
-def _report_abort(error, client, resume, unexpected: bool = False) -> int:
+def _report_abort(error, client, resume, unexpected: bool = False, post=None) -> int:
     label = f"{type(error).__name__}: {error}" if unexpected else str(error)
     print(f"error: {label}", file=sys.stderr)
-    _print_abort_usage(client)
-    _print_partial(error)
-    _print_demo_resume(resume)
+    lines = _abort_lines(error, client, resume)
+    if post is not None:
+        # stderr already has the error; the comment must carry it too
+        lines = [f"error: {label}", *lines]
+    _output(lines, post)
     return 1
 
 
-def _print_partial(error: BaseException) -> None:
-    """Show what an aborted run achieved, so the work can still be found."""
+def _abort_lines(error: BaseException, client, resume: str | None) -> list[str]:
+    return [*_abort_usage_lines(client), *_partial_lines(error), *_demo_resume_lines(resume)]
+
+
+def _partial_lines(error: BaseException) -> list[str]:
+    """What an aborted run achieved, so the work can still be found."""
     report = getattr(error, "report", None)
     if report is None:
-        return
-    print(f"\nbranch: {report.branch or '(none)'}")
+        return []
+    lines = ["", f"branch: {report.branch or '(none)'}"]
     if report.worktree:
-        print(f"worktree: {report.worktree}")
-    print(f"tickets done: {report.done}, blocked: {report.blocked}")
-    for detail in report.details:
-        print(f"  - {detail}")
+        lines.append(f"worktree: {report.worktree}")
+    lines.append(f"tickets done: {report.done}, blocked: {report.blocked}")
+    lines += [f"  - {detail}" for detail in report.details]
+    return lines
 
 
 def _demo_resume_command(cfg, issue, original_args: list[str]) -> str:
@@ -330,39 +416,44 @@ def _exit_code(report) -> int:
     return 0 if report.blocked == 0 else 3
 
 
-def _print_summary(report, resume: str | None = None) -> None:
-    print(f"\nbranch: {report.branch or '(plan only)'}")
+def _summary_lines(report, resume: str | None = None) -> list[str]:
+    lines = ["", f"branch: {report.branch or '(plan only)'}"]
     if report.worktree:
-        print(f"worktree: {report.worktree}")
-    print(f"tickets done: {report.done}, blocked: {report.blocked}")
+        lines.append(f"worktree: {report.worktree}")
+    lines.append(f"tickets done: {report.done}, blocked: {report.blocked}")
     if report.stopped:
-        print("Run stopped. State and worktree preserved.")
+        lines.append("Run stopped. State and worktree preserved.")
         if resume is None:
-            print("Re-run the same command to resume.")
+            lines.append("Re-run the same command to resume.")
     if report.budget_exhausted:
-        print("run stopped: AI credit budget exhausted — re-run to resume")
+        lines.append("run stopped: AI credit budget exhausted — re-run to resume")
     if report.usage_summary:
-        print(report.usage_summary)
+        lines.append(report.usage_summary)
     if report.budget_summary:
-        print(report.budget_summary)
+        lines.append(report.budget_summary)
     if report.pr_url:
-        print(f"pull request: {report.pr_url}")
-    for line in report.details:
-        print(f"  - {line}")
-    _print_demo_resume(resume)
+        lines.append(f"pull request: {report.pr_url}")
+    lines += [f"  - {line}" for line in report.details]
+    return lines + _demo_resume_lines(resume)
 
 
-def _print_demo_resume(resume: str | None) -> None:
-    if resume is not None:
-        print(f"\nResume this clone: {resume}")
-        print("Using --demo again creates a fresh clone instead.")
+def _demo_resume_lines(resume: str | None) -> list[str]:
+    if resume is None:
+        return []
+    return [
+        "",
+        f"Resume this clone: {resume}",
+        "Using --demo again creates a fresh clone instead.",
+    ]
 
 
-def _print_abort_usage(client: CopilotClient) -> None:
-    if client.usage.calls:
-        print(client.usage.summary_line())
-        if client.budget.limit is not None or not client.budget.cost_is_complete:
-            print(client.budget.describe())
+def _abort_usage_lines(client: CopilotClient) -> list[str]:
+    if not client.usage.calls:
+        return []
+    lines = [client.usage.summary_line()]
+    if client.budget.limit is not None or not client.budget.cost_is_complete:
+        lines.append(client.budget.describe())
+    return lines
 
 
 def gh_main(argv=None) -> int:

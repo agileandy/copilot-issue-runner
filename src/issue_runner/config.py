@@ -37,6 +37,8 @@ class RunnerConfig:
     test_cmd: str = DEFAULT_TEST_CMD
     test_cmd_detected: bool = False  # re-detected in the run worktree when True
     regression_cmd: str | None = None
+    # commands that prepare a run worktree instead of the discovered toolchain steps
+    setup_cmd: list[str] | None = None
     isolate_worktree: bool = True
     max_rounds: int = 3
     tester_retries: int = 2
@@ -61,7 +63,7 @@ class RunnerConfig:
         return self.roles.get(name, RoleConfig())
 
 
-def _apply_detected_test_cmd(cfg: RunnerConfig) -> None:
+def apply_detected_test_cmd(cfg: RunnerConfig) -> None:
     """Fill in test_cmd only when the user has not specified one."""
     found = detect_test_cmd(cfg.repo_dir)
     cfg.test_cmd = found.test_cmd
@@ -83,14 +85,14 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
     if not path.exists():
         if config_path is not None:
             raise ConfigError(f"configuration file does not exist: {path}")
-        _apply_detected_test_cmd(cfg)
+        apply_detected_test_cmd(cfg)
         return cfg
     try:
         data = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"cannot load configuration {path}: {e}") from e
     if "test_cmd" not in data:
-        _apply_detected_test_cmd(cfg)
+        apply_detected_test_cmd(cfg)
     for key in (
         "test_cmd",
         "regression_cmd",
@@ -112,6 +114,9 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
     ):
         if key in data:
             setattr(cfg, key, data[key])
+    if "setup_cmd" in data:
+        value = data["setup_cmd"]
+        cfg.setup_cmd = [value] if isinstance(value, str) else value
     for role_name, role_data in data.get("roles", {}).items():
         cfg.roles[role_name] = RoleConfig(
             model=role_data.get("model"), effort=role_data.get("effort")
@@ -134,6 +139,12 @@ def validate_config(cfg: RunnerConfig) -> None:
         not isinstance(cfg.regression_cmd, str) or not cfg.regression_cmd.strip()
     ):
         raise ConfigError("regression_cmd must be a non-empty command")
+    if cfg.setup_cmd is not None and (
+        not isinstance(cfg.setup_cmd, list)
+        or not cfg.setup_cmd
+        or not all(isinstance(c, str) and c.strip() for c in cfg.setup_cmd)
+    ):
+        raise ConfigError("setup_cmd must be a command or a list of non-empty commands")
     for name in ("isolate_worktree", "provision"):
         if type(getattr(cfg, name)) is not bool:
             raise ConfigError(f"{name} must be true or false")

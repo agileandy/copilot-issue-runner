@@ -61,7 +61,9 @@ def test_existing_test_failure_prevents_commit_and_publication(tmp_path, monkeyp
 
     report = run_issue(cfg, client, ISSUE)
     assert (report.done, report.blocked) == (0, 1)
-    assert "regression gate failed" in load_store(env).tickets[0].blocked_reason
+    blocked = load_store(env).tickets[0]
+    assert "regression gate failed" in blocked.blocked_reason
+    assert blocked.blocked_stage == "regression"  # where it failed, not where it was sent back
     assert git(env.repo_dir, "rev-parse", "HEAD") == before
     assert published == []
 
