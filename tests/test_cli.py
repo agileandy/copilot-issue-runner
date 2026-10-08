@@ -1269,3 +1269,11 @@ def test_load_config_reads_pre_pr_table(tmp_path):
     assert load_config(tmp_path).pre_pr == PrePrConfig(
         commands=["gh-code-quality --base {base}"], max_rounds=3
     )
+
+
+def test_validate_config_rejects_a_negative_pre_pr_max_rounds(tmp_path):
+    from issue_runner.config import ConfigError, load_config, validate_config
+
+    (tmp_path / "runner.toml").write_text("[pre_pr]\nmax_rounds = -1\n")
+    with pytest.raises(ConfigError, match="pre_pr.*max_rounds"):
+        validate_config(load_config(tmp_path))

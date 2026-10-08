@@ -250,6 +250,7 @@ def validate_config(cfg: RunnerConfig) -> None:
         if type(getattr(cfg, name)) is not bool:
             raise ConfigError(f"{name} must be true or false")
     _validate_deploy(cfg.deploy_settings)
+    _validate_pre_pr(cfg.pre_pr)
 
 
 def _validate_deploy(d: DeployConfig) -> None:
@@ -275,3 +276,12 @@ def _validate_deploy(d: DeployConfig) -> None:
         raise ConfigError(f"[deploy] merge_method must be one of {', '.join(MERGE_METHODS)}")
     if type(d.dispatch_if_not_triggered) is not bool:
         raise ConfigError("[deploy] dispatch_if_not_triggered must be true or false")
+
+
+def _validate_pre_pr(p: PrePrConfig) -> None:
+    if type(p.max_rounds) is not int or p.max_rounds < 0:
+        raise ConfigError("[pre_pr] max_rounds must be a non-negative integer")
+    if not isinstance(p.commands, list) or not all(
+        isinstance(c, str) and c.strip() for c in p.commands
+    ):
+        raise ConfigError("[pre_pr] commands must be a list of non-empty commands")
