@@ -102,6 +102,16 @@ def update_branch(client, cfg: RunnerConfig, issue: dict, store: TicketStore, ba
     return sha
 
 
+def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
+    """Merge origin/<base> into `branch` (already checked out) and push it fast-forward."""
+    repo = cfg.repo_dir
+    devops.fetch(repo)
+    devops.merge_in(repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}")
+    sha = devops.finish_merge(repo, branch)
+    devops.push_branch(repo, branch)
+    return sha
+
+
 def _problem(cfg, store, tests, conflicted: list[str]) -> str | None:
     repo = cfg.repo_dir
     markers = devops.leftover_markers(repo, conflicted)
