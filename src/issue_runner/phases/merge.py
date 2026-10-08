@@ -132,6 +132,8 @@ def update_pr_branch(client, cfg: RunnerConfig, branch: str, base: str) -> str:
     repo = cfg.repo_dir
     head = devops.head_commit(repo)
     devops.fetch(repo)
+    if devops.is_ancestor(repo, f"origin/{base}", "HEAD"):
+        return devops.head_commit(repo)
     conflicted = devops.merge_in(
         repo, f"origin/{base}", f"chore: merge origin/{base} into {branch}"
     )

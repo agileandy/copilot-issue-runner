@@ -138,3 +138,27 @@ def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
 
     status = _git(git_repo, "status", "--porcelain").stdout
     assert (status, devops.merge_in_progress(git_repo)) == ("", False)
+
+
+@pytest.fixture
+def up_to_date_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "feature.py").write_text("y = 2\n")
+    _git(git_repo, "add", "feature.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: feature work")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+    return remote
+
+
+def test_update_pr_branch_returns_the_head_unchanged_when_the_branch_already_contains_base(
+    up_to_date_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    head = devops.head_commit(git_repo)
+
+    assert merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main") == head
