@@ -10,7 +10,7 @@ issue-runner = "issue_runner.cli:main"
 gh-runner = "issue_runner.cli:gh_main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff==0.16.5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -28,6 +28,8 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# factory/ is installer-generated scaffolding; a reinstall overwrites hand edits
+extend-exclude = ["./factory"]
 
 [tool.ruff.lint.per-file-ignores]
 # the nested pytest.raises keeps the outer lock's entry outside the expected failure
