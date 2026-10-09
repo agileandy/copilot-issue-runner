@@ -432,3 +432,179 @@ def test_update_pull_request_runs_setup_cmd_inside_the_pr_worktree(
     assert marker.read_text().strip() == str(
         (git_repo / ".state" / "worktrees" / f"pr-{number}").resolve()
     )
+
+
+def test_update_pull_request_cleans_its_worktree_after_a_rejected_resolver_so_a_rerun_works(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    _git(git_repo, "checkout", "-q", "main")
+    (git_repo / "impl.py").write_text("the caller's edit\n")
+    (git_repo / "mine.txt").write_text("the caller's file\n")
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def resolve(stray):
+        (worktree / "impl.py").write_text("ours\n# and upstream\n")
+        if stray:
+            (worktree / "other.py").write_text("x = 2\n")
+            (worktree / "scratch.txt").write_text("notes\n")
+
+    with pytest.raises(merge.MergeError, match="outside the conflict"):
+        update_pull_request(
+            dataclasses.replace(cfg, coder_retries=0),
+            FakeClient([('{"notes":"ok"}', lambda: resolve(stray=True))]),
+            flow,
+            number,
+            git_repo / ".state",
+        )
+    left_behind = worktree.exists()
+    rerun = FakeClient([('{"notes":"ok"}', lambda: resolve(stray=False))])
+    update_pull_request(cfg, rerun, flow, number, git_repo / ".state")
+
+    pushed = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
+    ).stdout
+    callers = _git(git_repo, "status", "--porcelain", "--", "impl.py", "mine.txt").stdout
+    assert (left_behind, pushed, callers) == (
+        False,
+        "ours\n# and upstream\n",
+        " M impl.py\n?? mine.txt\n",
+    )
+
+
+def test_update_pull_request_drops_its_unpushed_merge_commit_when_the_update_fails(
+    pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases import devops
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    real_finish_merge = devops.finish_merge
+
+    def commit_then_fail(repo, branch):
+        real_finish_merge(repo, branch)
+        raise devops.DevopsError("a post-commit check failed")
+
+    monkeypatch.setattr("issue_runner.phases.devops.finish_merge", commit_then_fail)
+    head = devops.head_commit(git_repo)
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+
+    with pytest.raises(devops.DevopsError, match="post-commit"):
+        update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+    local_tip = _git(git_repo, "rev-parse", BRANCH).stdout.strip()
+    assert (local_tip, worktree.exists()) == (head, False)
+
+
+def test_update_pull_request_never_cleans_the_callers_checkout_when_the_worktree_breaks(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    (git_repo / "impl.py").write_text("the caller's edit\n")
+    (git_repo / "mine.txt").write_text("the caller's file\n")
+    main = _git(git_repo, "rev-parse", "main").stdout.strip()
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+    # without its .git file the worktree resolves to the caller's checkout
+    client = FakeClient([('{"notes":"ok"}', lambda: (worktree / ".git").unlink())])
+
+    with pytest.raises(merge.MergeError, match="moved HEAD or the branch"):
+        update_pull_request(cfg, client, flow, number, git_repo / ".state")
+
+    callers = _git(git_repo, "status", "--porcelain", "--", "impl.py", "mine.txt").stdout
+    assert (callers, _git(git_repo, "rev-parse", "main").stdout.strip()) == (
+        " M impl.py\n?? mine.txt\n",
+        main,
+    )
+
+
+def test_update_pull_request_never_resets_a_branch_the_resolver_switched_to(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    _git(git_repo, "branch", "side")
+    side = _git(git_repo, "rev-parse", "side").stdout.strip()
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def switch_branch():
+        _git(worktree, "merge", "--abort")
+        _git(worktree, "checkout", "-q", "side")
+
+    with pytest.raises(merge.MergeError, match="moved HEAD or the branch"):
+        update_pull_request(
+            cfg, FakeClient([('{"notes":"ok"}', switch_branch)]), flow, number, git_repo / ".state"
+        )
+
+    assert _git(git_repo, "rev-parse", "side").stdout.strip() == side
+
+
+def test_update_pull_request_reports_the_update_error_when_its_cleanup_times_out(
+    conflicting_pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    real_run = subprocess.run
+
+    def reset_times_out(args, **kwargs):
+        if args[:3] == ["git", "reset", "--hard"]:
+            raise subprocess.TimeoutExpired(args, 60)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", reset_times_out)
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def resolve_and_stray():
+        (worktree / "impl.py").write_text("ours\n# and upstream\n")
+        (worktree / "scratch.txt").write_text("notes\n")
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: scratch.txt"):
+        update_pull_request(
+            dataclasses.replace(cfg, coder_retries=0),
+            FakeClient([('{"notes":"ok"}', resolve_and_stray)]),
+            flow,
+            number,
+            git_repo / ".state",
+        )
