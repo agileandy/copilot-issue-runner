@@ -13,6 +13,7 @@ from .storage import write_json
 
 STATUSES = ("pending", "in_progress", "done", "blocked")
 PHASES = ("tester", "refine_test", "coder", "verifier", "regression", "commit")
+KINDS = ("tdd", "pre_pr")
 
 
 DELIVERY_STAGES = (
@@ -109,11 +110,15 @@ class Ticket:
     approved_tree: str | None = None
     approved_index: str | None = None
     full_regression_tree: str | None = None
+    kind: str = "tdd"
+    pre_pr_command: str | None = None
 
     def __post_init__(self) -> None:
         self.status = self._status
         if self.phase not in PHASES:
             raise ValueError(f"invalid ticket phase {self.phase!r}")
+        if self.kind not in KINDS:
+            raise ValueError(f"invalid ticket kind {self.kind!r}")
 
     @property
     def status(self) -> str:

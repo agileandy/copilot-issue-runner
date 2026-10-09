@@ -709,6 +709,61 @@ def _process_ticket(
                 store.save()
                 continue
 
+            if ticket.kind == "pre_pr" and ticket.phase == "coder":
+                try:
+                    prepr.fix_step(
+                        client, cfg, ticket, feedback=ticket.code_feedback or None, journal=journal
+                    )
+                except CoderFailure as e:
+                    # there is no tester to refine, so the coder gets the ticket back
+                    cfg.control.check()
+                    ticket.code_feedback = str(e)
+                    ticket.phase = "coder"
+                    journal.post(
+                        ticket, "builder.coder", "harness", str(e), "pre-PR finding not fixed"
+                    )
+                    if not _hand_back(cfg, store, ticket, report, str(e), "coder"):
+                        return
+                    continue
+                ticket.approved_digest = devops.workspace_digest(cfg.repo_dir)
+                # an earlier ticket's fix may have cleared this finding already: the coder then
+                # changed nothing, so there is nothing to commit and the ticket is still done
+                ticket.already_satisfied = not devops.changed_paths(cfg.repo_dir)
+                ticket.code_feedback = ""
+                journal.post(
+                    ticket, "builder.coder", "harness", "pre-PR finding gone", "pre-PR finding gone"
+                )
+                ticket.phase = "regression"
+                store.save()
+                continue
+
+            if ticket.kind == "pre_pr" and ticket.phase == "regression":
+                if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
+                    raise BuildError("workspace changed after the pre-PR fix; refusing approval")
+                try:
+                    _regression_gate(cfg)
+                except RegressionFailure as e:
+                    cfg.control.check()
+                    ticket.code_feedback = str(e)
+                    ticket.phase = "coder"
+                    journal.post(
+                        ticket, "harness", "builder.coder", str(e), "regression suite failed"
+                    )
+                    if not _hand_back(cfg, store, ticket, report, str(e), "regression"):
+                        return
+                    continue
+                if devops.workspace_digest(cfg.repo_dir) != ticket.approved_digest:
+                    raise BuildError("regression command modified the workspace; changes retained")
+                devops.approve_changes(cfg.repo_dir, ticket)
+                ticket.phase = "commit"
+                store.save()
+                continue
+
+            if ticket.kind == "pre_pr" and ticket.phase == "commit":
+                sha = devops.commit_ticket(cfg.repo_dir, ticket, expected_branch=store.branch)
+                _finish_ticket(cfg, store, ticket, report, sha)
+                return
+
             test_path = _require_accepted_test(cfg, ticket)
             if ticket.phase == "coder":
                 passed, _ = run_tests(cfg, test_path)

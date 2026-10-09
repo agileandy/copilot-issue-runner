@@ -111,3 +111,69 @@ def test_step_records_every_line_of_a_finding_in_report_details(tmp_path):
     prepr.step(cfg, store, report)
 
     assert {f"  {cmd}: a.py:1 x", "    b.py:2 y", "    c.py:3 z"} <= set(report.details)
+
+
+def test_step_persists_findings_as_pre_pr_tickets_with_their_command(tmp_path):
+    from issue_runner.phases import prepr
+    from issue_runner.tickets import TicketStore
+
+    cmd = f"{sys.executable} -c 'print(\"unused import\"); import sys; sys.exit(1)'"
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cfg.pre_pr.commands = [cmd]
+    store = TicketStore(tmp_path, "1")
+
+    prepr.step(cfg, store)
+
+    reloaded = TicketStore(tmp_path, "1")
+    reloaded.load()
+    t = reloaded.tickets[0]
+    assert (t.kind, t.pre_pr_command) == ("pre_pr", cmd)
+
+
+def test_finding_for_returns_finding_until_fixed_then_none(tmp_path, tmp_path_factory):
+    from issue_runner.phases import prepr
+
+    script = tmp_path_factory.mktemp("lint-tool") / "fake_lint.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"if pathlib.Path({str(tmp_path / 'fixed')!r}).exists():\n"
+        "    sys.exit(0)\n"
+        "print('src/app.py:1: unused import')\n"
+        "sys.exit(1)\n"
+    )
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cmd = f"{sys.executable} {script}"
+
+    assert (
+        "unused import" in prepr.finding_for(cfg, cmd),
+        (tmp_path / "fixed").touch() or prepr.finding_for(cfg, cmd),
+    ) == (True, None)
+
+
+def test_fix_step_retries_coder_until_pre_pr_finding_is_gone(tmp_path, tmp_path_factory):
+    from issue_runner.phases import prepr
+    from issue_runner.tickets import Ticket
+    from tests.conftest import FakeClient
+
+    script = tmp_path_factory.mktemp("lint-tool") / "fake_lint.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"if pathlib.Path({str(tmp_path / 'fixed')!r}).exists():\n"
+        "    sys.exit(0)\n"
+        "print('src/app.py:1: unused import')\n"
+        "sys.exit(1)\n"
+    )
+    cmd = f"{sys.executable} {script}"
+    cfg = RunnerConfig(repo_dir=tmp_path)
+    cfg.coder_retries = 1
+    reply = '{"changed_files": ["src/app.py"], "notes": "removed unused import"}'
+    client = FakeClient(
+        [
+            (reply, None),
+            (reply, lambda: (tmp_path / "fixed").touch()),
+        ]
+    )
+
+    prepr.fix_step(client, cfg, Ticket(1, "t", "d", "a", kind="pre_pr", pre_pr_command=cmd))
+
+    assert [c["role"] for c in client.calls] == ["builder.coder", "builder.coder"]

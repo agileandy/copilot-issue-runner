@@ -729,8 +729,21 @@ def test_an_aborted_run_still_reports_the_work_it_completed(git_repo, cfg):
     assert "first" in " ".join(report.details)
 
 
-def write_test_file(repo, tag):
-    return lambda: (repo / "test_lint.py").write_text(f"assert PASS # {tag}")
+def write_style(repo):
+    return lambda: (repo / "style.py").write_text("x = 1\n")
+
+
+def style_lint(outside, repo, message, fails_while_missing=True):
+    """A pre-PR lint outside the repo that keys off the coder writing repo/style.py."""
+    lint = outside / f"lint_{len(list(outside.iterdir()))}.py"
+    negate = "not " if fails_while_missing else ""
+    lint.write_text(
+        "import pathlib, sys\n"
+        f"if {negate}pathlib.Path({str(repo / 'style.py')!r}).exists():\n"
+        f"    print({message!r})\n"
+        "    sys.exit(1)\n"
+    )
+    return lint
 
 
 def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
@@ -738,17 +751,7 @@ def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
 ):
     cfg.repo = "owner/repo"
     outside = tmp_path_factory.mktemp("prepr")
-    counter = outside / "count"
-    lint = outside / "lint.py"
-    lint.write_text(
-        "import pathlib, sys\n"
-        f"counter = pathlib.Path({str(counter)!r})\n"
-        "n = int(counter.read_text()) if counter.exists() else 0\n"
-        "counter.write_text(str(n + 1))\n"
-        "if n == 0:\n"
-        "    print('unused import')\n"
-        "    sys.exit(1)\n"
-    )
+    lint = style_lint(outside, git_repo, "unused import")
     cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
     client = FakeClient(
         [
@@ -756,9 +759,7 @@ def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
             (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
             ("done", implement(git_repo)),
             (verdict("pass"), None),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
-            (verdict("pass"), None),
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
         ]
     )
 
@@ -772,17 +773,15 @@ def test_pre_pr_finding_becomes_a_fix_ticket_before_the_pull_request(
     ) == (1, [("subtract ints", "done"), ("Fix pre-PR finding: unused import", "done")])
 
 
-def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp_path_factory):
+def test_pre_pr_ticket_is_fixed_by_the_coder_without_tester_or_verifier(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
     cfg.repo = "owner/repo"
     outside = tmp_path_factory.mktemp("prepr")
-    counter = outside / "count"
     lint = outside / "lint.py"
     lint.write_text(
         "import pathlib, sys\n"
-        f"counter = pathlib.Path({str(counter)!r})\n"
-        "n = int(counter.read_text()) if counter.exists() else 0\n"
-        "counter.write_text(str(n + 1))\n"
-        "if n == 0:\n"
+        f"if not pathlib.Path({str(git_repo / 'style.py')!r}).exists():\n"
         "    print('unused import')\n"
         "    sys.exit(1)\n"
     )
@@ -793,9 +792,36 @@ def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp
             (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
             ("done", implement(git_repo)),
             (verdict("pass"), None),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
+            (json.dumps({"changed_files": [], "notes": "nothing"}), None),
+            (
+                json.dumps({"changed_files": ["style.py"], "notes": "fixed"}),
+                lambda: (git_repo / "style.py").write_text("x = 1\n"),
+            ),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert ([c["role"] for c in client.calls][4:], [t.status for t in store.tickets]) == (
+        ["builder.coder", "builder.coder"],
+        ["done", "done"],
+    )
+
+
+def test_run_summary_records_each_pre_pr_round(git_repo, cfg, pull_requests, tmp_path_factory):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = style_lint(outside, git_repo, "unused import")
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
             (verdict("pass"), None),
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
         ]
     )
 
@@ -814,18 +840,19 @@ def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
 
     cfg.repo = "owner/repo"
     outside = tmp_path_factory.mktemp("prepr")
-    lint = outside / "lint.py"
-    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
-    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    # the fix for round 1 surfaces a new finding that round 2 reports but does not fix
+    fixed = style_lint(outside, git_repo, "unused import")
+    introduced = style_lint(outside, git_repo, "still bad", fails_while_missing=False)
+    cfg.pre_pr = PrePrConfig(
+        commands=[f"{sys.executable} {fixed}", f"{sys.executable} {introduced}"], max_rounds=1
+    )
     client = FakeClient(
         [
             (plan_reply(), None),
             (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
             ("done", implement(git_repo)),
             (verdict("pass"), None),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
-            (verdict("pass"), None),
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
         ]
     )
 
@@ -835,9 +862,9 @@ def test_pre_pr_stops_fixing_after_max_rounds_and_opens_the_pull_request(
     store.load()
     assert (
         len(pull_requests.created),
-        [t.title for t in store.tickets if t.title == "Fix pre-PR finding: still bad"],
+        [(t.title, t.status) for t in store.tickets if t.kind == "pre_pr"],
         len(store.pre_pr_rounds),
-    ) == (1, ["Fix pre-PR finding: still bad"], 2)
+    ) == (1, [("Fix pre-PR finding: unused import", "done")], 2)
 
 
 def test_pull_request_body_lists_remaining_pre_pr_findings(
@@ -847,18 +874,19 @@ def test_pull_request_body_lists_remaining_pre_pr_findings(
 
     cfg.repo = "owner/repo"
     outside = tmp_path_factory.mktemp("prepr")
-    lint = outside / "lint.py"
-    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
-    cfg.pre_pr = PrePrConfig(commands=[f"{sys.executable} {lint}"], max_rounds=1)
+    # the fix for round 1 surfaces a new finding that round 2 reports but does not fix
+    fixed = style_lint(outside, git_repo, "unused import")
+    introduced = style_lint(outside, git_repo, "still bad", fails_while_missing=False)
+    cfg.pre_pr = PrePrConfig(
+        commands=[f"{sys.executable} {fixed}", f"{sys.executable} {introduced}"], max_rounds=1
+    )
     client = FakeClient(
         [
             (plan_reply(), None),
             (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
             ("done", implement(git_repo)),
             (verdict("pass"), None),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v1")),
-            (json.dumps({"test_path": "test_lint.py"}), write_test_file(git_repo, "v2")),
-            (verdict("pass"), None),
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
         ]
     )
 
@@ -905,3 +933,81 @@ def test_unset_pre_pr_records_no_rounds_and_no_findings_section(git_repo, cfg, p
         "pre_pr_rounds" not in state,
         "### Remaining pre-PR findings" not in pull_requests.created[0]["body"],
     ) == (True, True, True)
+
+
+def test_an_unfixed_pre_pr_ticket_is_handed_back_to_the_coder_until_max_rounds(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    cfg.coder_retries = 0
+    cfg.max_rounds = 1
+    outside = tmp_path_factory.mktemp("prepr")
+    lint = outside / "lint.py"
+    lint.write_text("import sys\nprint('still bad')\nsys.exit(1)\n")
+    cfg.pre_pr.commands = [f"{sys.executable} {lint}"]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            (json.dumps({"changed_files": [], "notes": "nothing"}), None),
+            (json.dumps({"changed_files": [], "notes": "nothing"}), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    ticket = next(t for t in store.tickets if t.kind == "pre_pr")
+    assert (ticket.status, ticket.blocked_stage, "max_rounds=1" in (ticket.blocked_reason or "")) == (
+        "blocked",
+        "coder",
+        True,
+    )
+
+
+def test_a_pre_pr_ticket_whose_finding_an_earlier_fix_cleared_is_done_without_a_commit(
+    git_repo, cfg, pull_requests, tmp_path_factory
+):
+    cfg.repo = "owner/repo"
+    outside = tmp_path_factory.mktemp("prepr")
+    unused_import = style_lint(outside, git_repo, "unused import")
+    unused_variable = style_lint(outside, git_repo, "unused variable")
+    cfg.pre_pr.commands = [
+        f"{sys.executable} {unused_import}",
+        f"{sys.executable} {unused_variable}",
+    ]
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+            # writing style.py clears both findings, so the second ticket has nothing to change
+            (json.dumps({"changed_files": ["style.py"], "notes": "fixed"}), write_style(git_repo)),
+            (json.dumps({"changed_files": [], "notes": "already fixed"}), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    fixes = [t for t in store.tickets if t.kind == "pre_pr"]
+    log = subprocess.run(
+        ["git", "log", "--pretty=%s"], cwd=git_repo, capture_output=True, text=True, check=False
+    ).stdout
+    assert (
+        [(t.title, t.status, t.blocked_reason, t.already_satisfied) for t in fixes],
+        report.blocked,
+        log.count("Fix pre-PR finding"),
+    ) == (
+        [
+            ("Fix pre-PR finding: unused import", "done", None, False),
+            ("Fix pre-PR finding: unused variable", "done", None, True),
+        ],
+        0,
+        1,
+    )
