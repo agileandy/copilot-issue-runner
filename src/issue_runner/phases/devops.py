@@ -363,6 +363,31 @@ def branch_exists(repo_dir: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+def checkout_branch_worktree(repo_dir: Path, branch: str, directory: Path) -> Path:
+    _git(repo_dir, "check-ref-format", "--branch", branch)
+    if directory.exists():
+        raise DevopsError(f"refusing to reuse an existing worktree directory: {directory}")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    _git(repo_dir, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:{remote_ref}")
+    if branch_exists(repo_dir, branch):
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", f"refs/heads/{branch}", remote_ref],
+            cwd=repo_dir,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode == 1:
+            raise DevopsError(
+                f"local branch {branch} has commits not on origin/{branch}; refusing to discard them"
+            )
+        if result.returncode != 0:
+            raise DevopsError(f"could not compare branch {branch} with origin/{branch}")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo_dir, "worktree", "add", "-B", branch, str(directory), remote_ref)
+    return directory.resolve()
+
+
 def finish_worktree_creation(
     repo_dir: Path, branch: str, directory: Path, initial_head: str
 ) -> Path:
@@ -389,6 +414,11 @@ def finish_worktree_creation(
 def push_branch(repo_dir: Path, branch: str) -> None:
     """Publish the issue branch so a PR can be opened against it."""
     _git(repo_dir, "push", "-u", "origin", branch)
+
+
+def reset_hard(repo_dir: Path, ref: str) -> None:
+    """Move the checked-out branch and worktree back to `ref`."""
+    _git(repo_dir, "reset", "--hard", ref)
 
 
 def commit_changes(repo_dir: Path, message: str, expected_branch: str) -> str:
@@ -468,6 +498,28 @@ def leftover_markers(repo_dir: Path, paths: list[str]) -> list[str]:
     )
     lines = (result.stdout or "").splitlines()
     return [line for line in lines if "conflict marker" in line]
+
+
+def merge_snapshot(repo_dir: Path) -> dict:
+    """Index entries and working-tree hash of every path the merge or an edit touched."""
+    changed = _git(repo_dir, "diff", "--name-only", "HEAD").stdout.splitlines()
+    untracked = _git(repo_dir, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
+    paths = set(changed) | set(untracked) | set(unmerged_paths(repo_dir))
+    snapshot = {}
+    for path in paths:
+        entries = tuple(_git(repo_dir, "ls-files", "-s", "--", path).stdout.splitlines())
+        file = Path(repo_dir) / path
+        content = hashlib.sha256(file.read_bytes()).hexdigest() if file.is_file() else "deleted"
+        snapshot[path] = (entries, content)
+    return snapshot
+
+
+def changed_since(repo_dir: Path, snapshot: dict) -> list[str]:
+    """Paths whose index entries or working-tree bytes differ from `snapshot`."""
+    current = merge_snapshot(repo_dir)
+    return sorted(
+        p for p in set(snapshot) | set(current) if snapshot.get(p) != current.get(p)
+    )
 
 
 def finish_merge(repo_dir: Path, expected_branch: str) -> str:

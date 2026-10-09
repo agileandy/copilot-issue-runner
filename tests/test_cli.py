@@ -1251,6 +1251,115 @@ def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, cap
     assert "  criteria_dev    not reached\n" in out
 
 
+def _github_clone(path, owner_repo):
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", f"https://github.com/{owner_repo}.git"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_update_pr_flag_calls_update_pull_request_with_the_number(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    seen = {}
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        seen["number"] = number
+        return "abc123"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path)])
+    assert (rc, seen.get("number")) == (0, 5)
+
+
+def test_update_pr_refuses_when_origin_is_not_the_configured_repo(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "other/b")
+    called = False
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        nonlocal called
+        called = True
+        return "abc123"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path)])
+    assert (rc, called) == (2, False)
+
+
+def test_update_pr_rejects_run_only_flags(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    called = False
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        nonlocal called
+        called = True
+        return "abc123"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        ["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path), "--dry-run", "--plan-only"]
+    )
+    assert (rc, called, "--dry-run, --plan-only" in capsys.readouterr().err) == (2, False, True)
+
+
+def test_update_pr_applies_max_ai_credits_and_max_run_credits(tmp_path, monkeypatch):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    seen = {}
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        seen["caps"] = (client.budget.limit, cfg.max_ai_credits)
+        return "abc"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        [
+            "--update-pr",
+            "5",
+            "--repo",
+            "o/n",
+            "--dir",
+            str(tmp_path),
+            "--max-ai-credits",
+            "3",
+            "--max-run-credits",
+            "20",
+        ]
+    )
+    assert (rc, seen.get("caps")) == (0, (20, 3))
+
+
+def test_update_pr_validates_config_before_building_a_client(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+
+    _github_clone(tmp_path, "o/n")
+    called = False
+
+    def fake_update(cfg, client, flow, number, state_dir):
+        nonlocal called
+        called = True
+        return "abc"
+
+    monkeypatch.setattr(cli, "update_pull_request", fake_update, raising=False)
+    rc = cli.main(
+        ["--update-pr", "5", "--repo", "o/n", "--dir", str(tmp_path), "--max-run-credits", "0"]
+    )
+    assert (
+        rc,
+        called,
+        "max_run_credits must be a positive integer" in capsys.readouterr().err,
+    ) == (2, False, True)
+
+
 def test_ticket_regression_reads_from_runner_toml(tmp_path):
     from issue_runner.config import load_config
 

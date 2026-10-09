@@ -156,6 +156,34 @@ def test_worktree_state_reports_untracked_file(git_repo):
     }
 
 
+def test_checkout_branch_worktree_starts_at_origin_branch(git_repo, tmp_path_factory):
+    from issue_runner.phases import devops
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=git_repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    outside = tmp_path_factory.mktemp("checkout")
+    remote = outside / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    git("remote", "add", "origin", str(remote))
+    git("push", "-q", "origin", "main")
+    git("switch", "-q", "-c", "feature/7-x")
+    (git_repo / "feature.txt").write_text("feature")
+    git("add", "feature.txt")
+    git("commit", "-q", "-m", "feature")
+    sha = git("rev-parse", "HEAD")
+    git("push", "-q", "origin", "feature/7-x")
+    git("switch", "-q", "main")
+    git("branch", "-q", "-D", "feature/7-x")
+    git("update-ref", "-d", "refs/remotes/origin/feature/7-x")
+
+    wt = devops.checkout_branch_worktree(git_repo, "feature/7-x", outside / "wt")
+
+    assert (devops.current_branch(wt), devops.head_commit(wt)) == ("feature/7-x", sha)
+
+
 def test_untracked_uv_lock_stays_out_of_the_ticket_commit(git_repo):
     from issue_runner.phases.devops import files_in_commit
 

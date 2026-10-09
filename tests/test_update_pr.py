@@ -1,0 +1,610 @@
+"""update_pr_branch merges origin/<base> into a PR branch and pushes it fast-forward."""
+
+import subprocess
+import sys
+
+import pytest
+
+from issue_runner.phases import merge
+from tests.conftest import FakeClient
+from tests.test_orchestrator import git_repo  # noqa: F401  (fixture reuse)
+
+BRANCH = "feature/7-x"
+
+
+def _git(cwd, *args):
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _commit_a_passing_test(repo):
+    (repo / "test_ok.py").write_text("PASS\n")
+    _git(repo, "add", "test_ok.py")
+    _git(repo, "commit", "-q", "-m", "test: a passing case")
+
+
+@pytest.fixture
+def pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    _commit_a_passing_test(git_repo)
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "feature.py").write_text("y = 2\n")
+    _git(git_repo, "add", "feature.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: feature work")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "other.py").write_text("x = 1\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-q", "-m", "feat: upstream change")
+    _git(clone, "push", "-q", "origin", "main")
+    return remote
+
+
+def test_update_pr_branch_pushes_the_merge_of_base_to_the_pr_branch(pr_branch, cfg):
+    merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main")
+
+    subject = subprocess.run(
+        ["git", "--git-dir", str(pr_branch), "log", "-1", "--format=%s", BRANCH],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert subject == f"chore: merge origin/main into {BRANCH}"
+
+
+def test_update_pr_branch_does_not_push_a_merge_that_fails_the_regression_suite(pr_branch, cfg):
+    import dataclasses
+
+    failing = dataclasses.replace(cfg, regression_cmd='python3 -c "import sys; sys.exit(1)"')
+    before = _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip()
+
+    with pytest.raises(merge.MergeError):
+        merge.update_pr_branch(FakeClient([]), failing, BRANCH, "main")
+
+    assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before
+
+
+def test_update_pr_branch_does_not_push_a_merge_whose_regression_suite_runs_no_test(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+    import sys
+
+    no_tests_cfg = dataclasses.replace(
+        cfg, regression_cmd=f"{sys.executable} {git_repo / 'checker.py'} feature.py"
+    )
+    before = _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip()
+
+    with pytest.raises(merge.MergeError, match="the regression suite did not run"):
+        merge.update_pr_branch(FakeClient([]), no_tests_cfg, BRANCH, "main")
+
+    assert _git(pr_branch, "--git-dir", str(pr_branch), "rev-parse", BRANCH).stdout.strip() == before
+
+
+@pytest.fixture
+def conflicting_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    (git_repo / "impl.py").write_text("base\n")
+    _git(git_repo, "add", "impl.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: base impl")
+    _commit_a_passing_test(git_repo)
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "impl.py").write_text("ours\n")
+    _git(git_repo, "commit", "-q", "-am", "feat: our impl")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "impl.py").write_text("upstream\n")
+    _git(clone, "commit", "-q", "-am", "feat: upstream impl")
+    _git(clone, "push", "-q", "origin", "main")
+    return remote
+
+
+def test_update_pr_branch_pushes_the_resolvers_fix_for_a_conflicted_merge(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    client = FakeClient(
+        [('{"notes":"ok"}', lambda: (git_repo / "impl.py").write_text("ours\n# and upstream\n"))]
+    )
+
+    merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    pushed = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
+    ).stdout
+    assert pushed == "ours\n# and upstream\n"
+
+
+def test_update_pr_branch_rejects_a_resolver_edit_outside_the_conflict(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    no_retries = dataclasses.replace(cfg, coder_retries=0)
+
+    def resolve_and_stray():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        (git_repo / "other.py").write_text("x = 2\n")
+
+    client = FakeClient([('{"notes":"ok"}', resolve_and_stray)])
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: other.py"):
+        merge.update_pr_branch(client, no_retries, BRANCH, "main")
+
+
+def test_update_pr_branch_rejects_a_staged_resolver_edit_outside_the_conflict(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    no_retries = dataclasses.replace(cfg, coder_retries=0)
+
+    def resolve_and_stage_stray():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        (git_repo / "other.py").write_text("x = 2\n")
+        _git(git_repo, "add", "other.py")
+
+    client = FakeClient([('{"notes":"ok"}', resolve_and_stage_stray)])
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: other.py"):
+        merge.update_pr_branch(client, no_retries, BRANCH, "main")
+
+
+def test_update_pr_branch_refuses_the_push_when_origins_pr_branch_moved_and_changes_no_ref(
+    conflicting_pr_branch, git_repo, cfg, tmp_path_factory  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    head = devops.head_commit(git_repo)
+    advanced = {}
+
+    def resolve_while_origin_advances():
+        (git_repo / "impl.py").write_text("ours\n# and upstream\n")
+        clone = tmp_path_factory.mktemp("racer") / "clone"
+        subprocess.run(["git", "clone", "-q", str(conflicting_pr_branch), str(clone)], check=True)
+        _git(clone, "checkout", "-q", BRANCH)
+        (clone / "racer.py").write_text("z = 3\n")
+        _git(clone, "add", "racer.py")
+        _git(clone, "commit", "-q", "-m", "feat: teammate pushes to the PR branch")
+        _git(clone, "push", "-q", "origin", BRANCH)
+        advanced["sha"] = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    client = FakeClient([('{"notes":"ok"}', resolve_while_origin_advances)])
+
+    with pytest.raises(merge.MergeError, match="moved during the update"):
+        merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    remote_tip = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "rev-parse", BRANCH
+    ).stdout.strip()
+    local_tip = _git(git_repo, "rev-parse", BRANCH).stdout.strip()
+    assert (remote_tip, local_tip) == (advanced["sha"], head)
+
+
+def test_update_pr_branch_aborts_the_merge_when_the_resolver_raises(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.copilot import CopilotError
+    from issue_runner.phases import devops
+
+    def boom():
+        raise CopilotError("boom")
+
+    with pytest.raises(CopilotError):
+        merge.update_pr_branch(FakeClient([('{"notes":"ok"}', boom)]), cfg, BRANCH, "main")
+
+    status = _git(git_repo, "status", "--porcelain").stdout
+    assert (status, devops.merge_in_progress(git_repo)) == ("", False)
+
+
+def test_update_pr_branch_aborts_the_merge_when_the_snapshot_raises(
+    conflicting_pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    def denied(_repo):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("issue_runner.phases.devops.merge_snapshot", denied)
+
+    with pytest.raises(PermissionError):
+        merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main")
+
+    status = _git(git_repo, "status", "--porcelain").stdout
+    assert (status, devops.merge_in_progress(git_repo)) == ("", False)
+
+
+@pytest.fixture
+def modify_delete_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    (git_repo / "impl.py").write_text("base\n")
+    _git(git_repo, "add", "impl.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: base impl")
+    _commit_a_passing_test(git_repo)
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "impl.py").write_text("ours\n")
+    _git(git_repo, "commit", "-q", "-am", "feat: our impl")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+
+    clone = tmp_path_factory.mktemp("teammate") / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _git(clone, "rm", "-q", "impl.py")
+    _git(clone, "commit", "-q", "-m", "feat: upstream drops impl")
+    _git(clone, "push", "-q", "origin", "main")
+    return remote
+
+
+def test_update_pr_branch_runs_the_resolver_for_a_modify_delete_conflict(
+    modify_delete_pr_branch, cfg
+):
+    client = FakeClient([('{"notes":"ok"}', None)])
+
+    merge.update_pr_branch(client, cfg, BRANCH, "main")
+
+    assert [c["role"] for c in client.calls] == ["resolver"]
+
+
+@pytest.fixture
+def up_to_date_pr_branch(git_repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("origin") / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    _git(git_repo, "remote", "add", "origin", str(remote))
+    _commit_a_passing_test(git_repo)
+    _git(git_repo, "push", "-q", "-u", "origin", "main")
+    _git(git_repo, "checkout", "-q", "-b", BRANCH)
+    (git_repo / "feature.py").write_text("y = 2\n")
+    _git(git_repo, "add", "feature.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: feature work")
+    _git(git_repo, "push", "-q", "-u", "origin", BRANCH)
+    return remote
+
+
+def test_update_pr_branch_returns_the_head_unchanged_when_the_branch_already_contains_base(
+    up_to_date_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.phases import devops
+
+    head = devops.head_commit(git_repo)
+
+    assert merge.update_pr_branch(FakeClient([]), cfg, BRANCH, "main") == head
+
+
+def test_update_pull_request_merges_base_into_an_open_pr_in_its_own_worktree(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    import importlib
+
+    from issue_runner.github_flow import GitHubFlow
+    from tests.fake_github import FakeGitHub
+
+    try:
+        update_pull_request = importlib.import_module(
+            "issue_runner.phases.update_pr"
+        ).update_pull_request
+    except ModuleNotFoundError:
+        update_pull_request = merge.update_pull_request
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+
+    update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+
+    subject = subprocess.run(
+        ["git", "--git-dir", str(pr_branch), "log", "-1", "--format=%s", BRANCH],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert subject == f"chore: merge origin/main into {BRANCH}"
+
+
+def test_update_pull_request_refuses_a_closed_pr_before_creating_a_worktree(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    fake.pulls[number]["state"] = "closed"
+
+    with pytest.raises(merge.MergeError, match="is closed"):
+        update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+    assert (git_repo / ".state" / "worktrees" / f"pr-{number}").exists() is False
+
+
+def test_update_pull_request_refuses_a_fork_pr_before_creating_a_worktree(
+    pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    fake.pulls[number]["head"]["repo"] = {"full_name": "fork/n"}
+
+    with pytest.raises(merge.MergeError, match="fork/n"):
+        update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+    assert (git_repo / ".state" / "worktrees" / f"pr-{number}").exists() is False
+
+
+def test_update_pull_request_runs_the_conflict_resolver_inside_the_pr_worktree(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+    from pathlib import Path
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    class RecordingClient:
+        def __init__(self):
+            self.config = dataclasses.replace(cfg)
+            self.repo_dirs = []
+
+        def run(self, prompt, role, read_only=False, session_name=None):
+            self.repo_dirs.append(self.config.repo_dir)
+            (Path(self.config.repo_dir) / "impl.py").write_text("ours\n# and upstream\n")
+            return '{"notes":"ok"}'
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    client = RecordingClient()
+
+    update_pull_request(cfg, client, flow, number, git_repo / ".state")
+
+    pushed = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
+    ).stdout
+    assert (pushed, client.config.repo_dir) == ("ours\n# and upstream\n", cfg.repo_dir)
+
+
+def test_update_pull_request_runs_setup_cmd_inside_the_pr_worktree(
+    pr_branch, git_repo, cfg, tmp_path_factory  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    marker = tmp_path_factory.mktemp("setup") / "cwd"
+    # One python -c argument with no shell operator. It is left unquoted on
+    # purpose: run as plain argv it works, while a shell would reject the `(`.
+    write_cwd = (
+        f'__import__(\\"pathlib\\").Path(r\\"{marker}\\")'
+        f'.write_text(__import__(\\"os\\").getcwd())'
+    )
+
+    update_pull_request(
+        dataclasses.replace(cfg, setup_cmd=[f"{sys.executable} -c {write_cwd}"]),
+        FakeClient([]),
+        flow,
+        number,
+        git_repo / ".state",
+    )
+
+    assert marker.read_text().strip() == str(
+        (git_repo / ".state" / "worktrees" / f"pr-{number}").resolve()
+    )
+
+
+def test_update_pull_request_cleans_its_worktree_after_a_rejected_resolver_so_a_rerun_works(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    (git_repo / "other.py").write_text("x = 1\n")
+    _git(git_repo, "add", "other.py")
+    _git(git_repo, "commit", "-q", "-m", "feat: other")
+    _git(git_repo, "push", "-q", "origin", BRANCH)
+    _git(git_repo, "checkout", "-q", "main")
+    (git_repo / "impl.py").write_text("the caller's edit\n")
+    (git_repo / "mine.txt").write_text("the caller's file\n")
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def resolve(stray):
+        (worktree / "impl.py").write_text("ours\n# and upstream\n")
+        if stray:
+            (worktree / "other.py").write_text("x = 2\n")
+            (worktree / "scratch.txt").write_text("notes\n")
+
+    with pytest.raises(merge.MergeError, match="outside the conflict"):
+        update_pull_request(
+            dataclasses.replace(cfg, coder_retries=0),
+            FakeClient([('{"notes":"ok"}', lambda: resolve(stray=True))]),
+            flow,
+            number,
+            git_repo / ".state",
+        )
+    left_behind = worktree.exists()
+    rerun = FakeClient([('{"notes":"ok"}', lambda: resolve(stray=False))])
+    update_pull_request(cfg, rerun, flow, number, git_repo / ".state")
+
+    pushed = _git(
+        conflicting_pr_branch, "--git-dir", str(conflicting_pr_branch), "show", f"{BRANCH}:impl.py"
+    ).stdout
+    callers = _git(git_repo, "status", "--porcelain", "--", "impl.py", "mine.txt").stdout
+    assert (left_behind, pushed, callers) == (
+        False,
+        "ours\n# and upstream\n",
+        " M impl.py\n?? mine.txt\n",
+    )
+
+
+def test_update_pull_request_drops_its_unpushed_merge_commit_when_the_update_fails(
+    pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases import devops
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    real_finish_merge = devops.finish_merge
+
+    def commit_then_fail(repo, branch):
+        real_finish_merge(repo, branch)
+        raise devops.DevopsError("a post-commit check failed")
+
+    monkeypatch.setattr("issue_runner.phases.devops.finish_merge", commit_then_fail)
+    head = devops.head_commit(git_repo)
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+
+    with pytest.raises(devops.DevopsError, match="post-commit"):
+        update_pull_request(cfg, FakeClient([]), flow, number, git_repo / ".state")
+
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+    local_tip = _git(git_repo, "rev-parse", BRANCH).stdout.strip()
+    assert (local_tip, worktree.exists()) == (head, False)
+
+
+def test_update_pull_request_never_cleans_the_callers_checkout_when_the_worktree_breaks(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    (git_repo / "impl.py").write_text("the caller's edit\n")
+    (git_repo / "mine.txt").write_text("the caller's file\n")
+    main = _git(git_repo, "rev-parse", "main").stdout.strip()
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+    # without its .git file the worktree resolves to the caller's checkout
+    client = FakeClient([('{"notes":"ok"}', lambda: (worktree / ".git").unlink())])
+
+    with pytest.raises(merge.MergeError, match="moved HEAD or the branch"):
+        update_pull_request(cfg, client, flow, number, git_repo / ".state")
+
+    callers = _git(git_repo, "status", "--porcelain", "--", "impl.py", "mine.txt").stdout
+    assert (callers, _git(git_repo, "rev-parse", "main").stdout.strip()) == (
+        " M impl.py\n?? mine.txt\n",
+        main,
+    )
+
+
+def test_update_pull_request_never_resets_a_branch_the_resolver_switched_to(
+    conflicting_pr_branch, git_repo, cfg  # noqa: F811
+):
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    _git(git_repo, "checkout", "-q", "main")
+    _git(git_repo, "branch", "side")
+    side = _git(git_repo, "rev-parse", "side").stdout.strip()
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def switch_branch():
+        _git(worktree, "merge", "--abort")
+        _git(worktree, "checkout", "-q", "side")
+
+    with pytest.raises(merge.MergeError, match="moved HEAD or the branch"):
+        update_pull_request(
+            cfg, FakeClient([('{"notes":"ok"}', switch_branch)]), flow, number, git_repo / ".state"
+        )
+
+    assert _git(git_repo, "rev-parse", "side").stdout.strip() == side
+
+
+def test_update_pull_request_reports_the_update_error_when_its_cleanup_times_out(
+    conflicting_pr_branch, git_repo, cfg, monkeypatch  # noqa: F811
+):
+    import dataclasses
+
+    from issue_runner.github_flow import GitHubFlow
+    from issue_runner.phases.update_pr import update_pull_request
+    from tests.fake_github import FakeGitHub
+
+    real_run = subprocess.run
+
+    def reset_times_out(args, **kwargs):
+        if args[:3] == ["git", "reset", "--hard"]:
+            raise subprocess.TimeoutExpired(args, 60)
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", reset_times_out)
+    _git(git_repo, "checkout", "-q", "main")
+    fake = FakeGitHub("o/n")
+    fake.remote = conflicting_pr_branch
+    flow = GitHubFlow("o/n", run=fake)
+    number = flow.create_pull("feat: x", BRANCH, "main", "body")["number"]
+    worktree = git_repo / ".state" / "worktrees" / f"pr-{number}"
+
+    def resolve_and_stray():
+        (worktree / "impl.py").write_text("ours\n# and upstream\n")
+        (worktree / "scratch.txt").write_text("notes\n")
+
+    with pytest.raises(merge.MergeError, match="outside the conflict: scratch.txt"):
+        update_pull_request(
+            dataclasses.replace(cfg, coder_retries=0),
+            FakeClient([('{"notes":"ok"}', resolve_and_stray)]),
+            flow,
+            number,
+            git_repo / ".state",
+        )

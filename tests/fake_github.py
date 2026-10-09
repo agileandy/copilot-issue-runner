@@ -280,8 +280,8 @@ class FakeGitHub:
             "title": body["title"],
             "body": body["body"],
             "draft": body.get("draft"),
-            "head": {"ref": body["head"], "sha": None},
-            "base": {"ref": body["base"]},
+            "head": {"ref": body["head"], "sha": None, "repo": {"full_name": self.repo}},
+            "base": {"ref": body["base"], "repo": {"full_name": self.repo}},
             "html_url": f"https://github.com/{self.repo}/pull/{number}",
         }
         return self._pull(str(number), count=False)
