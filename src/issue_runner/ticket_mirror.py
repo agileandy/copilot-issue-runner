@@ -12,11 +12,14 @@ to the repo's tracker so progress is visible there.
 """
 
 import json
+import logging
 import re
 
 from . import github_io
 from .github_io import GithubError
 from .trackers import _http_json, gitea_write_token
+
+log = logging.getLogger("issue_runner")
 
 IN_PROGRESS_LABEL = "in progress"
 _LABEL_COLOUR = "0e8a16"
@@ -57,7 +60,18 @@ class GithubTickets:
         self._label_ready = False
 
     def create(self, parent_number: int, ticket) -> int:
-        return github_io.create_subissue(self.repo, parent_number, ticket)
+        number = github_io.create_subissue(self.repo, parent_number, ticket)
+        try:
+            github_io.link_subissue(self.repo, parent_number, number)
+        except GithubError as e:
+            log.warning(
+                "could not link #%d as a sub-issue of #%d: %s (it is still linked by its [#%d] title prefix)",
+                number,
+                parent_number,
+                e,
+                parent_number,
+            )
+        return number
 
     def _mark(self, number: int) -> None:
         if not self._label_ready:

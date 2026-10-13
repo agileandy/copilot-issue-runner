@@ -70,6 +70,30 @@ def create_issue(repo: str, title: str, body: str, run=subprocess.run) -> dict:
     }
 
 
+def link_subissue(repo: str, parent_number: int, child_number: int, run=subprocess.run) -> None:
+    """Link `child_number` under `parent_number` as a GitHub sub-issue.
+
+    The sub-issues API takes the child's REST `id`, not its issue number.
+    """
+    raw = _run(["gh", "api", f"repos/{repo}/issues/{child_number}", "--jq", ".id"], run).strip()
+    try:
+        child_id = int(raw)
+    except ValueError:
+        raise GithubError(f"could not parse issue id for #{child_number}: {raw[:200]!r}") from None
+    _run(
+        [
+            "gh",
+            "api",
+            "--method",
+            "POST",
+            f"repos/{repo}/issues/{parent_number}/sub_issues",
+            "-F",
+            f"sub_issue_id={child_id}",
+        ],
+        run,
+    )
+
+
 def comment_issue(repo: str, number: int, body: str, run=subprocess.run) -> None:
     _run(["gh", "issue", "comment", "-R", repo, str(number), "--body", body], run)
 

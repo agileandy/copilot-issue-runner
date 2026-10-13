@@ -70,3 +70,29 @@ def test_open_pull_request_raises_without_url():
     run = FakeRun(stdout="no url here\n")
     with pytest.raises(GithubError):
         open_pull_request("owner/repo", head="b", title="t", body="b", run=run)
+
+
+class SequencedFakeRun:
+    def __init__(self, stdouts):
+        self.calls = []
+        self.stdouts = list(stdouts)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=self.stdouts.pop(0), stderr="")
+
+
+def test_link_subissue_posts_child_rest_id_to_parent():
+    from issue_runner.github_io import link_subissue
+
+    run = SequencedFakeRun(["987654\n", "{}"])
+    link_subissue("owner/repo", parent_number=17, child_number=42, run=run)
+    assert run.calls[1] == [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        "repos/owner/repo/issues/17/sub_issues",
+        "-F",
+        "sub_issue_id=987654",
+    ]
