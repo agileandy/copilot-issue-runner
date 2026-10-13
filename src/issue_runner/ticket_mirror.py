@@ -57,7 +57,9 @@ class GithubTickets:
         self._label_ready = False
 
     def create(self, parent_number: int, ticket) -> int:
-        return github_io.create_subissue(self.repo, parent_number, ticket)
+        number = github_io.create_subissue(self.repo, parent_number, ticket)
+        github_io.link_subissue(self.repo, parent_number, number)
+        return number
 
     def _mark(self, number: int) -> None:
         if not self._label_ready:

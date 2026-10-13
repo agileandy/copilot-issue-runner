@@ -75,6 +75,11 @@ elif args[:2] in (["issue", "close"], ["issue", "comment"]):
     if data.get("refuse_close"):
         print("close refused", file=sys.stderr)
         sys.exit(1)
+elif args[0] == "api" and args[-2:] == ["--jq", ".id"]:
+    print(1000 + int(args[1].rsplit("/", 1)[1]))
+elif args[:3] == ["api", "--method", "POST"] and args[3].endswith("/sub_issues"):
+    data.setdefault("links", []).append([int(args[3].split("/")[-2]), int(args[5].split("=")[1])])
+    path.write_text(json.dumps(data))
 else:
     raise SystemExit("unexpected GitHub write: " + repr(args))
 """

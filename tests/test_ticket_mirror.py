@@ -156,3 +156,16 @@ def test_block_annotates_checklist_and_comments():
     assert len(api.comments) == 1
     assert api.comments[0].startswith("Sub-task 2 (log progress) BLOCKED:")
     assert "x" * 300 in api.comments[0]  # full reason lives in the comment
+
+
+def test_github_create_links_new_ticket_as_subissue_of_parent(monkeypatch):
+    import issue_runner.github_io as gio
+    from issue_runner.ticket_mirror import GithubTickets
+
+    links = []
+    monkeypatch.setattr(gio, "create_subissue", lambda repo, parent, ticket: 42)
+    monkeypatch.setattr(gio, "link_subissue", lambda repo, parent, child: links.append((repo, parent, child)))
+
+    number = GithubTickets("owner/repo").create(17, make_ticket())
+
+    assert (number, links) == (42, [("owner/repo", 17, 42)])
