@@ -173,11 +173,10 @@ def test_github_create_links_new_ticket_as_subissue_of_parent(monkeypatch):
 
 def test_github_create_logs_failed_subissue_link_and_returns_ticket(monkeypatch, caplog):
     import issue_runner.github_io as gio
-    from issue_runner.github_io import GithubError
     from issue_runner.ticket_mirror import GithubTickets
 
     def failing_link(repo, parent, child):
-        raise GithubError("HTTP 422")
+        raise gio.GithubError("HTTP 422")
 
     monkeypatch.setattr(gio, "create_subissue", lambda repo, parent, ticket: 42)
     monkeypatch.setattr(gio, "link_subissue", failing_link)
