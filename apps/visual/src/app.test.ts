@@ -377,3 +377,54 @@ test("a blocked run explains why at the top of the summary and wraps long reason
     expect(frame).toContain("--retry-blocked")
   })
 })
+
+test("widening the terminal re-wraps agent output to the new width", async () => {
+  await withApp({ width: 90, height: 30 }, async (app, setup) => {
+    const words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+    let long = ""
+    for (let i = 0; long.length < 111; i++) long += `${words[i % words.length]} `
+    long = `${long.slice(0, 111).trimEnd().padEnd(111, "x")} TAILWORD`
+    if (long.length !== 120) throw new Error(`fixture line is ${long.length} chars, expected 120`)
+
+    app.apply({ kind: "agent_output", payload: { chunk: `${long}\n` } })
+    await setup.waitForFrame((value) => value.includes("TAILWORD"))
+
+    setup.resize(180, 30)
+    const onOneRow = (value: string) => value.split("\n").some((line) => line.includes(long))
+    let frame: string
+    try {
+      frame = await setup.waitForFrame(onOneRow)
+    } catch {
+      await setup.renderOnce()
+      frame = setup.captureCharFrame()
+    }
+
+    expect(frame.split("\n").some((line) => line.includes(long))).toBe(true)
+  })
+})
+
+test("narrowing the terminal re-wraps agent output without losing words or the last row", async () => {
+  await withApp({ width: 180, height: 30 }, async (app, setup) => {
+    const words = [...Array.from({ length: 23 }, (_, i) => `w${String(i).padStart(3, "0")}`), "TAILWORD"]
+    const line = words.join(" ")
+    const filler = Array.from({ length: 40 }, (_, i) => `filler ${i}`).join("\n")
+    app.apply({ kind: "agent_output", payload: { chunk: `${filler}\n${line}` } })
+    await setup.waitForFrame((value) => value.split("\n").some((row) => row.includes(line)))
+
+    setup.resize(90, 30)
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    const shown = new Set(rows.join(" ").split(/\s+/))
+    expect(words.filter((word) => !shown.has(word))).toEqual([])
+    // text area: 90 - 40 board - 2 borders - 1 padding - 1 padding - 1 scrollbar
+    expect(rows.filter((row) => row.length > 45)).toEqual([])
+    let last = rows.length - 1
+    while (last >= 0 && rows[last]!.trim() === "") last -= 1
+    expect({ text: rows[last] ?? "", blankBelow: rows.length - 1 - last }).toEqual({
+      text: expect.stringContaining("TAILWORD"),
+      blankBelow: 0,
+    })
+  })
+})

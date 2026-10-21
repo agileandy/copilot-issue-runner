@@ -271,10 +271,13 @@ export function createApp(renderer: CliRenderer): App {
   const AGENT_CHROME = 5
   let lastWrapWidth = 0
 
-  /** Columns an agent row may use: one short of the area, so no row is exactly full. */
-  function agentWrapWidth(): number {
-    const measured = outputScroll.viewport?.width ?? 0
-    const area = measured > 8 ? measured - 1 : (renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
+  /**
+   * Columns an agent row may use: one short of the area, so no row is exactly full.
+   * A resize passes the new terminal width: the viewport is not laid out again until the next frame.
+   */
+  function agentWrapWidth(terminalWidth?: number): number {
+    const measured = terminalWidth === undefined ? (outputScroll.viewport?.width ?? 0) : 0
+    const area = measured > 8 ? measured - 1 : (terminalWidth || renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
     lastWrapWidth = Math.max(1, area - 1)
     return lastWrapWidth
   }
@@ -449,6 +452,16 @@ export function createApp(renderer: CliRenderer): App {
     else renderStats()
   }
 
+  /** Re-wraps the agent output when its text area has changed width since the last wrap. */
+  function onResize(width: number): void {
+    const previous = lastWrapWidth
+    if (agentWrapWidth(width) === previous) return
+    outputText.content = wrapText(output, lastWrapWidth)
+    outputScroll.scrollTo(outputScroll.scrollHeight)
+  }
+
+  renderer.on("resize", onResize)
+
   const clock = setInterval(renderStats, 1000)
 
   refresh()
@@ -482,6 +495,9 @@ export function createApp(renderer: CliRenderer): App {
     },
     scrollOutput: () => outputScroll.scrollTo(outputScroll.scrollHeight),
     scrollSummaryToBottom: () => summaryScroll.scrollTo(summaryScroll.scrollHeight),
-    dispose: () => clearInterval(clock),
+    dispose: () => {
+      clearInterval(clock)
+      renderer.off("resize", onResize)
+    },
   }
 }
