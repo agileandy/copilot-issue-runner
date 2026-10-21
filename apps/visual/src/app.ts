@@ -456,8 +456,10 @@ export function createApp(renderer: CliRenderer): App {
   function onResize(width: number): void {
     const previous = lastWrapWidth
     if (agentWrapWidth(width) === previous) return
+    const atBottom =
+      outputScroll.scrollTop >= outputScroll.scrollHeight - (outputScroll.viewport?.height ?? 0) - 1
     outputText.content = wrapText(output, lastWrapWidth)
-    outputScroll.scrollTo(outputScroll.scrollHeight)
+    if (atBottom) outputScroll.scrollTo(outputScroll.scrollHeight)
   }
 
   renderer.on("resize", onResize)

@@ -428,3 +428,31 @@ test("narrowing the terminal re-wraps agent output without losing words or the l
     })
   })
 })
+
+test("resizing the terminal keeps a scrolled-up agent position", async () => {
+  await withApp({ width: 139, height: 44 }, async (app, setup) => {
+    const lines = Array.from({ length: 120 }, (_, i) => `line-${String(i).padStart(3, "0")}`)
+    app.apply({ kind: "agent_output", payload: { chunk: `${lines.join("\n")}\nTAIL-MARK` } })
+    await setup.waitForFrame((value) => value.includes("TAIL-MARK"))
+
+    for (let press = 0; press < 3; press += 1) {
+      // OpenTUI's KeyCodes has no PAGEUP name: send the terminal's PageUp sequence.
+      setup.mockInput.pressKey("\x1b[5~")
+      await setup.renderOnce()
+    }
+    await setup.renderOnce()
+
+    const topBefore = (agentRows(setup.captureCharFrame()).find((row) => row.trim() !== "") ?? "").trim()
+    expect(topBefore).toMatch(/^line-0\d\d$/)
+
+    setup.resize(120, 44)
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    expect({
+      keptRow: rows.some((r) => r.includes(topBefore)),
+      tail: rows.some((r) => r.includes("TAIL-MARK")),
+    }).toEqual({ keptRow: true, tail: false })
+  })
+})
