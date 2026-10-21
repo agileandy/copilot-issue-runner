@@ -26,6 +26,7 @@ import {
   type ViewState,
 } from "./model"
 import { statusColor, statusGlyph, theme } from "./theme"
+import { wrapText } from "./wrap"
 
 export interface App {
   root: BoxRenderable
@@ -133,7 +134,9 @@ export function createApp(renderer: CliRenderer): App {
     contentOptions: { backgroundColor: theme.bg, flexDirection: "column", paddingRight: 1 },
     scrollbarOptions: QUIET_SCROLLBAR,
   })
-  const outputText = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "word" })
+  // The app wraps agent output itself: OpenTUI's own wrapping loses the newest
+  // rows when a line is exactly the text-area width.
+  const outputText = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "none" })
   outputScroll.add(outputText)
   outputPane.add(outputScroll)
 
@@ -261,6 +264,22 @@ export function createApp(renderer: CliRenderer): App {
   function boardWidth(): number {
     const measured = board.viewport?.width ?? 0
     return measured > 8 ? measured - 1 : BOARD_WIDTH - 4
+  }
+
+  // Pane chrome around the agent text: two borders, paddingLeft, the content
+  // paddingRight and the scrollbar.
+  const AGENT_CHROME = 5
+  let lastWrapWidth = 0
+
+  /**
+   * Columns an agent row may use: one short of the area, so no row is exactly full.
+   * Computed from the terminal width, not the viewport: the viewport keeps its
+   * old width after a resize until the next frame is laid out.
+   */
+  function agentWrapWidth(terminalWidth?: number): number {
+    const area = (terminalWidth || renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
+    lastWrapWidth = Math.max(1, area - 1)
+    return lastWrapWidth
   }
 
   // Rows are reused rather than rebuilt: a board that churns renderables on
@@ -427,11 +446,66 @@ export function createApp(renderer: CliRenderer): App {
     const result = applyEvent(state, event)
     if (result.output) {
       output = trimOutput(output + result.output)
-      outputText.content = output
+      outputText.content = wrapText(output, agentWrapWidth())
     }
     if (result.boardChanged) refresh()
     else renderStats()
   }
+
+  /** A logical line of `output` and a row offset inside its wrapped rows. */
+  type Anchor = { line: number; offset: number }
+  let pendingAnchor: Anchor | null = null
+
+  function wrappedRows(line: string, width: number): number {
+    return wrapText(line, width).split("\n").length
+  }
+
+  function anchorAt(row: number, width: number): Anchor | null {
+    const lines = output.split("\n")
+    let top = 0
+    for (let line = 0; line < lines.length; line += 1) {
+      const rows = wrappedRows(lines[line]!, width)
+      if (top + rows > row) return { line, offset: row - top }
+      top += rows
+    }
+    return null
+  }
+
+  function anchorRow(anchor: Anchor, width: number): number {
+    const lines = output.split("\n")
+    let top = 0
+    for (let line = 0; line < anchor.line && line < lines.length; line += 1) {
+      top += wrappedRows(lines[line]!, width)
+    }
+    return top + Math.min(anchor.offset, wrappedRows(lines[anchor.line] ?? "", width) - 1)
+  }
+
+  // Runs before each frame's layout, so it scrolls only once the re-wrapped
+  // text has been laid out: until then scrollHeight is the old one and clamps.
+  async function applyAnchor(): Promise<void> {
+    if (!pendingAnchor) return
+    if (outputText.height !== wrapText(output, lastWrapWidth).split("\n").length) return
+    outputScroll.scrollTo(anchorRow(pendingAnchor, lastWrapWidth))
+    pendingAnchor = null
+    renderer.removeFrameCallback(applyAnchor)
+  }
+
+  /** Re-wraps the agent output when its text area has changed width since the last wrap. */
+  function onResize(width: number): void {
+    const previous = lastWrapWidth
+    if (agentWrapWidth(width) === previous) return
+    const atBottom =
+      outputScroll.scrollTop >= outputScroll.scrollHeight - (outputScroll.viewport?.height ?? 0) - 1
+    const anchor = atBottom || previous <= 0 ? null : anchorAt(outputScroll.scrollTop, previous)
+    outputText.content = wrapText(output, lastWrapWidth)
+    if (atBottom) outputScroll.scrollTo(outputScroll.scrollHeight)
+    if (anchor) {
+      if (!pendingAnchor) renderer.setFrameCallback(applyAnchor)
+      pendingAnchor = anchor
+    }
+  }
+
+  renderer.on("resize", onResize)
 
   const clock = setInterval(renderStats, 1000)
 
@@ -466,6 +540,11 @@ export function createApp(renderer: CliRenderer): App {
     },
     scrollOutput: () => outputScroll.scrollTo(outputScroll.scrollHeight),
     scrollSummaryToBottom: () => summaryScroll.scrollTo(summaryScroll.scrollHeight),
-    dispose: () => clearInterval(clock),
+    dispose: () => {
+      clearInterval(clock)
+      renderer.off("resize", onResize)
+      pendingAnchor = null
+      renderer.removeFrameCallback(applyAnchor)
+    },
   }
 }

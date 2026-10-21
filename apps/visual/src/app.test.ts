@@ -98,6 +98,82 @@ test("streamed output lands in the agent pane and wraps", async () => {
   })
 })
 
+test("lines of exactly the text-area width keep the newest text in view", async () => {
+  await withApp({ width: 139, height: 44 }, async (app, setup) => {
+    const row = (i: number) => {
+      let s = `R${i}`
+      while (s.length < 95) s += " word"
+      return s.slice(0, 95)
+    }
+    const chunk = `${Array.from({ length: 40 }, (_, i) => row(i)).join("\n")}\nEND-MARK`
+    app.apply({ kind: "agent_output", payload: { chunk } })
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const lines = setup.captureCharFrame().split("\n")
+    const top = lines.findIndex((line) => line.includes("╭─ agent"))
+    const bottom = lines.findIndex((line, index) => index > top && line.includes("╰"))
+    const rows = lines
+      .slice(top + 1, bottom)
+      .map((line) => (line.split("│")[3] ?? "").replace(/[█▀▄]/g, "").trim())
+    let last = rows.length - 1
+    while (last >= 0 && rows[last] === "") last -= 1
+
+    expect({ text: rows[last] ?? "", blankBelow: rows.length - 1 - last }).toEqual({
+      text: expect.stringContaining("END-MARK"),
+      blankBelow: 0,
+    })
+  })
+})
+
+/** Agent-pane rows between its borders, scrollbar glyphs and the left padding removed. */
+function agentRows(frame: string): string[] {
+  const lines = frame.split("\n")
+  const top = lines.findIndex((line) => line.includes("╭─ agent"))
+  const bottom = lines.findIndex((line, index) => index > top && line.includes("╰"))
+  return lines
+    .slice(top + 1, bottom)
+    .map((line) => (line.split("│")[3] ?? "").replace(/[█▀▄]/g, "").slice(1).trimEnd())
+}
+
+test("a long line of words shows every word and no row is wider than the area", async () => {
+  await withApp({ width: 139, height: 44 }, async (app, setup) => {
+    const words = [...Array.from({ length: 59 }, (_, i) => `w${String(i).padStart(3, "0")}`), "end01"]
+    const line = words.join(" ")
+    expect(line.length).toBe(300)
+    app.apply({ kind: "agent_output", payload: { chunk: line } })
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    const shown = new Set(rows.join(" ").split(/\s+/))
+    expect(words.filter((word) => !shown.has(word))).toEqual([])
+    // text area: 139 - 40 board - 2 borders - 1 padding - 1 padding - 1 scrollbar
+    expect(rows.filter((row) => row.length > 94)).toEqual([])
+  })
+})
+
+test("many small streamed chunks keep the newest text on the last row", async () => {
+  await withApp({ width: 139, height: 44 }, async (app, setup) => {
+    for (let i = 0; i < 200; i += 1) {
+      const chunk = i % 4 === 3 ? `c${i}\n` : `c${i} `
+      app.apply({ kind: "agent_output", payload: { chunk } })
+      await setup.renderOnce()
+    }
+    app.apply({ kind: "agent_output", payload: { chunk: "NEWEST" } })
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    let last = rows.length - 1
+    while (last >= 0 && rows[last]!.trim() === "") last -= 1
+    expect({ text: rows[last] ?? "", blankBelow: rows.length - 1 - last }).toEqual({
+      text: expect.stringContaining("NEWEST"),
+      blankBelow: 0,
+    })
+  })
+})
+
 test("the summary appears only once the run has finished", async () => {
   await withApp({ width: 100, height: 24 }, async (app, setup) => {
     let frame = await setup.waitForFrame((value) => value.includes("tickets"))
@@ -299,5 +375,124 @@ test("a blocked run explains why at the top of the summary and wraps long reason
     expect(frame).toContain("test never ran")
     expect(frame).toContain("No module named 'openpyxl'")
     expect(frame).toContain("--retry-blocked")
+  })
+})
+
+test("widening the terminal re-wraps agent output to the new width", async () => {
+  await withApp({ width: 90, height: 30 }, async (app, setup) => {
+    const words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+    let long = ""
+    for (let i = 0; long.length < 111; i++) long += `${words[i % words.length]} `
+    long = `${long.slice(0, 111).trimEnd().padEnd(111, "x")} TAILWORD`
+    if (long.length !== 120) throw new Error(`fixture line is ${long.length} chars, expected 120`)
+
+    app.apply({ kind: "agent_output", payload: { chunk: `${long}\n` } })
+    await setup.waitForFrame((value) => value.includes("TAILWORD"))
+
+    setup.resize(180, 30)
+    const onOneRow = (value: string) => value.split("\n").some((line) => line.includes(long))
+    let frame: string
+    try {
+      frame = await setup.waitForFrame(onOneRow)
+    } catch {
+      await setup.renderOnce()
+      frame = setup.captureCharFrame()
+    }
+
+    expect(frame.split("\n").some((line) => line.includes(long))).toBe(true)
+  })
+})
+
+test("narrowing the terminal re-wraps agent output without losing words or the last row", async () => {
+  await withApp({ width: 180, height: 30 }, async (app, setup) => {
+    const words = [...Array.from({ length: 23 }, (_, i) => `w${String(i).padStart(3, "0")}`), "TAILWORD"]
+    const line = words.join(" ")
+    const filler = Array.from({ length: 40 }, (_, i) => `filler ${i}`).join("\n")
+    app.apply({ kind: "agent_output", payload: { chunk: `${filler}\n${line}` } })
+    await setup.waitForFrame((value) => value.split("\n").some((row) => row.includes(line)))
+
+    setup.resize(90, 30)
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    const shown = new Set(rows.join(" ").split(/\s+/))
+    expect(words.filter((word) => !shown.has(word))).toEqual([])
+    // text area: 90 - 40 board - 2 borders - 1 padding - 1 padding - 1 scrollbar
+    expect(rows.filter((row) => row.length > 45)).toEqual([])
+    let last = rows.length - 1
+    while (last >= 0 && rows[last]!.trim() === "") last -= 1
+    expect({ text: rows[last] ?? "", blankBelow: rows.length - 1 - last }).toEqual({
+      text: expect.stringContaining("TAILWORD"),
+      blankBelow: 0,
+    })
+  })
+})
+
+test("resizing the terminal keeps a scrolled-up agent position", async () => {
+  await withApp({ width: 139, height: 44 }, async (app, setup) => {
+    const lines = Array.from({ length: 120 }, (_, i) => `line-${String(i).padStart(3, "0")}`)
+    app.apply({ kind: "agent_output", payload: { chunk: `${lines.join("\n")}\nTAIL-MARK` } })
+    await setup.waitForFrame((value) => value.includes("TAIL-MARK"))
+
+    for (let press = 0; press < 3; press += 1) {
+      // OpenTUI's KeyCodes has no PAGEUP name: send the terminal's PageUp sequence.
+      setup.mockInput.pressKey("\x1b[5~")
+      await setup.renderOnce()
+    }
+    await setup.renderOnce()
+
+    const topBefore = (agentRows(setup.captureCharFrame()).find((row) => row.trim() !== "") ?? "").trim()
+    expect(topBefore).toMatch(/^line-0\d\d$/)
+
+    setup.resize(120, 44)
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    expect({
+      keptRow: rows.some((r) => r.includes(topBefore)),
+      tail: rows.some((r) => r.includes("TAIL-MARK")),
+    }).toEqual({ keptRow: true, tail: false })
+  })
+})
+
+test("resizing the terminal keeps a scrolled-up agent pane on the same line", async () => {
+  await withApp({ width: 200, height: 44 }, async (app, setup) => {
+    const filler = Array.from({ length: 20 }, (_, i) => `word${i}`).join(" ")
+    const lines = Array.from({ length: 100 }, (_, i) => `line-${String(i).padStart(3, "0")} ${filler}`.slice(0, 120))
+    app.apply({ kind: "agent_output", payload: { chunk: `${lines.join("\n")}\nTAIL-MARK` } })
+    await setup.waitForFrame((value) => value.includes("TAIL-MARK"))
+
+    // OpenTUI's KeyCodes has no PAGEUP name: send the terminal's PageUp sequence.
+    setup.mockInput.pressKey("\x1b[5~")
+    await setup.renderOnce()
+
+    const label = (rows: string[]) => (rows.find((row) => row.trim() !== "") ?? "").trim().match(/^line-\d{3}/)?.[0]
+    const topBefore = label(agentRows(setup.captureCharFrame()))
+    if (!topBefore) throw new Error("no line-NNN label at the top of the agent pane before the resize")
+
+    setup.resize(80, 44)
+    for (let render = 0; render < 4; render += 1) await setup.renderOnce()
+
+    expect(label(agentRows(setup.captureCharFrame()))).toBe(topBefore)
+  })
+})
+
+test("a chunk applied right after narrowing the terminal still shows every word", async () => {
+  await withApp({ width: 180, height: 30 }, async (app, setup) => {
+    const words = [...Array.from({ length: 23 }, (_, i) => `w${String(i).padStart(3, "0")}`), "TAILWORD"]
+    const line = words.join(" ")
+    const filler = Array.from({ length: 40 }, (_, i) => `filler ${i}`).join("\n")
+    app.apply({ kind: "agent_output", payload: { chunk: `${filler}\n${line}` } })
+    await setup.waitForFrame((value) => value.split("\n").some((row) => row.includes(line)))
+
+    setup.resize(90, 30)
+    app.apply({ kind: "agent_output", payload: { chunk: "\nNEXT" } })
+    for (let render = 0; render < 4; render += 1) await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    const shown = new Set(rows.join(" ").split(/\s+/))
+    expect(words.filter((word) => !shown.has(word))).toEqual([])
   })
 })
