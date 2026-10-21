@@ -30,3 +30,9 @@ def test_wrap_text_breaks_at_spaces_and_keeps_existing_newlines_and_blank_lines(
     name = "wrapText breaks at spaces and keeps existing newlines and blank lines"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_wrap_text_hard_breaks_a_word_longer_than_the_width():
+    name = "wrapText hard-breaks a word longer than the width into width-sized chunks"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
