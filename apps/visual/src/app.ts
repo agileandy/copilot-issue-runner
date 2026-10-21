@@ -273,11 +273,11 @@ export function createApp(renderer: CliRenderer): App {
 
   /**
    * Columns an agent row may use: one short of the area, so no row is exactly full.
-   * A resize passes the new terminal width: the viewport is not laid out again until the next frame.
+   * Computed from the terminal width, not the viewport: the viewport keeps its
+   * old width after a resize until the next frame is laid out.
    */
   function agentWrapWidth(terminalWidth?: number): number {
-    const measured = terminalWidth === undefined ? (outputScroll.viewport?.width ?? 0) : 0
-    const area = measured > 8 ? measured - 1 : (terminalWidth || renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
+    const area = (terminalWidth || renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
     lastWrapWidth = Math.max(1, area - 1)
     return lastWrapWidth
   }

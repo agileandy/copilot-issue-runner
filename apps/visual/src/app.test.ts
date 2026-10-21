@@ -456,3 +456,21 @@ test("resizing the terminal keeps a scrolled-up agent position", async () => {
     }).toEqual({ keptRow: true, tail: false })
   })
 })
+
+test("a chunk applied right after narrowing the terminal still shows every word", async () => {
+  await withApp({ width: 180, height: 30 }, async (app, setup) => {
+    const words = [...Array.from({ length: 23 }, (_, i) => `w${String(i).padStart(3, "0")}`), "TAILWORD"]
+    const line = words.join(" ")
+    const filler = Array.from({ length: 40 }, (_, i) => `filler ${i}`).join("\n")
+    app.apply({ kind: "agent_output", payload: { chunk: `${filler}\n${line}` } })
+    await setup.waitForFrame((value) => value.split("\n").some((row) => row.includes(line)))
+
+    setup.resize(90, 30)
+    app.apply({ kind: "agent_output", payload: { chunk: "\nNEXT" } })
+    for (let render = 0; render < 4; render += 1) await setup.renderOnce()
+
+    const rows = agentRows(setup.captureCharFrame())
+    const shown = new Set(rows.join(" ").split(/\s+/))
+    expect(words.filter((word) => !shown.has(word))).toEqual([])
+  })
+})
