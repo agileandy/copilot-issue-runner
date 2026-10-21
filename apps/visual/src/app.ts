@@ -26,6 +26,7 @@ import {
   type ViewState,
 } from "./model"
 import { statusColor, statusGlyph, theme } from "./theme"
+import { wrapText } from "./wrap"
 
 export interface App {
   root: BoxRenderable
@@ -133,7 +134,9 @@ export function createApp(renderer: CliRenderer): App {
     contentOptions: { backgroundColor: theme.bg, flexDirection: "column", paddingRight: 1 },
     scrollbarOptions: QUIET_SCROLLBAR,
   })
-  const outputText = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "word" })
+  // The app wraps agent output itself: OpenTUI's own wrapping loses the newest
+  // rows when a line is exactly the text-area width.
+  const outputText = new TextRenderable(renderer, { content: "", fg: theme.text, wrapMode: "none" })
   outputScroll.add(outputText)
   outputPane.add(outputScroll)
 
@@ -261,6 +264,19 @@ export function createApp(renderer: CliRenderer): App {
   function boardWidth(): number {
     const measured = board.viewport?.width ?? 0
     return measured > 8 ? measured - 1 : BOARD_WIDTH - 4
+  }
+
+  // Pane chrome around the agent text: two borders, paddingLeft, the content
+  // paddingRight and the scrollbar.
+  const AGENT_CHROME = 5
+  let lastWrapWidth = 0
+
+  /** Columns an agent row may use: one short of the area, so no row is exactly full. */
+  function agentWrapWidth(): number {
+    const measured = outputScroll.viewport?.width ?? 0
+    const area = measured > 8 ? measured - 1 : (renderer.width || 80) - BOARD_WIDTH - AGENT_CHROME
+    lastWrapWidth = Math.max(1, area - 1)
+    return lastWrapWidth
   }
 
   // Rows are reused rather than rebuilt: a board that churns renderables on
@@ -427,7 +443,7 @@ export function createApp(renderer: CliRenderer): App {
     const result = applyEvent(state, event)
     if (result.output) {
       output = trimOutput(output + result.output)
-      outputText.content = output
+      outputText.content = wrapText(output, agentWrapWidth())
     }
     if (result.boardChanged) refresh()
     else renderStats()
