@@ -7,7 +7,7 @@
  * width is hard-broken into chunks of at most `width` columns, cut by code
  * point, and text after its last chunk keeps wrapping normally. Columns are
  * measured with `Bun.stringWidth`, so glyphs such as `⚙ ━ ✔ →` count as one
- * column.
+ * column, and a tab counts as 2 columns because that is how OpenTUI draws it.
  */
 export function wrapText(text: string, width: number): string {
   if (width <= 0) return text
@@ -18,14 +18,14 @@ export function wrapText(text: string, width: number): string {
 }
 
 function wrapLine(line: string, width: number): string {
-  if (Bun.stringWidth(line) <= width) return line
+  if (columns(line) <= width) return line
   const words = line.split(" ")
   const rows: string[] = []
   let row: string | undefined
   for (const word of words) {
     if (row !== undefined) {
       const candidate = `${row} ${word}`
-      if (Bun.stringWidth(candidate) <= width) {
+      if (columns(candidate) <= width) {
         row = candidate
         continue
       }
@@ -40,11 +40,11 @@ function wrapLine(line: string, width: number): string {
 }
 
 function splitWord(word: string, width: number): string[] {
-  if (Bun.stringWidth(word) <= width) return [word]
+  if (columns(word) <= width) return [word]
   const chunks: string[] = []
   let chunk = ""
   for (const char of word) {
-    if (chunk !== "" && Bun.stringWidth(chunk + char) > width) {
+    if (chunk !== "" && columns(chunk + char) > width) {
       chunks.push(chunk)
       chunk = ""
     }
@@ -52,4 +52,8 @@ function splitWord(word: string, width: number): string[] {
   }
   chunks.push(chunk)
   return chunks
+}
+
+function columns(text: string): number {
+  return Bun.stringWidth(text) + 2 * (text.split("\t").length - 1)
 }

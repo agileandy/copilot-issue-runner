@@ -36,3 +36,9 @@ def test_wrap_text_hard_breaks_a_word_longer_than_the_width():
     name = "wrapText hard-breaks a word longer than the width into width-sized chunks"
     result = run_bun_test(name)
     assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
+
+
+def test_wrap_text_counts_a_tab_as_two_columns():
+    name = "wrapText counts a tab as two columns so tab-indented lines wrap before the edge"
+    result = run_bun_test(name)
+    assert result.returncode == 0, f"bun test {name!r} failed:\n{result.stdout}{result.stderr}"
