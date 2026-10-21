@@ -452,14 +452,57 @@ export function createApp(renderer: CliRenderer): App {
     else renderStats()
   }
 
+  /** A logical line of `output` and a row offset inside its wrapped rows. */
+  type Anchor = { line: number; offset: number }
+  let pendingAnchor: Anchor | null = null
+
+  function wrappedRows(line: string, width: number): number {
+    return wrapText(line, width).split("\n").length
+  }
+
+  function anchorAt(row: number, width: number): Anchor | null {
+    const lines = output.split("\n")
+    let top = 0
+    for (let line = 0; line < lines.length; line += 1) {
+      const rows = wrappedRows(lines[line]!, width)
+      if (top + rows > row) return { line, offset: row - top }
+      top += rows
+    }
+    return null
+  }
+
+  function anchorRow(anchor: Anchor, width: number): number {
+    const lines = output.split("\n")
+    let top = 0
+    for (let line = 0; line < anchor.line && line < lines.length; line += 1) {
+      top += wrappedRows(lines[line]!, width)
+    }
+    return top + Math.min(anchor.offset, wrappedRows(lines[anchor.line] ?? "", width) - 1)
+  }
+
+  // Runs before each frame's layout, so it scrolls only once the re-wrapped
+  // text has been laid out: until then scrollHeight is the old one and clamps.
+  async function applyAnchor(): Promise<void> {
+    if (!pendingAnchor) return
+    if (outputText.height !== wrapText(output, lastWrapWidth).split("\n").length) return
+    outputScroll.scrollTo(anchorRow(pendingAnchor, lastWrapWidth))
+    pendingAnchor = null
+    renderer.removeFrameCallback(applyAnchor)
+  }
+
   /** Re-wraps the agent output when its text area has changed width since the last wrap. */
   function onResize(width: number): void {
     const previous = lastWrapWidth
     if (agentWrapWidth(width) === previous) return
     const atBottom =
       outputScroll.scrollTop >= outputScroll.scrollHeight - (outputScroll.viewport?.height ?? 0) - 1
+    const anchor = atBottom || previous <= 0 ? null : anchorAt(outputScroll.scrollTop, previous)
     outputText.content = wrapText(output, lastWrapWidth)
     if (atBottom) outputScroll.scrollTo(outputScroll.scrollHeight)
+    if (anchor) {
+      if (!pendingAnchor) renderer.setFrameCallback(applyAnchor)
+      pendingAnchor = anchor
+    }
   }
 
   renderer.on("resize", onResize)
@@ -500,6 +543,8 @@ export function createApp(renderer: CliRenderer): App {
     dispose: () => {
       clearInterval(clock)
       renderer.off("resize", onResize)
+      pendingAnchor = null
+      renderer.removeFrameCallback(applyAnchor)
     },
   }
 }

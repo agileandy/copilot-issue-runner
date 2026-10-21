@@ -457,6 +457,28 @@ test("resizing the terminal keeps a scrolled-up agent position", async () => {
   })
 })
 
+test("resizing the terminal keeps a scrolled-up agent pane on the same line", async () => {
+  await withApp({ width: 200, height: 44 }, async (app, setup) => {
+    const filler = Array.from({ length: 20 }, (_, i) => `word${i}`).join(" ")
+    const lines = Array.from({ length: 100 }, (_, i) => `line-${String(i).padStart(3, "0")} ${filler}`.slice(0, 120))
+    app.apply({ kind: "agent_output", payload: { chunk: `${lines.join("\n")}\nTAIL-MARK` } })
+    await setup.waitForFrame((value) => value.includes("TAIL-MARK"))
+
+    // OpenTUI's KeyCodes has no PAGEUP name: send the terminal's PageUp sequence.
+    setup.mockInput.pressKey("\x1b[5~")
+    await setup.renderOnce()
+
+    const label = (rows: string[]) => (rows.find((row) => row.trim() !== "") ?? "").trim().match(/^line-\d{3}/)?.[0]
+    const topBefore = label(agentRows(setup.captureCharFrame()))
+    if (!topBefore) throw new Error("no line-NNN label at the top of the agent pane before the resize")
+
+    setup.resize(80, 44)
+    for (let render = 0; render < 4; render += 1) await setup.renderOnce()
+
+    expect(label(agentRows(setup.captureCharFrame()))).toBe(topBefore)
+  })
+})
+
 test("a chunk applied right after narrowing the terminal still shows every word", async () => {
   await withApp({ width: 180, height: 30 }, async (app, setup) => {
     const words = [...Array.from({ length: 23 }, (_, i) => `w${String(i).padStart(3, "0")}`), "TAILWORD"]
