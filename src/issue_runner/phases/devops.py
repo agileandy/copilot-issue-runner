@@ -598,9 +598,18 @@ def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
 # reflog subjects of the operations that create a commit in the worktree
 _MADE_HERE = re.compile(
     r"(commit|cherry-pick|revert|am)\b"
-    r"|rebase( -i)? \((pick|reword|edit|squash|fixup|continue)\)"
+    r"|rebase( -i)? \((pick|reword|edit|squash|fixup|continue|merge)\)"
     r"|merge .*: Merge made by"
 )
+
+
+def ticket_start(repo_dir: Path, adopted: list[str]) -> str:
+    """The commit a ticket began from: follow first parents back from the newest adopted
+    commit until leaving the adopted set (a merge's side commits are never on that path)."""
+    seen, sha = set(adopted), adopted[-1]
+    while sha in seen:
+        sha = _git(repo_dir, "rev-parse", f"{sha}^1").stdout.strip()
+    return sha
 
 
 def adopt_head(repo_dir: Path, base: str) -> list[str]:

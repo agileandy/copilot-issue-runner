@@ -416,3 +416,30 @@ def test_finish_merge_commits_a_deletion_from_the_merged_ref(git_repo):
     merge_in(git_repo, "main", "merge main")
     sha = finish_merge(git_repo, "feature/150-x")
     assert files_in_commit(git_repo, sha) == ["seed.txt"]
+
+
+def test_ticket_start_follows_first_parents_past_a_merged_side_branch(git_repo):
+    from issue_runner.phases.devops import adopt_head, head_commit, ticket_start
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=git_repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("switch", "-q", "-c", "side")
+    (git_repo / "side.txt").write_text("side")
+    git("add", "side.txt")
+    git("commit", "-q", "-m", "side, forked before the ticket began")
+    git("switch", "-q", "main")
+    (git_repo / "base.txt").write_text("base")
+    git("add", "base.txt")
+    git("commit", "-q", "-m", "the ticket's base")
+    base = head_commit(git_repo)
+    git("merge", "-q", "--no-ff", "-m", "merge side", "side")
+
+    adopted = adopt_head(git_repo, base)
+    # the oldest adopted commit is the side commit, whose parent predates the ticket
+    assert (git("rev-parse", f"{adopted[0]}^1") != base, ticket_start(git_repo, adopted)) == (
+        True,
+        base,
+    )

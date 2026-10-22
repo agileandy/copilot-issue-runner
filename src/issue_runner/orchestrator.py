@@ -1062,7 +1062,8 @@ def _scope_gate(cfg: RunnerConfig, patterns: list[str], ticket: Ticket, changed:
     paths = set(changed)
     if ticket.adopted_commits:
         # the net change since the ticket began, so reverting a stray commit clears it
-        paths = set(devops.net_change_since(cfg.repo_dir, f"{ticket.adopted_commits[0]}^1"))
+        start = devops.ticket_start(cfg.repo_dir, ticket.adopted_commits)
+        paths = set(devops.net_change_since(cfg.repo_dir, start))
     paths.discard(ticket.test_path)
     outside = out_of_scope(sorted(paths), patterns)
     if outside:
