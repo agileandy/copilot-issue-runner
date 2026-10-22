@@ -60,6 +60,7 @@ class RunReport:
     worktree: str = ""
     plan_only: bool = False
     stopped: bool = False
+    plan_too_large: int = 0  # the ticket count of a plan over max_tickets; nothing was built
     parent_in_progress: int | None = None
     details: list[str] = field(default_factory=list)
     deploy: bool = False  # a --deploy run, judged by its Definition of Done
@@ -349,6 +350,17 @@ def _run_issue(
             report.details.append(f"planning did not start: {e}")
             _emit_finished(cfg, client, report, store)
             return report
+        if cfg.max_tickets is not None and len(tickets) > cfg.max_tickets:
+            # Too big for one PR: keep nothing, so the run never resumes this plan, and say how to split it
+            report.plan_too_large = len(tickets)
+            report.details.append(
+                f"plan has {len(tickets)} tickets, over max_tickets {cfg.max_tickets}: split the issue into "
+                f"issues of at most {cfg.max_tickets} tickets each and deliver those; nothing was built"
+            )
+            report.details.append(f"plan: {summary}")
+            report.details += [f"ticket {t.id}: {t.title}" for t in tickets]
+            _emit_finished(cfg, client, report, store)
+            return report
         store.plan_summary = summary
         store.set_tickets(tickets)
         if where is not None:
@@ -604,6 +616,8 @@ def _emit_finished(
         gates=dict(store.delivery.gates) if store is not None and store.delivery else {},
         plan_only=report.plan_only,
         stopped=report.stopped,
+        plan_too_large=report.plan_too_large,
+        max_tickets=cfg.max_tickets,
         state_dir=str(store.state_dir) if store is not None else "",
         artefacts=(
             runsummary.artefacts(store)

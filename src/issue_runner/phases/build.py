@@ -31,7 +31,7 @@ from ..testcmd import related_tests
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
-_TEST_TIMEOUT = 600
+_TEST_TIMEOUT = 1800
 # Every automatic run must be non-interactive and colour-free: a watch-mode
 # runner (vitest, jest --watch) would hang until the timeout, and ANSI codes can
 # split the very summary lines the report parser reads. CI=1 is what the JS

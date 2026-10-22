@@ -19,7 +19,7 @@ Event kinds and payloads:
     gate                name (a Definition of Done gate), result ("pass"|"fail"), reason?
     stop_requested     message
     run_finished      done, blocked, branch, worktree?, pr_url?, usage?, budget?,
-                      budget_exhausted?, plan_only?, stopped?,
+                      budget_exhausted?, plan_only?, stopped?, plan_too_large?, max_tickets?,
                       state_dir (where a saved summary may be written),
                       worktree_state={path,branch,head,dirty,uncommitted},
                       artefacts={files,commits,pr_url},

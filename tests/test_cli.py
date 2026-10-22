@@ -1108,6 +1108,34 @@ DEPLOY_ISSUE = {
 }
 
 
+@pytest.fixture
+def deploy_enabled(monkeypatch):
+    """--deploy is bypassed while DEPLOY_BROKEN is set; these tests pin the kept deploy code."""
+    from issue_runner import cli
+
+    monkeypatch.setattr(cli, "DEPLOY_BROKEN", False)
+
+
+def test_deploy_is_bypassed_while_marked_broken(tmp_path, monkeypatch, capsys):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo, _ = _deploy_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.preflight, "run", lambda *a, **k: pytest.fail("no deploy preflight"))
+    seen = {}
+
+    def capture(cfg, *a, **k):
+        seen.update(deploy=cfg.deploy, open_pr=cfg.open_pr, preflight=cfg.preflight)
+        return RunReport(done=1)
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    rc = cli.main(["7", "--repo", "o/n", "--dir", str(repo), "--no-github-tickets", "--deploy"])
+    assert cli.DEPLOY_BROKEN is True
+    assert rc == 0
+    assert seen == {"deploy": False, "open_pr": True, "preflight": None}
+    assert "--deploy is broken and ignored" in capsys.readouterr().err
+
+
 def _deploy_repo(tmp_path, monkeypatch, fake=None):
     from issue_runner import cli
     from issue_runner.github_flow import GitHubFlow
@@ -1122,6 +1150,7 @@ def _deploy_repo(tmp_path, monkeypatch, fake=None):
     return repo, fake
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 @pytest.mark.parametrize(
     "extra, named",
     [
@@ -1141,6 +1170,7 @@ def test_deploy_rejects_flags_that_cannot_reach_dev(tmp_path, monkeypatch, capsy
     assert f"--deploy cannot be used with {named}" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 def test_deploy_needs_a_github_repository(tmp_path, monkeypatch, capsys):
     from issue_runner import cli
 
@@ -1160,6 +1190,7 @@ def test_deploy_needs_a_github_repository(tmp_path, monkeypatch, capsys):
     assert "needs a GitHub repository" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 def test_deploy_preflight_failure_stops_before_any_model_call(tmp_path, monkeypatch, capsys):
     from issue_runner import cli
 
@@ -1172,6 +1203,7 @@ def test_deploy_preflight_failure_stops_before_any_model_call(tmp_path, monkeypa
     assert "preflight failed" in err and "environment 'development' not found" in err
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 def test_deploy_dry_run_prints_the_preflight(tmp_path, monkeypatch, capsys):
     repo, _ = _deploy_repo(tmp_path, monkeypatch)
     rc = main(
@@ -1184,6 +1216,7 @@ def test_deploy_dry_run_prints_the_preflight(tmp_path, monkeypatch, capsys):
     assert not (repo / ".issue-runner").exists()
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 @pytest.mark.parametrize(
     "outcome, code",
     [({"dod_met": True}, 0), ({"dod_failed_gate": "review"}, 6), ({"blocked": 1}, 3)],
@@ -1231,6 +1264,7 @@ def test_deploy_settings_load_from_runner_toml(tmp_path):
             validate_config(load_config(tmp_path))
 
 
+@pytest.mark.usefixtures("deploy_enabled")
 def test_deploy_summary_prints_the_definition_of_done(tmp_path, monkeypatch, capsys):
     from issue_runner import cli
     from issue_runner.orchestrator import RunReport
@@ -1386,6 +1420,32 @@ def test_load_config_defaults_pre_pr_when_the_table_is_absent(tmp_path):
     (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\n')
     assert load_config(tmp_path).pre_pr == PrePrConfig(commands=[], max_rounds=2)
 
+
+def test_load_config_reads_max_tickets_and_defaults_to_no_limit(tmp_path):
+    from issue_runner.config import load_config
+
+    (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\n')
+    assert load_config(tmp_path).max_tickets is None
+    (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\nmax_tickets = 15\n')
+    assert load_config(tmp_path).max_tickets == 15
+
+
+def test_validate_config_rejects_a_max_tickets_that_is_not_a_positive_integer(tmp_path):
+    from issue_runner.config import ConfigError, load_config, validate_config
+
+    (tmp_path / "runner.toml").write_text('test_cmd = "pytest -q"\n')
+    cfg = load_config(tmp_path)
+    for value in (0, -1, "15", True):
+        cfg.max_tickets = value
+        with pytest.raises(ConfigError, match="max_tickets"):
+            validate_config(cfg)
+
+
+def test_a_plan_over_max_tickets_exits_9():
+    from issue_runner.cli import _exit_code
+    from issue_runner.orchestrator import RunReport
+
+    assert _exit_code(RunReport(plan_too_large=20)) == 9
 
 def test_validate_config_rejects_a_negative_pre_pr_max_rounds(tmp_path):
     from issue_runner.config import ConfigError, load_config, validate_config

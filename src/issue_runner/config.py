@@ -107,6 +107,7 @@ class RunnerConfig:
     setup_cmd: list[str] | None = None
     isolate_worktree: bool = True
     max_rounds: int = 3
+    max_tickets: int | None = None  # a bigger plan stops the run unbuilt: split the issue
     tester_retries: int = 2
     coder_retries: int = 2
     github_tickets: bool = True
@@ -170,6 +171,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
         "ticket_regression",
         "isolate_worktree",
         "max_rounds",
+        "max_tickets",
         "tester_retries",
         "coder_retries",
         "github_tickets",
@@ -228,7 +230,7 @@ def validate_config(cfg: RunnerConfig) -> None:
         value = getattr(cfg, name)
         if type(value) is not int or value < 0:
             raise ConfigError(f"{name} must be a non-negative integer")
-    for name in ("timeout", "provision_timeout", "max_ai_credits", "max_run_credits"):
+    for name in ("timeout", "provision_timeout", "max_ai_credits", "max_run_credits", "max_tickets"):
         value = getattr(cfg, name)
         if value is not None and (type(value) is not int or value <= 0):
             raise ConfigError(f"{name} must be a positive integer")

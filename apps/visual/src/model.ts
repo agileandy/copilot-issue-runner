@@ -60,6 +60,9 @@ export interface Summary {
   budgetExhausted: boolean
   planOnly: boolean
   stopped: boolean
+  /** the ticket count of a plan over max_tickets, which was not built; 0 otherwise */
+  planTooLarge?: number
+  maxTickets?: number
   error: string
   artefacts: Artefacts
   worktreeState: WorktreeState
@@ -258,6 +261,8 @@ export function applyEvent(
         budgetExhausted: Boolean(p.budget_exhausted),
         planOnly: Boolean(p.plan_only),
         stopped: Boolean(p.stopped),
+        planTooLarge: Number(p.plan_too_large ?? 0),
+        maxTickets: Number(p.max_tickets ?? 0),
         error: String(p.error ?? ""),
         artefacts: foldArtefacts(p.artefacts, String(p.pr_url ?? "")),
         worktreeState: foldWorktreeState(p.worktree_state, {
@@ -347,6 +352,12 @@ export function summaryOutcome(summary: SummaryCore): { text: string; tone: "ok"
   if (summary.error) return { text: "run aborted", tone: "bad" }
   if (summary.stopped) return { text: "stopped by user; work saved", tone: "plain" }
   if (summary.budgetExhausted) return { text: "stopped: credit budget exhausted", tone: "bad" }
+  if (summary.planTooLarge) {
+    return {
+      text: `plan too large: ${summary.planTooLarge} tickets, max ${summary.maxTickets}; split the issue`,
+      tone: "bad",
+    }
+  }
   if (summary.planOnly) return { text: "plan ready (no tickets executed)", tone: "plain" }
   if (summary.deploy) {
     return summary.dodMet

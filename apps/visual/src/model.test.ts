@@ -130,6 +130,10 @@ test("summary outcomes cover blocked, budget, plan-only and aborted runs", () =>
     "credit budget exhausted",
   )
   expect(summaryOutcome({ ...base, planOnly: true }).text).toContain("plan ready")
+  expect(summaryOutcome({ ...base, planTooLarge: 20, maxTickets: 15 })).toEqual({
+    text: "plan too large: 20 tickets, max 15; split the issue",
+    tone: "bad",
+  })
   expect(summaryOutcome({ ...base, error: "planner failed: no JSON" }).text).toBe("run aborted")
   expect(summaryLines({ ...base, error: "planner failed: no JSON" })).toContain(
     "planner failed: no JSON",
