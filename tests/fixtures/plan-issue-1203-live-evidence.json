@@ -1,0 +1,59 @@
+{
+  "summary": "Make late-start and stale-worker failures permanent across RCM job writes, and cap asynchronous delivery at 60 seconds under the RCM CDK configuration exception.",
+  "tickets": [
+    {
+      "title": "T1: Reject and finalize late worker starts",
+      "description": "In backend/rcm/jobs.py, make start() atomically require '#stage = :queued AND createdAt > :cutoff', using one clock sample and cutoff = now - NOT_STARTED_SECONDS. On an age-related refusal, conditionally persist failed/not_started only while the item is still queued and outside that start window. Do not use an unrestricted jobs.fail() fallback that could fail a duplicate delivery's running job. Preserve start() returning False and rcm_worker.run() exiting before evidence assembly or model calls. Add the regression to the existing WorkerTest module. Run python3 .venv/issue-fix/test_one.py backend/test/test_rcm_api.py backend/test/test_rcm_worker.py. For rule 5, require matching evidence from an isolated, expiring job on the running non-production stack: delay delivery beyond 15 seconds and confirm polling remains failed/not_started after delivery and replay.",
+      "test_assertion": "WorkerTest.test_late_delivery_is_a_persisted_no_op: create a user-a job at jobs._now() = 1000, poll it at 1016, then run and replay its payload at 1016. One equality assertion compares the execution observation (worker returns, persisted stage, persisted errorCode, Snowflake calls, model calls) with (['skipped', 'skipped'], 'failed', 'not_started', 0, 0).",
+      "files_hint": [
+        "backend/rcm/jobs.py",
+        "backend/rcm_worker.py",
+        "backend/test/test_rcm_worker.py"
+      ]
+    },
+    {
+      "title": "T2: Fence stale stage transitions",
+      "description": "Make jobs.advance() require updatedAt >= :stale as well as its existing nonterminal-stage condition. Introduce a small shared guarded-update path as part of this behavior, initially used only by advance(), for reuse by subsequent tickets. Compute stale = now - STALE_RUNNING_SECONDS from one wall-clock sample, using a DynamoDB-compatible numeric representation that does not round a fractional stale cutoff down. On ConditionalCheckFailedException, attempt jobs.fail(..., 'timeout'), retaining its terminal-state protection, and signal the refused write explicitly. Handle that signal in rcm_worker.run() as timeout rather than internal failure. Do not convert other DynamoDB errors, including TransactionConflictException, into age refusals. Run python3 .venv/issue-fix/test_one.py backend/test/test_rcm_api.py backend/test/test_rcm_worker.py.",
+      "test_assertion": "JobLifecycleTest.test_stale_stage_advance_persists_timeout: create and start a job at 1000, move jobs._now() to 1121, then attempt jobs.advance(table, 'user-a', job_id, 'classifying'). After handling the explicit refusal signal, one assertion requires the consistently read persisted (stage, errorCode) to equal ('failed', 'timeout'), rather than classifying.",
+      "files_hint": [
+        "backend/rcm/jobs.py",
+        "backend/rcm_worker.py",
+        "backend/test/test_rcm_api.py",
+        "backend/test/test_rcm_worker.py"
+      ]
+    },
+    {
+      "title": "T3: Refuse stale progress heartbeats",
+      "description": "Route jobs.report() through T2's guarded-update path so activity cannot refresh a job after it has become stale. Preserve the activity limit and existing terminal-state checks. In rcm_worker._Activity.__call__(), re-raise the explicit refusal signal before the existing courtesy-progress exception handler, allowing run() to stop instead of continuing classification after timeout. Correct JobLifecycleTest.test_progress_keeps_a_running_job_from_reading_as_stalled: its current heartbeat occurs after expiry and contradicts this requirement. Make that existing test heartbeat before expiry and poll afterward. Add the stale-progress regression in the existing modules without changing shared FakeTable, which already supports the required comparisons. Run python3 .venv/issue-fix/test_one.py backend/test/test_rcm_api.py backend/test/test_rcm_worker.py.",
+      "test_assertion": "WorkerTest.test_stale_progress_stops_the_worker: start a job at wall time 1000 and advance jobs._now() to 1120.5 before its first evidence-progress callback, while keeping the injected monotonic clock below DEADLINE_SECONDS. One assertion compares (run return, persisted stage, errorCode, stored activity, model-call count) with ('failed', 'failed', 'timeout', absent activity, 0), proving a fractional-second-expired heartbeat cannot revive the job.",
+      "files_hint": [
+        "backend/rcm/jobs.py",
+        "backend/rcm_worker.py",
+        "backend/test/test_rcm_api.py",
+        "backend/test/test_rcm_worker.py"
+      ]
+    },
+    {
+      "title": "T4: Discard stale score-card completions",
+      "description": "Route jobs.finish() through T2's guarded-update path, adding updatedAt >= :stale alongside the existing done/failed exclusions. Keep result compression and MAX_RESULT_BYTES behavior unchanged. A refused completion must persist timeout only for a nonterminal item, discard the result, and take run()'s failure path without logging or returning done. Existing terminal outcomes, including failed/not_started from T1, must remain untouched. Run python3 .venv/issue-fix/test_one.py backend/test/test_rcm_api.py backend/test/test_rcm_worker.py. For rule 5, repeat the stale finish against an isolated scoring item in the running non-production DynamoDB table and poll GET /iep/rcm/score-jobs as its verified owner. Record persisted failed/timeout with no result, or report a live-access blocker rather than treating FakeTable evidence as sufficient.",
+      "test_assertion": "WorkerTest.test_stale_completion_cannot_replace_a_failed_poll: run the existing scoring fixture with jobs._now() fixed at 1000 until score-card serialization, then move it to 1121 and poll before finish(), keeping the monotonic clock below its separate deadline. One assertion requires (run return, persisted stage, errorCode, result presence) == ('failed', 'failed', 'timeout', False).",
+      "files_hint": [
+        "backend/rcm/jobs.py",
+        "backend/rcm_worker.py",
+        "backend/test/test_rcm_worker.py"
+      ]
+    },
+    {
+      "title": "T5: Cap asynchronous delivery at Lambda's minimum age",
+      "description": "Under the permitted RCM configuration exception, change only RcmWorkerInvokeConfig.maxEventAge in backend/cdk/lib/maintenance-planning-stack.ts to cdk.Duration.seconds(60), retaining retryAttempts: 0. Update the existing CDK test 'never retries an RCM score job and drops stale events' to expect 60 instead of 120, and add the required backend NOT_STARTED_SECONDS <= 60 assertion as part of the same delivery-policy contract, not a separate test-only ticket. Explain that Lambda's 60-second minimum bounds delivery while jobs.start() independently enforces 15 seconds. Update the directly related two-minute references in the worker docstring and RCM implementation plan, including its replay-risk note. Shared CI and DynamoDB test-support files were read only to establish wiring and remain unchanged. Run python3 .venv/issue-fix/test_one.py backend/cdk/test/maintenance-planning-stack.test.ts backend/test/test_rcm_api.py, then python3 .venv/issue-fix/regression.py after all tickets.",
+      "test_assertion": "The RCM delivery-policy invariant is MaximumEventAgeInSeconds == 60, MaximumRetryAttempts == 0, and NOT_STARTED_SECONDS <= 60: assert the synthesized resource for functionEntry(template, 'rcm_worker.handler') in the existing CDK test and assert the backend start-window bound in JobLifecycleTest.",
+      "files_hint": [
+        "backend/cdk/lib/maintenance-planning-stack.ts",
+        "backend/cdk/test/maintenance-planning-stack.test.ts",
+        "backend/test/test_rcm_api.py",
+        "backend/rcm_worker.py",
+        ".specs/rcm-agent/rcm-agent-v1-implementation-plan.html"
+      ]
+    }
+  ]
+}

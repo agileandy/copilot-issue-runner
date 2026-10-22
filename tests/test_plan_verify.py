@@ -1,9 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from issue_runner.agent_rules import workspace_rules
-from issue_runner.phases.plan import PlanError, plan_step
+from issue_runner.phases.plan import PlanError, live_evidence_demand, plan_step
 from issue_runner.phases.verify import Verdict, VerifyError, verify_step
 from issue_runner.tickets import Ticket
 from tests.conftest import FakeClient
@@ -105,6 +106,67 @@ def test_plan_step_reports_a_persistent_non_object_as_a_plan_error(cfg):
     with pytest.raises(PlanError) as excinfo:
         plan_step(client, cfg, ISSUE)
     assert "attribute" not in str(excinfo.value).lower()
+
+
+# --- live evidence is a post-merge step ---------------------------------------
+
+# Issue #1203's recorded plan: the planner turned a repository rule ("prove a data change
+# against the running stack") into ticket text, and the verifier then rejected three rounds
+# for live evidence that only exists after merge and Dev deploy.
+PLAN_1203 = (Path(__file__).parent / "fixtures" / "plan-issue-1203-live-evidence.json").read_text()
+POST_MERGE = "post-merge step the orchestrator owns"
+
+
+def test_recorded_1203_plan_flags_only_its_live_evidence_tickets():
+    tickets = json.loads(PLAN_1203)["tickets"]
+    flagged = [
+        i
+        for i, t in enumerate(tickets, start=1)
+        if any(live_evidence_demand(t[f]) for f in ("title", "description", "test_assertion"))
+    ]
+    assert flagged == [1, 4]
+
+
+def test_plan_step_sends_a_live_evidence_plan_back_for_a_rewrite(cfg):
+    client = FakeClient([(PLAN_1203, None), (GOOD_PLAN, None)])
+    _, tickets = plan_step(client, cfg, ISSUE)
+    assert [t.title for t in tickets] == ["subtract two ints"]
+    retry = client.calls[1]["prompt"].split("YOUR PREVIOUS REPLY WAS INVALID")[1]
+    assert "ticket 1 description" in retry and "running non-production stack" in retry
+    assert POST_MERGE in retry
+
+
+def test_plan_step_fails_before_building_when_the_planner_keeps_live_evidence(cfg):
+    with pytest.raises(PlanError, match="ticket 1 description asks for proof on a deployed"):
+        plan_step(FakeClient([(PLAN_1203, None), (PLAN_1203, None)]), cfg, ISSUE)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        (
+            "Add RCM_TABLE to the score worker Lambda in maintenance-planning-stack.ts and "
+            "check the CDK test expects it."
+        ),
+        (
+            "Set dispatch_when_not_triggered for the Dev deploy workflow and verify the "
+            "config test reads it."
+        ),
+        "Confirm progress keeps a running job from reading as stalled.",
+    ],
+)
+def test_plan_step_accepts_repository_provable_tickets_that_mention_dev(cfg, description):
+    plan = json.loads(GOOD_PLAN)
+    plan["tickets"][0]["description"] = description
+    client = FakeClient([(json.dumps(plan), None)])
+    assert len(plan_step(client, cfg, ISSUE)[1]) == 1
+
+
+def test_planner_and_verifier_are_told_live_evidence_is_post_merge(cfg):
+    client = FakeClient([(GOOD_PLAN, None), (json.dumps({"verdict": "pass"}), None)])
+    plan_step(client, cfg, ISSUE)
+    verify_step(client, cfg, _ticket(), "test_x.py")
+    assert all(POST_MERGE in " ".join(c["prompt"].split()) for c in client.calls)
 
 
 # --- acceptance criteria coverage (--deploy) ---------------------------------

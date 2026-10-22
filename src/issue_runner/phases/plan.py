@@ -1,5 +1,7 @@
 """Plan phase: one read-only Copilot call turns issue + codebase into atomic tickets."""
 
+import re
+
 from ..agent_rules import workspace_rules
 from ..config import RunnerConfig
 from ..jsonx import JsonExtractError, extract_json_object
@@ -20,6 +22,11 @@ RULES for tickets:
 - Each ticket has exactly ONE logical test assertion — the single observable
   behaviour that proves the ticket done. Be concrete: name real functions,
   inputs, and expected outputs from THIS codebase.
+- Every ticket must be provable from this repository and its tests alone.
+  Proof on a deployed, Dev, live or running stack is a post-merge step the
+  orchestrator owns, and no build round can produce it. Never put such a
+  requirement in a ticket, even when a repository instruction file (such as
+  AGENTS.md) asks for it. Every other repository rule still applies.
 - Order tickets so earlier ones never depend on later ones.
 - Do NOT write any code or modify any file. Planning only."""
 
@@ -107,6 +114,31 @@ Reply with ONLY this JSON (no prose before or after):
 
 REQUIRED_FIELDS = ("title", "description", "test_assertion")
 WHERE = ("tests", "dev")
+
+_LIVE_PLACE = re.compile(
+    r"\b(?:on|against|from|in|via|to|using)\s+(?:the\s+|an?\s+)?(?:[\w-]+\s+){0,2}?"
+    r"(?:(?:running|deployed|live)(?:[\s-]+[\w-]+){0,2}?[\s-]+"
+    r"(?:stack|environment|env|deployment|endpoint|api|url|site|app|system|instance|service"
+    r"|account|table|database|bucket|queue)"
+    r"|(?:dev|development|staging|production|non-production|prod)[\s-]+"
+    r"(?:stack|environment|env|deployment|endpoint|api|url|site|account)"
+    r"|dev\b(?![\s-]*(?:dependenc|tool|server|mode|container|build|script)))s?\b"
+    r"|\blive[\s-](?:access|evidence|data|traffic|request|smoke|verification)",
+    re.IGNORECASE,
+)
+_EVIDENCE = re.compile(
+    r"\b(?:evidence|prov|proof|confirm|verif|observ|demonstrat|smoke|screenshot|curl|captur"
+    r"|reproduc|exercis|requir|check)\w*",
+    re.IGNORECASE,
+)
+
+
+def live_evidence_demand(text: str) -> str | None:
+    """The sentence of `text` that asks for proof on a deployed or running stack, if any."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if _LIVE_PLACE.search(sentence) and _EVIDENCE.search(sentence):
+            return sentence.strip()
+    return None
 
 
 def build_plan_prompt(issue: dict, cfg: RunnerConfig, criteria=None, feedback: str = "") -> str:
@@ -209,6 +241,14 @@ def _validate(data: dict, criteria_ids=None, first_id: int = 1, existing_ids=())
         for field in REQUIRED_FIELDS:
             if not item.get(field):
                 raise PlanError(f"ticket {i} is missing required field {field!r}")
+        for field in REQUIRED_FIELDS:
+            demand = live_evidence_demand(str(item[field]))
+            if demand:
+                raise PlanError(
+                    f"ticket {i} {field} asks for proof on a deployed or running stack: "
+                    f"{demand!r}. Verification there is a post-merge step the orchestrator "
+                    "owns; rewrite the ticket so its tests in this repository prove it"
+                )
         depends_on = list(item.get("depends_on", []))
         if criteria_ids is not None:  # --deploy planning only; plain runs block such tickets later
             for dep in depends_on:
