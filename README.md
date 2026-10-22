@@ -415,6 +415,12 @@ socket; the pipeline itself never renders. It therefore needs [bun](https://bun.
 on your PATH — its dependencies install themselves on first use. Without bun, or
 with `apps/visual` missing, `--visual` reports why and runs in plain text.
 
+A wheel install has no `apps/visual` beside the package, so the wheel ships the
+display in its data directory (`<venv>/visual`, without `node_modules`). The
+runner copies it once to `~/.cache/issue-runner/visual/<content hash>` (or
+`$XDG_CACHE_HOME/...`) and installs its dependencies there, so the installed
+release is never written to. `ISSUE_RUNNER_VISUAL_APP=<dir>` overrides both.
+
 `q` does one of two things depending on when you press it:
 
 - **during the run** — detaches the display; the run continues headless and

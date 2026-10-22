@@ -13,6 +13,8 @@ snapshot, so the board, the totals and the recent output survive.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import importlib.metadata
 import json
 import logging
 import os
@@ -22,6 +24,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 from collections import deque
@@ -42,10 +45,57 @@ class VisualUnavailable(RuntimeError):
 
 
 def viewer_app_dir() -> Path:
+    """Where the display runs from: ISSUE_RUNNER_VISUAL_APP, else the source checkout's
+    apps/visual, else a staged copy of the display a wheel install ships in its data dir."""
     override = os.environ.get("ISSUE_RUNNER_VISUAL_APP")
     if override:
         return Path(override).expanduser().resolve()
-    return Path(__file__).resolve().parents[2] / "apps" / "visual"
+    checkout = Path(__file__).resolve().parents[2] / "apps" / "visual"
+    if (checkout / "src" / "index.ts").is_file():
+        return checkout
+    packaged = _packaged_display()
+    if packaged is not None:
+        return _staged(packaged)
+    return checkout
+
+
+def _packaged_display() -> Path | None:
+    """The display a wheel install placed in its data directory. The installed file list
+    says where, whichever scheme installed it (a venv, --user or --target)."""
+    with contextlib.suppress(importlib.metadata.PackageNotFoundError):
+        for file in importlib.metadata.distribution("issue-runner").files or ():
+            if file.parts[-3:] == ("visual", "src", "index.ts"):
+                index = Path(file.locate()).resolve()
+                if index.is_file():
+                    return index.parents[1]
+    packaged = Path(sysconfig.get_path("data")) / "visual"
+    return packaged if (packaged / "src" / "index.ts").is_file() else None
+
+
+def _staged(packaged: Path) -> Path:
+    """A writable copy of the packaged display, so `bun install` never writes node_modules
+    into the installed release. Keyed by the display's content, so a new release gets a
+    fresh copy and an unchanged one is reused."""
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache").expanduser()
+    try:
+        digest = hashlib.sha256()
+        for f in sorted(packaged.rglob("*")):
+            if f.is_file() and "node_modules" not in f.relative_to(packaged).parts:
+                digest.update(f.relative_to(packaged).as_posix().encode() + b"\0" + f.read_bytes())
+        target = cache / "issue-runner" / "visual" / digest.hexdigest()[:16]
+        if not (target / "src" / "index.ts").is_file():
+            tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+            shutil.copytree(
+                packaged, tmp, ignore=shutil.ignore_patterns("node_modules"), dirs_exist_ok=True
+            )
+            try:
+                tmp.rename(target)
+            except OSError:  # another run staged it first
+                shutil.rmtree(tmp, ignore_errors=True)
+    except OSError as e:
+        # _execute falls back to plain text on VisualUnavailable, not on OSError
+        raise VisualUnavailable(f"cannot stage the display under {cache}: {e}") from e
+    return target
 
 
 def ensure_viewer(app_dir: Path) -> str:

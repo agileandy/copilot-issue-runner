@@ -115,6 +115,60 @@ def test_the_display_ships_with_the_package():
     assert (viewer_app_dir() / "src" / "index.ts").is_file()
 
 
+def _wheel_install(monkeypatch, tmp_path, index="render()"):
+    """A non-editable install: no apps/ beside the package, the display in the data dir."""
+    from issue_runner import visual_display
+
+    display = tmp_path / "venv" / "visual"
+    (display / "src").mkdir(parents=True, exist_ok=True)
+    (display / "src" / "index.ts").write_text(index)
+    (display / "node_modules" / "dep").mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv("ISSUE_RUNNER_VISUAL_APP", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        visual_display, "__file__", str(tmp_path / "site-packages" / "issue_runner" / "x.py")
+    )
+
+    class Installed:  # what the wheel's RECORD lists, as importlib.metadata reports it
+        parts = ("..", "..", "..", "visual", "src", "index.ts")
+
+        def locate(self):
+            return display / "src" / "index.ts"
+
+    class Distribution:
+        files = (Installed(),)
+
+    monkeypatch.setattr(
+        visual_display.importlib.metadata, "distribution", lambda name: Distribution()
+    )
+    return display
+
+
+def test_a_wheel_install_runs_a_staged_copy_of_its_packaged_display(monkeypatch, tmp_path):
+    display = _wheel_install(monkeypatch, tmp_path)
+    app = viewer_app_dir()
+    assert (app / "src" / "index.ts").read_text() == "render()"
+    # bun install writes node_modules into the copy, never into the installed release
+    assert app.is_relative_to(tmp_path / "cache") and not (app / "node_modules").exists()
+    assert viewer_app_dir() == app
+    (display / "src" / "index.ts").write_text("render(2)")
+    assert viewer_app_dir() != app
+
+
+def test_a_cache_that_cannot_be_written_falls_back_to_plain_text(monkeypatch, tmp_path):
+    _wheel_install(monkeypatch, tmp_path)
+    (tmp_path / "not-a-dir").write_text("")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "not-a-dir"))
+    with pytest.raises(VisualUnavailable, match="cannot stage the display"):
+        viewer_app_dir()
+
+
+def test_the_override_wins_over_the_packaged_display(monkeypatch, tmp_path):
+    _wheel_install(monkeypatch, tmp_path)
+    monkeypatch.setenv("ISSUE_RUNNER_VISUAL_APP", str(tmp_path / "mine"))
+    assert viewer_app_dir() == (tmp_path / "mine").resolve()
+
+
 def test_a_missing_bun_is_reported_as_unavailable_not_as_a_crash(monkeypatch):
     monkeypatch.setattr("issue_runner.visual_display.shutil.which", lambda name: None)
     with pytest.raises(VisualUnavailable, match="bun"):
