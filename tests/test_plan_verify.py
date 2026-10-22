@@ -104,3 +104,22 @@ def test_plan_step_rejects_non_string_title(cfg):
     client = FakeClient([(bad, None), (bad, None)])
     with pytest.raises(PlanError, match="'title' must be a nonempty string"):
         plan_step(client, cfg, ISSUE)
+
+
+def test_plan_step_rejects_non_list_files_hint(cfg):
+    bad = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [
+                {
+                    "title": "t",
+                    "description": "d",
+                    "test_assertion": "a == 1",
+                    "files_hint": "src/calc.py",
+                }
+            ],
+        }
+    )
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="'files_hint' must be a list of strings"):
+        plan_step(client, cfg, ISSUE)

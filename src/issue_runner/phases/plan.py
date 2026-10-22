@@ -83,13 +83,18 @@ def _validate(data: dict) -> list[Ticket]:
             value = item[field]
             if not isinstance(value, str) or not value.strip():
                 raise PlanError(f"ticket {i} field {field!r} must be a nonempty string")
+        files_hint = item.get("files_hint", [])
+        if not isinstance(files_hint, list) or not all(
+            isinstance(f, str) for f in files_hint
+        ):
+            raise PlanError(f"ticket {i} field 'files_hint' must be a list of strings")
         tickets.append(
             Ticket(
                 id=i,
                 title=item["title"],
                 description=item["description"],
                 test_assertion=item["test_assertion"],
-                files_hint=list(item.get("files_hint", [])),
+                files_hint=files_hint,
                 depends_on=list(item.get("depends_on", [])),
             )
         )
