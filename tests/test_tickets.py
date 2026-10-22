@@ -100,7 +100,10 @@ def test_files_section_returns_bare_path_tokens_from_plain_text():
 def test_files_section_returns_none_when_heading_names_no_path():
     from issue_runner import tickets
 
-    assert tickets.files_section("## Files\n\nWhatever the fix needs to touch.\n\n## Next\nmore") is None
+    assert (
+        tickets.files_section("## Files\n\nWhatever the fix needs to touch.\n\n## Next\nmore")
+        is None
+    )
 
 
 def test_out_of_scope_returns_sorted_paths_matching_no_files_pattern():
