@@ -1060,8 +1060,9 @@ def _require_accepted_test(cfg: RunnerConfig, ticket: Ticket) -> str:
 def _scope_gate(cfg: RunnerConfig, patterns: list[str], ticket: Ticket, changed: list[str]) -> None:
     """Fail when the ticket's diff touches paths outside the issue's `## Files` section."""
     paths = set(changed)
-    for sha in ticket.adopted_commits:
-        paths.update(devops.files_in_commit(cfg.repo_dir, sha))
+    if ticket.adopted_commits:
+        # the net change since the ticket began, so reverting a stray commit clears it
+        paths = set(devops.net_change_since(cfg.repo_dir, f"{ticket.adopted_commits[0]}^1"))
     paths.discard(ticket.test_path)
     outside = out_of_scope(sorted(paths), patterns)
     if outside:

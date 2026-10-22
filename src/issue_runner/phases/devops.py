@@ -61,6 +61,19 @@ def changed_paths(repo_dir: Path) -> list[str]:
     return sorted(paths)
 
 
+def net_change_since(repo_dir: Path, base: str) -> list[str]:
+    """Paths whose content in the worktree differs from `base`, plus untracked files: the
+    net change since `base`, so a file changed by one commit and reverted by a later one
+    is not listed."""
+    paths = set()
+    for args in (
+        ("diff", "--name-only", "--no-renames", "-z", base, "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        paths.update(p for p in _git(repo_dir, *args).stdout.split("\0") if p)
+    return sorted(paths)
+
+
 def diff_since(repo_dir: Path, base: str, max_chars: int = 60000) -> str:
     """The committed change since `base`: a file summary, then as much patch as fits."""
     stat = _git(repo_dir, "diff", "--stat", f"{base}..HEAD").stdout
@@ -582,6 +595,14 @@ def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
     return result.returncode == 0
 
 
+# reflog subjects of the operations that create a commit in the worktree
+_MADE_HERE = re.compile(
+    r"(commit|cherry-pick|revert|am)\b"
+    r"|rebase( -i)? \((pick|reword|edit|squash|fixup|continue)\)"
+    r"|merge .*: Merge made by"
+)
+
+
 def adopt_head(repo_dir: Path, base: str) -> list[str]:
     """The commits in base..HEAD, oldest first, when HEAD descends from base."""
     head = head_commit(repo_dir)
@@ -591,8 +612,12 @@ def adopt_head(repo_dir: Path, base: str) -> list[str]:
             "refusing to continue"
         )
     commits = _git(repo_dir, "rev-list", "--reverse", f"{base}..HEAD").stdout.split()
-    # HEAD's reflog is per-worktree, so it only records commits made in this worktree
-    recorded = set(_git(repo_dir, "reflog", "show", "--format=%H", "HEAD").stdout.split())
+    # HEAD's reflog is per-worktree. Only entries that created a commit count: a reset,
+    # fast-forward or checkout onto another worktree's commit is recorded there too.
+    entries = _git(repo_dir, "reflog", "show", "--format=%H%x00%gs", "HEAD").stdout.splitlines()
+    recorded = {
+        sha for sha, _, subject in (e.partition("\0") for e in entries) if _MADE_HERE.match(subject)
+    }
     for sha in commits:
         if sha not in recorded:
             raise DevopsError(

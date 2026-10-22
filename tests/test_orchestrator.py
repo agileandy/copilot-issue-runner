@@ -1162,3 +1162,64 @@ def test_a_diff_outside_the_issues_files_section_blocks_at_the_regression_gate(g
         True,
         True,
     )
+
+
+def test_a_fast_forward_onto_another_worktrees_commit_is_not_adopted(git_repo, cfg, tmp_path):
+    def fast_forward_onto_foreign_work():
+        other = tmp_path / "other-worktree"
+
+        def git(*args, cwd=git_repo):
+            return subprocess.run(
+                ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+            )
+
+        git("worktree", "add", "-q", "--detach", str(other), "HEAD")
+        (other / "impl.py").write_text("foreign")
+        git("add", "impl.py", cwd=other)
+        git("commit", "-m", "foreign", cwd=other)
+        git("merge", "--ff-only", git("rev-parse", "HEAD", cwd=other).stdout.strip())
+
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", fast_forward_onto_foreign_work),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    assert store.load()
+    assert (
+        report.blocked,
+        "not made in the run worktree" in (store.tickets[0].blocked_reason or ""),
+    ) == (1, True)
+
+
+def test_reverting_a_committed_stray_file_clears_the_scope_gate(git_repo, cfg):
+    def git(*args):
+        subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+    def implement_with_extra_committed():
+        (git_repo / "impl.py").write_text("code")
+        (git_repo / "extra.py").write_text("stray")
+        git("add", "impl.py", "extra.py")
+        git("commit", "-m", "wip")
+
+    def remove_the_extra():
+        git("rm", "-q", "extra.py")
+        git("commit", "-m", "drop the stray file")
+
+    issue = {**ISSUE, "body": "need it\n\n## Files\n\n`impl.py`"}
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement_with_extra_committed),
+            (verdict("pass"), None),
+            ("done", remove_the_extra),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, issue, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
