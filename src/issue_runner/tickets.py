@@ -5,9 +5,11 @@ sub-issues (when enabled) are a mirror. State is saved after every transition
 so a crashed or credit-capped run can resume where it stopped.
 """
 
+import fnmatch
 import json
+import re
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .storage import write_json
 
@@ -32,6 +34,69 @@ DOD_GATES = ("tickets", "criteria_tests", "review", "merge", "deploy", "criteria
 
 class StateError(RuntimeError):
     pass
+
+
+_FILES_HEADING = re.compile(r"^##[ \t]+files[ \t]*\r?$", re.IGNORECASE | re.MULTILINE)
+_NEXT_HEADING = re.compile(r"^## ", re.MULTILINE)
+_BACKTICK_TOKEN = re.compile(r"`([^`\n]*)`")
+_FILE_EXTENSION = re.compile(r"\.[A-Za-z0-9]+$")
+
+
+def files_section(body: str) -> list[str] | None:
+    """Paths listed under the issue body's `## Files` heading.
+
+    None means the body has no such heading, or the heading lists no path,
+    so no scope gate applies.
+    """
+    heading = _FILES_HEADING.search(body or "")
+    if not heading:
+        return None
+    section = body[heading.end() :]
+    next_heading = _NEXT_HEADING.search(section)
+    if next_heading:
+        section = section[: next_heading.start()]
+    paths: list[str] = []
+    for token in _BACKTICK_TOKEN.findall(section):
+        path = token.strip().removeprefix("./")
+        if path and path not in paths:
+            paths.append(path)
+    for word in _BACKTICK_TOKEN.sub(" ", section).split():
+        word = word.lstrip("-*(\"'").rstrip(",;.):")
+        if "/" not in word and not _FILE_EXTENSION.search(word):
+            continue
+        path = word.removeprefix("./")
+        if path and path not in paths:
+            paths.append(path)
+    return paths or None
+
+
+def _is_test_file(name: str) -> bool:
+    return name.startswith("test_") or any(m in name for m in ("_test.", ".test.", ".spec."))
+
+
+def _in_scope(path: str, pattern: str) -> bool:
+    if fnmatch.fnmatch(path, pattern):
+        return True
+    if pattern.endswith("/") and path.startswith(pattern):
+        return True
+    p = PurePosixPath(path)
+    if "/" not in pattern and fnmatch.fnmatch(p.name, pattern):
+        return True
+    return (
+        not any(c in pattern for c in "*?[")
+        and _is_test_file(p.name)
+        and p.parent == PurePosixPath(pattern).parent
+    )
+
+
+def out_of_scope(paths: list[str], patterns: list[str]) -> list[str]:
+    """The sorted paths that match none of the `## Files` patterns.
+
+    A pattern without a '/' also matches a path's basename in any directory.
+    A test file in the same directory as a listed non-glob path is in scope.
+    A pattern ending in '/' covers every path beneath that directory.
+    """
+    return sorted(p for p in paths if not any(_in_scope(p, pat) for pat in patterns))
 
 
 @dataclass
@@ -112,6 +177,7 @@ class Ticket:
     full_regression_tree: str | None = None
     kind: str = "tdd"
     pre_pr_command: str | None = None
+    adopted_commits: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.status = self._status
@@ -157,6 +223,8 @@ class TicketStore:
         self.workspace_ready: bool = False
         self.delivery: Delivery | None = None
         self.pre_pr_rounds: list[dict] = []
+        # not persisted: the issue body is re-read on resume
+        self.scope_files: list[str] | None = None
 
     @property
     def state_file(self) -> Path:

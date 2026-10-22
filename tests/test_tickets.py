@@ -71,3 +71,58 @@ def test_pre_pr_rounds_persist_across_save_and_load(tmp_path):
     reloaded = TicketStore(tmp_path / "state", issue_ref="17")
     reloaded.load()
     assert reloaded.pre_pr_rounds == rounds
+
+
+def test_files_section_returns_none_without_files_heading():
+    from issue_runner import tickets
+
+    assert tickets.files_section("## Problem\nsomething\n\n## Scope\n- a") is None
+
+
+def test_files_section_returns_backtick_paths_up_to_next_heading():
+    from issue_runner import tickets
+
+    body = "intro\n\n## Files\n\n`src/a/build.py`, `config.py` (or similar), `tests/*`\n\n## Next\n`x.py`"
+    assert tickets.files_section(body) == ["src/a/build.py", "config.py", "tests/*"]
+
+
+def test_files_section_returns_bare_path_tokens_from_plain_text():
+    from issue_runner import tickets
+
+    body = "## Files\n\n- packages/guard/src/guard/cli.py\n- config.toml, plugin/skills/factory/\n\n## Next\nx.py"
+    assert tickets.files_section(body) == [
+        "packages/guard/src/guard/cli.py",
+        "config.toml",
+        "plugin/skills/factory/",
+    ]
+
+
+def test_files_section_returns_none_when_heading_names_no_path():
+    from issue_runner import tickets
+
+    assert (
+        tickets.files_section("## Files\n\nWhatever the fix needs to touch.\n\n## Next\nmore")
+        is None
+    )
+
+
+def test_out_of_scope_returns_sorted_paths_matching_no_files_pattern():
+    from issue_runner import tickets
+
+    paths = ["src/a/build.py", "pkg/config.py", "tests/test_x.py", "sql/prod.sql"]
+    patterns = ["src/a/build.py", "config.py", "tests/*"]
+    assert tickets.out_of_scope(paths, patterns) == ["sql/prod.sql"]
+
+
+def test_out_of_scope_keeps_test_file_beside_listed_file_in_scope():
+    from issue_runner import tickets
+
+    paths = ["src/a/test_build.py", "src/b/test_other.py"]
+    assert tickets.out_of_scope(paths, ["src/a/build.py"]) == ["src/b/test_other.py"]
+
+
+def test_out_of_scope_treats_pattern_ending_in_slash_as_directory_prefix():
+    from issue_runner import tickets
+
+    paths = ["packages/guard/tests/test_x.py", "packages/guard/src/x.py"]
+    assert tickets.out_of_scope(paths, ["packages/guard/tests/"]) == ["packages/guard/src/x.py"]

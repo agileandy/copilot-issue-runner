@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 
 import pytest
@@ -319,3 +320,15 @@ def test_focused_test_command_runs_the_ticket_test_and_its_related_tests(tmp_pat
         focused_test_command(cfg, "tests/test_added.py", ["feature.py", "tests/test_added.py"])
         == "python -m pytest tests/test_added.py tests/test_existing.py -q"
     )
+
+
+def test_a_test_run_that_exceeds_test_timeout_s_names_the_setting(tmp_path):
+    from issue_runner.config import RunnerConfig
+
+    cfg = RunnerConfig(
+        repo_dir=tmp_path,
+        test_cmd=f"{sys.executable} -c 'import time; time.sleep(5)' {{test_path}}",
+        test_timeout_s=1,
+    )
+    with pytest.raises(BuildError, match=re.compile(r"timed out after 1s.*test_timeout_s", re.S)):
+        run_tests(cfg, "t.py")

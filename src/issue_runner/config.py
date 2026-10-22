@@ -102,6 +102,7 @@ class RunnerConfig:
     test_cmd: str = DEFAULT_TEST_CMD
     test_cmd_detected: bool = False  # re-detected in the run worktree when True
     regression_cmd: str | None = None
+    test_timeout_s: int = 1800  # seconds per test_cmd / regression_cmd run
     ticket_regression: str = "shared"  # per-ticket full suite: shared, focused or full
     # commands that prepare a run worktree instead of the discovered toolchain steps
     setup_cmd: list[str] | None = None
@@ -168,6 +169,7 @@ def load_config(repo_dir: Path, config_path: Path | None = None) -> RunnerConfig
     for key in (
         "test_cmd",
         "regression_cmd",
+        "test_timeout_s",
         "ticket_regression",
         "isolate_worktree",
         "max_rounds",
@@ -234,6 +236,8 @@ def validate_config(cfg: RunnerConfig) -> None:
         value = getattr(cfg, name)
         if value is not None and (type(value) is not int or value <= 0):
             raise ConfigError(f"{name} must be a positive integer")
+    if type(cfg.test_timeout_s) is not int or cfg.test_timeout_s <= 0:
+        raise ConfigError("test_timeout_s must be a positive integer")
     if not isinstance(cfg.test_cmd, str) or not cfg.test_cmd.strip():
         raise ConfigError("test_cmd must be a non-empty command")
     if cfg.regression_cmd is not None and (

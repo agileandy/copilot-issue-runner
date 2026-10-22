@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from issue_runner import toolchain
-from issue_runner.config import ConfigError, load_config, validate_config
+from issue_runner.config import ConfigError, RunnerConfig, load_config, validate_config
 from issue_runner.orchestrator import run_issue
 from issue_runner.toolchain import ProvisionError
 from tests.hardening_support import ISSUE, DemoClient, git, sandbox
@@ -124,3 +124,8 @@ def test_setup_cmd_never_runs_tools_from_the_callers_activated_venv(tmp_path, mo
     workspace.mkdir()
     toolchain.run_setup(workspace, ["probe-tool"], 5)
     assert (workspace / "probe.txt").read_text().strip() == "elsewhere"
+
+
+def test_validate_config_rejects_a_zero_test_timeout(tmp_path):
+    with pytest.raises(ConfigError, match="test_timeout_s must be a positive integer"):
+        validate_config(RunnerConfig(repo_dir=tmp_path, test_timeout_s=0))

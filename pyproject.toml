@@ -34,3 +34,4 @@ extend-exclude = ["./factory"]
 [tool.ruff.lint.per-file-ignores]
 # the nested pytest.raises keeps the outer lock's entry outside the expected failure
 "tests/test_devops.py" = ["SIM117"]
+"tests/test_build_phase.py" = ["FURB167"]

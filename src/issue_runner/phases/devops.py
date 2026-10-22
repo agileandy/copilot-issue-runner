@@ -582,6 +582,26 @@ def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
     return result.returncode == 0
 
 
+def adopt_head(repo_dir: Path, base: str) -> list[str]:
+    """The commits in base..HEAD, oldest first, when HEAD descends from base."""
+    head = head_commit(repo_dir)
+    if not is_ancestor(repo_dir, base, head):
+        raise DevopsError(
+            f"HEAD was reset and dropped commits the ticket started from ({base[:12]}); "
+            "refusing to continue"
+        )
+    commits = _git(repo_dir, "rev-list", "--reverse", f"{base}..HEAD").stdout.split()
+    # HEAD's reflog is per-worktree, so it only records commits made in this worktree
+    recorded = set(_git(repo_dir, "reflog", "show", "--format=%H", "HEAD").stdout.split())
+    for sha in commits:
+        if sha not in recorded:
+            raise DevopsError(
+                f"commit {sha[:12]} on the run branch was not made in the run worktree; "
+                "refusing to adopt it"
+            )
+    return commits
+
+
 def ensure_excluded(repo_dir: Path, pattern: str) -> None:
     """Keep runner state out of the target repo's commits without touching .gitignore."""
     raw = _git(repo_dir, "rev-parse", "--git-path", "info/exclude").stdout.strip()
@@ -632,7 +652,7 @@ def commit_ticket(repo_dir: Path, ticket: Ticket, expected_branch: str | None = 
         ["git", "diff", "--cached", "--quiet"], cwd=str(repo_dir), capture_output=True, check=False
     ).returncode
     if staged == 0:
-        if ticket.already_satisfied:
+        if ticket.already_satisfied or ticket.adopted_commits:
             return head_commit(repo_dir)
         raise DevopsError(f"nothing to commit for ticket {ticket.id}")
     message = (
