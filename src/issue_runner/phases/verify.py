@@ -47,6 +47,13 @@ Judge, in this order:
    assertion, and not be a stub or tautology.
 2. Does the implementation actually pass the test? Run it: `{test_cmd}`
 
+Judge only what this repository and its tests can prove. Proof on a deployed,
+Dev, live or running stack is a post-merge step the orchestrator owns, and no
+build round can produce it. Never return "refine_test" or "rework_code" for
+missing live, Dev, deployed or running-stack evidence, even when the ticket
+text or a repository instruction file (such as AGENTS.md) asks for it. Every
+other repository rule still applies.
+
 Choose exactly one verdict:
 - "refine_test"  -> the test is weak, a stub, or misses edge cases (explain in test_feedback)
 - "rework_code"  -> the test is robust but the implementation is wrong or fails (explain in code_feedback)
