@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.metadata
 import json
 import logging
 import os
@@ -52,10 +53,23 @@ def viewer_app_dir() -> Path:
     checkout = Path(__file__).resolve().parents[2] / "apps" / "visual"
     if (checkout / "src" / "index.ts").is_file():
         return checkout
-    packaged = Path(sysconfig.get_path("data")) / "visual"
-    if (packaged / "src" / "index.ts").is_file():
+    packaged = _packaged_display()
+    if packaged is not None:
         return _staged(packaged)
     return checkout
+
+
+def _packaged_display() -> Path | None:
+    """The display a wheel install placed in its data directory. The installed file list
+    says where, whichever scheme installed it (a venv, --user or --target)."""
+    with contextlib.suppress(importlib.metadata.PackageNotFoundError):
+        for file in importlib.metadata.distribution("issue-runner").files or ():
+            if file.parts[-3:] == ("visual", "src", "index.ts"):
+                index = Path(file.locate()).resolve()
+                if index.is_file():
+                    return index.parents[1]
+    packaged = Path(sysconfig.get_path("data")) / "visual"
+    return packaged if (packaged / "src" / "index.ts").is_file() else None
 
 
 def _staged(packaged: Path) -> Path:

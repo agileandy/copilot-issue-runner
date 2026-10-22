@@ -128,7 +128,19 @@ def _wheel_install(monkeypatch, tmp_path, index="render()"):
     monkeypatch.setattr(
         visual_display, "__file__", str(tmp_path / "site-packages" / "issue_runner" / "x.py")
     )
-    monkeypatch.setattr(visual_display.sysconfig, "get_path", lambda name: str(tmp_path / "venv"))
+
+    class Installed:  # what the wheel's RECORD lists, as importlib.metadata reports it
+        parts = ("..", "..", "..", "visual", "src", "index.ts")
+
+        def locate(self):
+            return display / "src" / "index.ts"
+
+    class Distribution:
+        files = (Installed(),)
+
+    monkeypatch.setattr(
+        visual_display.importlib.metadata, "distribution", lambda name: Distribution()
+    )
     return display
 
 
