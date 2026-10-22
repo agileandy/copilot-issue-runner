@@ -31,7 +31,6 @@ from ..testcmd import related_tests
 from ..testreport import Status, interpret, strip_ansi
 from ..tickets import Ticket
 
-_TEST_TIMEOUT = 1800
 # Every automatic run must be non-interactive and colour-free: a watch-mode
 # runner (vitest, jest --watch) would hang until the timeout, and ANSI codes can
 # split the very summary lines the report parser reads. CI=1 is what the JS
@@ -122,7 +121,7 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
             cwd=str(cfg.repo_dir),
             capture_output=True,
             text=True,
-            timeout=_TEST_TIMEOUT,
+            timeout=cfg.test_timeout_s,
             check=False,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -130,7 +129,8 @@ def _run(cfg: RunnerConfig, command: str, test_path: str | None = None) -> tuple
     except subprocess.TimeoutExpired as e:
         tail = _tail(e.stdout) + _tail(e.stderr)
         raise BuildError(
-            f"the test command timed out after {_TEST_TIMEOUT}s: {command}\n"
+            f"the test command timed out after {cfg.test_timeout_s}s: {command}\n"
+            "(raise test_timeout_s in runner.toml if the suite needs longer)\n"
             "(a watch-mode or interactive runner never finishes — use its single-run "
             f"form)\n{tail}"
         ) from e

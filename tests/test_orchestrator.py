@@ -1037,3 +1037,128 @@ def test_a_pre_pr_ticket_whose_finding_an_earlier_fix_cleared_is_done_without_a_
         0,
         1,
     )
+
+
+def test_coder_commit_on_run_branch_is_adopted(git_repo, cfg):
+    def implement_and_commit():
+        (git_repo / "impl.py").write_text("code")
+        subprocess.run(["git", "add", "impl.py"], cwd=git_repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "wip"], cwd=git_repo, check=True, capture_output=True
+        )
+
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement_and_commit),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert report.done == 1 and report.blocked == 0
+
+
+def test_a_reset_that_drops_the_tickets_base_commit_blocks_with_a_named_reason(git_repo, cfg):
+    (git_repo / "second.txt").write_text("second")
+    subprocess.run(["git", "add", "second.txt"], cwd=git_repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "second"], cwd=git_repo, check=True, capture_output=True)
+
+    def reset_then_implement():
+        subprocess.run(
+            ["git", "reset", "--hard", "HEAD~1"], cwd=git_repo, check=True, capture_output=True
+        )
+        (git_repo / "impl.py").write_text("code")
+
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", reset_then_implement),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    assert store.load()
+    assert (report.blocked, "dropped commits" in (store.tickets[0].blocked_reason or "")) == (
+        1,
+        True,
+    )
+
+
+def test_a_commit_missing_from_the_worktree_reflog_blocks_with_a_named_reason(git_repo, cfg):
+    def implement_commit_and_expire_reflog():
+        (git_repo / "impl.py").write_text("code")
+        subprocess.run(["git", "add", "impl.py"], cwd=git_repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "wip"], cwd=git_repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "reflog", "expire", "--expire=now", "--all"],
+            cwd=git_repo,
+            check=True,
+            capture_output=True,
+        )
+
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement_commit_and_expire_reflog),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    assert store.load()
+    assert (
+        report.blocked,
+        "not made in the run worktree" in (store.tickets[0].blocked_reason or ""),
+    ) == (1, True)
+
+
+def test_a_ticket_whose_whole_change_the_coder_committed_is_done(git_repo, cfg):
+    def implement_and_commit_everything():
+        (git_repo / "impl.py").write_text("code")
+        subprocess.run(["git", "add", "-A"], cwd=git_repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "wip"], cwd=git_repo, check=True, capture_output=True
+        )
+
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement_and_commit_everything),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.done, report.blocked) == (1, 0)
+
+
+def test_a_diff_outside_the_issues_files_section_blocks_at_the_regression_gate(git_repo, cfg):
+    def implement_with_extra():
+        (git_repo / "impl.py").write_text("code")
+        (git_repo / "extra.py").write_text("stray")
+
+    issue = {**ISSUE, "body": "need it\n\n## Files\n\n`impl.py`"}
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+        ]
+        + [("done", implement_with_extra), (verdict("pass"), None)] * (cfg.max_rounds + 2)
+    )
+    run_issue(cfg, client, issue, state_dir=git_repo / ".state")
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    ticket = store.tickets[0]
+    reason = ticket.blocked_reason or ""
+    assert (ticket.status, ticket.blocked_stage, "## Files" in reason, "extra.py" in reason) == (
+        "blocked",
+        "regression",
+        True,
+        True,
+    )

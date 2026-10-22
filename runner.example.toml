@@ -6,6 +6,7 @@
 test_cmd = "pytest {test_path} -q"
 # Full suite gate, without {test_path}. Auto-detected separately when omitted.
 # regression_cmd = "pytest -q"
+test_timeout_s = 1800  # seconds per test_cmd / regression_cmd run
 # When a ticket runs the full suite: "shared" (only when it changes existing
 # behaviour in shared files), "focused" (never; the final gate still runs it once)
 # or "full" (after every ticket).

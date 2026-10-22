@@ -42,7 +42,15 @@ from .phases.devops import DevopsError
 from .phases.plan import plan_step, plan_with_criteria
 from .phases.verify import VerifyError, verify_step
 from .testcmd import detect_regression_cmd, detect_test_cmd
-from .tickets import DOD_GATES, Delivery, StateError, Ticket, TicketStore
+from .tickets import (
+    DOD_GATES,
+    Delivery,
+    StateError,
+    Ticket,
+    TicketStore,
+    files_section,
+    out_of_scope,
+)
 from .visual import render_flow
 
 log = logging.getLogger("issue_runner")
@@ -416,6 +424,7 @@ def _run_issue(
     emit(cfg.events, "phase", name="branch")
     _render_visual(cfg, plan="done", branch=store.branch, tickets=store.tickets)
 
+    store.scope_files = files_section(issue.get("body") or "")
     while True:
         _build_tickets(cfg, client, store, report)
 
@@ -691,8 +700,14 @@ def _process_ticket(
                 if recovered is not None:
                     _finish_ticket(cfg, store, ticket, report, recovered)
                     return
-            if devops.head_commit(cfg.repo_dir) != ticket.base_commit:
-                raise DevopsError("the agent changed HEAD outside the commit step")
+            head = devops.head_commit(cfg.repo_dir)
+            if head != ticket.base_commit:
+                adopted = devops.adopt_head(cfg.repo_dir, ticket.base_commit)
+                ticket.base_commit = head
+                store.last_commit = head
+                ticket.adopted_commits.extend(adopted)
+                store.save()
+                continue
 
             if ticket.phase in ("tester", "refine_test"):
                 refining = ticket.phase == "refine_test"
@@ -872,6 +887,8 @@ def _process_ticket(
                 full_run = False
                 try:
                     changed = devops.changed_paths(cfg.repo_dir)
+                    if store.scope_files is not None:
+                        _scope_gate(cfg, store.scope_files, ticket, changed)
                     if cfg.ticket_regression == "full" or (
                         cfg.ticket_regression != "focused"
                         and devops.shared_changes(cfg.repo_dir, changed, ticket.test_path)
@@ -1038,6 +1055,21 @@ def _require_accepted_test(cfg: RunnerConfig, ticket: Ticket) -> str:
             "no files were overwritten; restore the accepted artifact before retrying"
         )
     return ticket.test_path
+
+
+def _scope_gate(cfg: RunnerConfig, patterns: list[str], ticket: Ticket, changed: list[str]) -> None:
+    """Fail when the ticket's diff touches paths outside the issue's `## Files` section."""
+    paths = set(changed)
+    for sha in ticket.adopted_commits:
+        paths.update(devops.files_in_commit(cfg.repo_dir, sha))
+    paths.discard(ticket.test_path)
+    outside = out_of_scope(sorted(paths), patterns)
+    if outside:
+        listing = "\n".join(f"- {p}" for p in outside)
+        raise RegressionFailure(
+            "scope gate failed: these paths are outside the issue's ## Files section; "
+            f"revert them or justify them:\n{listing}"
+        )
 
 
 def _regression_gate(cfg: RunnerConfig) -> None:
