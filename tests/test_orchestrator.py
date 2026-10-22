@@ -196,6 +196,32 @@ def test_resume_skips_planning(git_repo, cfg):
     assert client.calls == []
 
 
+def test_a_plan_over_max_tickets_stops_before_building_and_saves_no_tickets(git_repo, cfg):
+    cfg.max_tickets = 1
+    client = FakeClient([(two_ticket_plan(), None)])
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.plan_too_large, report.done, report.blocked) == (2, 0, 0)
+    assert len(client.calls) == 1  # the planner, and nothing after it
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert store.tickets == []  # a re-run plans again
+    shown = "\n".join(report.details)
+    assert "split" in shown and "ticket 1: a" in shown and "ticket 2: b" in shown
+
+
+def test_a_plan_at_max_tickets_is_built(git_repo, cfg):
+    cfg.max_tickets = 1
+    client = FakeClient(
+        [
+            (plan_reply(), None),
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+    assert (report.plan_too_large, report.done) == (0, 1)
+
 def test_copilot_error_blocks_ticket_not_run(git_repo, cfg):
     from issue_runner.copilot import CopilotError
 

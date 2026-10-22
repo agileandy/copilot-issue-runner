@@ -245,6 +245,12 @@ names the issue to post to; without it `--agent` refuses `--issue-file`.
 
 ### Deploy mode
 
+> **Broken, currently disabled.** `--deploy` causes problems with the delivery
+> orchestrator's guard. `DEPLOY_BROKEN` in `src/issue_runner/cli.py` makes the
+> runner ignore the flag, print a warning and continue as a plain run that
+> opens a PR. Merge and the Dev deploy are left to the caller. The code below
+> is kept for a later fix. Set `DEPLOY_BROKEN = False` to turn it back on.
+
 `--deploy` takes an issue all the way to Dev. After the tickets are built the
 runner opens a pull request, gets it through code review, merges it, and waits
 until the merge is deployed to Dev. The run succeeds only when the issue's
@@ -305,6 +311,7 @@ resumes at its saved stage when re-run.
 | `6` | `--deploy`: code review did not pass |
 | `7` | `--deploy`: the merge failed |
 | `8` | `--deploy`: the Dev deployment failed |
+| `9` | the plan is over `max_tickets`; nothing was built, so split the issue |
 | `130` | stopped by the user; saved work is resumable |
 
 ### Ticket dependencies
