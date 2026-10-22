@@ -62,21 +62,25 @@ def _staged(packaged: Path) -> Path:
     """A writable copy of the packaged display, so `bun install` never writes node_modules
     into the installed release. Keyed by the display's content, so a new release gets a
     fresh copy and an unchanged one is reused."""
-    digest = hashlib.sha256()
-    for f in sorted(packaged.rglob("*")):
-        if f.is_file() and "node_modules" not in f.relative_to(packaged).parts:
-            digest.update(f.relative_to(packaged).as_posix().encode() + b"\0" + f.read_bytes())
     cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache").expanduser()
-    target = cache / "issue-runner" / "visual" / digest.hexdigest()[:16]
-    if not (target / "src" / "index.ts").is_file():
-        tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}")
-        shutil.copytree(
-            packaged, tmp, ignore=shutil.ignore_patterns("node_modules"), dirs_exist_ok=True
-        )
-        try:
-            tmp.rename(target)
-        except OSError:  # another run staged it first
-            shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        digest = hashlib.sha256()
+        for f in sorted(packaged.rglob("*")):
+            if f.is_file() and "node_modules" not in f.relative_to(packaged).parts:
+                digest.update(f.relative_to(packaged).as_posix().encode() + b"\0" + f.read_bytes())
+        target = cache / "issue-runner" / "visual" / digest.hexdigest()[:16]
+        if not (target / "src" / "index.ts").is_file():
+            tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+            shutil.copytree(
+                packaged, tmp, ignore=shutil.ignore_patterns("node_modules"), dirs_exist_ok=True
+            )
+            try:
+                tmp.rename(target)
+            except OSError:  # another run staged it first
+                shutil.rmtree(tmp, ignore_errors=True)
+    except OSError as e:
+        # _execute falls back to plain text on VisualUnavailable, not on OSError
+        raise VisualUnavailable(f"cannot stage the display under {cache}: {e}") from e
     return target
 
 

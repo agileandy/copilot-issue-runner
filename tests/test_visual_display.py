@@ -143,6 +143,14 @@ def test_a_wheel_install_runs_a_staged_copy_of_its_packaged_display(monkeypatch,
     assert viewer_app_dir() != app
 
 
+def test_a_cache_that_cannot_be_written_falls_back_to_plain_text(monkeypatch, tmp_path):
+    _wheel_install(monkeypatch, tmp_path)
+    (tmp_path / "not-a-dir").write_text("")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "not-a-dir"))
+    with pytest.raises(VisualUnavailable, match="cannot stage the display"):
+        viewer_app_dir()
+
+
 def test_the_override_wins_over_the_packaged_display(monkeypatch, tmp_path):
     _wheel_install(monkeypatch, tmp_path)
     monkeypatch.setenv("ISSUE_RUNNER_VISUAL_APP", str(tmp_path / "mine"))
