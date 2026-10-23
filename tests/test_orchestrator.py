@@ -1321,3 +1321,93 @@ def test_a_plan_issue_run_mirrors_progress_into_the_plan(git_repo, cfg):
     assert any("- [ ] wip subtract ints" in b for b in seen)
     assert "- [x] subtract ints — assert: subtract(5,3) == 2" in state["body"]
     assert "### Phase 1: Maths · `done`" in state["body"]
+
+
+def gated_plan_body(phases, final):
+    """phases: [(name, [(title, assertion)], [gate command])]."""
+    parts = ["<!-- plan-gh:plan v1 -->", "## Implementation Phases", ""]
+    for number, (name, tasks, gates) in enumerate(phases, start=1):
+        parts += [f"### Phase {number}: {name} · `idle`", "", "#### 1. Build", ""]
+        parts += [f"- [ ] {title} — assert: {assertion}" for title, assertion in tasks]
+        parts += ["", "#### 2. Testing Strategy", ""]
+        parts += [f"- [ ] `{command}` — gate" for command in gates]
+        parts.append("")
+    parts += ["## Validation Commands", ""]
+    parts += [f"- [ ] `{command}` — final" for command in final]
+    return "\n".join(parts) + "\n"
+
+
+def one_ticket_script(git_repo):
+    return [
+        (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+        ("done", implement(git_repo)),
+        (verdict("pass"), None),
+    ]
+
+
+def test_a_failing_phase_gate_stops_before_the_next_phase(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    cfg.run_plan_commands = True
+    cfg.plan_issue = plan_issue.parse(
+        gated_plan_body(
+            [
+                ("One", [("subtract ints", "subtract(5,3) == 2")], ["false"]),
+                ("Two", [("add ints", "add(2,2) == 4")], ["true"]),
+            ],
+            ["true"],
+        )
+    )
+    client = FakeClient(one_ticket_script(git_repo))  # phase 2's ticket must never start
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert report.blocked == 1
+    assert "phase 1 gate FAILED: false" in report.details
+    assert [t.status for t in store.tickets] == ["done", "pending"]
+    assert pull_requests.created == []
+
+
+def test_a_failing_final_gate_opens_no_pull_request(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    cfg.run_plan_commands = True
+    cfg.plan_issue = plan_issue.parse(
+        gated_plan_body([("One", [("subtract ints", "subtract(5,3) == 2")], ["true"])], ["false"])
+    )
+
+    client = FakeClient(one_ticket_script(git_repo))
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert "phase 1 gate passed: true" in report.details
+    assert "final gate FAILED: false" in report.details
+    assert pull_requests.created == []
+
+
+def test_plan_gates_do_not_run_without_consent(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    marker = git_repo / "ran"
+    body = gated_plan_body(
+        [("One", [("subtract ints", "subtract(5,3) == 2")], [f"touch {marker}"])],
+        [f"touch {marker}"],
+    )
+    cfg.plan_issue = plan_issue.parse(body)
+    state = {"body": body}
+    cfg.plan_mirror = plan_issue.PlanBodyMirror(
+        "o/r", 17, fetch=lambda: state["body"], edit=lambda new: state.update(body=new)
+    )
+
+    client = FakeClient(one_ticket_script(git_repo))
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert not marker.exists()
+    assert report.blocked == 0 and pull_requests.created
+    assert report.details.count(f"plan gate not run (no --run-plan-commands): touch {marker}") == 2
+    assert f"- [ ] `touch {marker}` — gate" in state["body"]
+    assert "### Phase 1: One · `done`" in state["body"]

@@ -12,6 +12,7 @@ Unaccepted edits remain in the run workspace and never enter a later ticket.
 import base64
 import hashlib
 import logging
+import subprocess
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -378,6 +379,11 @@ def _run_issue(
         store.set_tickets(tickets)
         if cfg.plan_issue is not None:
             store.plan_fingerprint = cfg.plan_issue.fingerprint
+            store.plan_gates = [
+                [phase, command, "pending"]
+                for phase, commands in sorted(cfg.plan_issue.phase_gates.items())
+                for command in commands
+            ] + [[None, command, "pending"] for command in cfg.plan_issue.final_gates]
         if where is not None:
             store.delivery = Delivery(
                 criteria=delivery.criteria_records(cfg.preflight.criteria, where, tickets)
@@ -471,7 +477,7 @@ def _run_issue(
                     _mirror_tickets(cfg, issue, store)
                     emit(cfg.events, "tickets_updated", tickets=ticket_snapshot(store.tickets))
                     continue
-            else:
+            elif _plan_gates_pass(cfg, store, report, final=True):
                 _open_pull_request(cfg, issue, store, report)
         elif cfg.deploy:
             report.deploy = True
@@ -488,6 +494,8 @@ def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunRep
     emit(cfg.events, "phase", name="build")
     while True:
         cfg.control.check()
+        if not _plan_gates_pass(cfg, store, report):
+            break
         ready = store.ready()
         if not ready:
             break
@@ -513,6 +521,70 @@ def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunRep
 
     if not report.budget_exhausted and not store.ready():
         _block_unsatisfiable(cfg, store, report)
+
+
+def _plan_gates_pass(
+    cfg: RunnerConfig, store: TicketStore, report: RunReport, final: bool = False
+) -> bool:
+    """Run the plan's gates that are now due; False when one fails.
+
+    A phase gate is due once every ticket of that phase and of every earlier
+    phase is done. Final gates are due only when `final` is set, just before
+    the pull request. The commands come from the issue body, so they run only
+    with --run-plan-commands; otherwise they are recorded as not run.
+    """
+    if not store.plan_gates:
+        return True
+    phases = {t.plan_phase for t in store.tickets if t.plan_phase is not None}
+    phases |= {phase for phase, _, _ in store.plan_gates if phase is not None}
+    done_through = None
+    for phase in sorted(phases):
+        if any(t.status != "done" for t in store.tickets if t.plan_phase == phase):
+            break
+        done_through = phase
+    changed = False
+    ok = True
+    for gate in store.plan_gates:
+        phase, command, status = gate
+        due = final if phase is None else done_through is not None and phase <= done_through
+        if not due or status in ("pass", "skipped"):
+            continue
+        if not cfg.run_plan_commands:
+            gate[2] = "skipped"
+            report.details.append(f"plan gate not run (no --run-plan-commands): {command}")
+            changed = True
+            continue
+        passed, output = _run_plan_command(cfg, command)
+        gate[2] = "pass" if passed else "fail"
+        changed = True
+        where = "final gate" if phase is None else f"phase {phase} gate"
+        if passed:
+            report.details.append(f"{where} passed: {command}")
+            continue
+        report.blocked += 1
+        report.details.append(f"{where} FAILED: {command}" + (f" — {output}" if output else ""))
+        ok = False
+        break
+    if changed:
+        store.save()
+        _sync_plan(cfg, store)
+    return ok
+
+
+def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["sh", "-c", command],
+            cwd=cfg.repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=cfg.test_timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {cfg.test_timeout_s}s"
+    tail = (result.stdout + result.stderr).strip().splitlines()
+    return result.returncode == 0, tail[-1][:200] if tail else ""
 
 
 def _check_plan_unchanged(cfg: RunnerConfig, store: TicketStore, issue: dict) -> None:

@@ -253,6 +253,9 @@ stops before any model call. The runner reads three parts of the body:
 Gate commands come from an issue body that anyone with edit rights can change,
 so they run only when you also pass `--run-plan-commands`. Without it they are
 listed as not run and stay unticked.
+They run with `sh -c` in the run's worktree and must leave it clean. A failing
+phase gate stops the run before the next phase (exit 3); a failing final gate
+opens no pull request. A re-run retries the failed gate first.
 
 The runner's state stays the source of truth. It mirrors each ticket to a
 sub-issue as usual, and to its line in the plan, which only ever gains these
