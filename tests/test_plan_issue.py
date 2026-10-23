@@ -111,3 +111,24 @@ def test_ticked_gates_are_reported_so_a_run_does_not_untick_them():
     plan = plan_issue.parse(body)
 
     assert plan.gates_ticked == {(1, "uv run pytest tests/test_limiter.py"), (None, "uv run pytest")}
+
+
+def test_a_separator_quoted_in_code_does_not_split_the_task():
+    body = FIXTURE.replace(
+        "- [ ] Add TokenBucket — assert:",
+        "- [ ] Add TokenBucket, not `x — assert: y` — assert:",
+    )
+
+    ticket = plan_issue.parse(body).tickets[0]
+
+    assert ticket.title == "Add TokenBucket, not `x — assert: y`"
+    assert ticket.test_assertion == "`TokenBucket(2).take()` returns False on the third call"
+
+
+def test_an_empty_assertion_is_refused():
+    body = FIXTURE.replace(
+        "after one refill interval `TokenBucket(2).take()` returns True again", ""
+    )
+
+    with pytest.raises(plan_issue.PlanIssueError, match="Refill over time"):
+        plan_issue.parse(body)

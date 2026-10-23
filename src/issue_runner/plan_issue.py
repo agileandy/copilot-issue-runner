@@ -41,6 +41,18 @@ class TaskLine:
     reason: str | None
 
 
+def split_assertion(text: str) -> tuple[str, str] | None:
+    """Split a task at the first ' — assert:' outside inline `code`, which only quotes it."""
+    token = ASSERT_SEP.rstrip()
+    in_code = False
+    for i, char in enumerate(text):
+        if char == "`":
+            in_code = not in_code
+        elif not in_code and text.startswith(token, i):
+            return text[:i].strip(), text[i + len(token) :].strip()
+    return None
+
+
 def split_line(line: str) -> TaskLine | None:
     match = _CHECKBOX.match(line)
     if not match:
@@ -156,9 +168,10 @@ def parse(body: str, title: str = "") -> ParsedPlan:
             if task.checked:
                 gates_ticked.add((phase, phase_gates[phase][-1]))
             continue
-        if ASSERT_SEP not in task.text:
+        parts = split_assertion(task.text)
+        if parts is None or not parts[1].strip(" `"):
             raise PlanIssueError(f"task has no '{ASSERT_SEP.strip()}' test assertion: {line!r}")
-        action, assertion = task.text.split(ASSERT_SEP, 1)
+        action, assertion = parts
         if any(k[:2] == (phase, task.text) for k in keys):
             raise PlanIssueError(f"phase {phase} lists the same task twice: {line!r}")
         description = f"Plan phase {phase}: {phase_names[phase]}. Task group: {heading or 'tasks'}."

@@ -243,7 +243,8 @@ stops before any model call. The runner reads three parts of the body:
 - **Tasks.** Every checkbox under `## Implementation Phases`, inside a
   `### Phase N: <name>` heading, becomes one ticket in order. A task line is
   `- [ ] <action> — assert: <single test assertion>`. A task without
-  ` — assert: ` is refused. Tickets pass the planner's own checks: one
+  ` — assert: `, or with an empty assertion, is refused. A separator quoted in
+  inline `code` does not count. Tickets pass the planner's own checks: one
   behaviour, one assertion, provable by this repository's tests.
 - **Phase gates.** Checkboxes under a `#### ... Testing Strategy` heading in a
   phase. The first `` `command` `` on each line is run after that phase's last
