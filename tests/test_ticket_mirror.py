@@ -282,7 +282,7 @@ def test_plan_body_mirror_writes_only_when_the_body_changes():
 
 
 def test_edit_issue_body_sends_the_body_on_stdin():
-    from issue_runner.github_io import edit_issue_body
+    from issue_runner import github_io
 
     seen = {}
 
@@ -293,7 +293,7 @@ def test_edit_issue_body_sends_the_body_on_stdin():
         seen.update(argv=argv, input=kwargs.get("input"))
         return Done()
 
-    edit_issue_body("o/r", 7, "new body", run=run)
+    github_io.edit_issue_body("o/r", 7, "new body", run=run)
 
     assert seen["argv"][:4] == ["gh", "issue", "edit", "7"]
     assert "--body-file" in seen["argv"] and seen["input"] == "new body"
