@@ -305,3 +305,44 @@ def test_plan_extra_numbers_new_tickets_after_the_built_ones(cfg):
 def test_workspace_rules_with_a_test_path_omits_the_full_suite_line(cfg):
     assert cfg.regression_cmd
     assert "Run the full suite with" not in workspace_rules(cfg, "tests/test_x.py")
+
+
+# --- ticket shapes (issue #43) -------------------------------------------------
+
+
+def test_plan_step_rejects_non_dict_ticket(cfg):
+    bad = json.dumps({"summary": "s", "tickets": ["just a string"]})
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="ticket 1 must be a JSON object"):
+        plan_step(client, cfg, ISSUE)
+
+
+def test_plan_step_rejects_non_string_title(cfg):
+    bad = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [{"title": 123, "description": "d", "test_assertion": "a"}],
+        }
+    )
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="'title' must be a nonempty string"):
+        plan_step(client, cfg, ISSUE)
+
+
+def test_plan_step_rejects_non_list_files_hint(cfg):
+    bad = json.dumps(
+        {
+            "summary": "s",
+            "tickets": [
+                {
+                    "title": "t",
+                    "description": "d",
+                    "test_assertion": "a == 1",
+                    "files_hint": "src/calc.py",
+                }
+            ],
+        }
+    )
+    client = FakeClient([(bad, None), (bad, None)])
+    with pytest.raises(PlanError, match="'files_hint' must be a list of strings"):
+        plan_step(client, cfg, ISSUE)
