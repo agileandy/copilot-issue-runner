@@ -217,6 +217,7 @@ class TicketStore:
         self.tickets: list[Ticket] = []
         self.branch: str | None = None
         self.plan_summary: str | None = None
+        self.plan_fingerprint: str | None = None  # set when the tickets came from a plan issue
         self.worktree: str | None = None
         self.source_repo: str | None = None
         self.pr_url: str = ""
@@ -276,6 +277,7 @@ class TicketStore:
             "issue_ref": self.issue_ref,
             "branch": self.branch,
             "plan_summary": self.plan_summary,
+            "plan_fingerprint": self.plan_fingerprint,
             "worktree": self.worktree,
             "source_repo": self.source_repo,
             "pr_url": self.pr_url,
@@ -312,6 +314,7 @@ class TicketStore:
             ) from e
         self.branch = payload.get("branch")
         self.plan_summary = payload.get("plan_summary")
+        self.plan_fingerprint = payload.get("plan_fingerprint")
         self.worktree = payload.get("worktree")
         self.source_repo = payload.get("source_repo")
         self.pr_url = payload.get("pr_url", "")

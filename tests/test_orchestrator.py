@@ -1223,3 +1223,73 @@ def test_reverting_a_committed_stray_file_clears_the_scope_gate(git_repo, cfg):
     )
     report = run_issue(cfg, client, issue, state_dir=git_repo / ".state")
     assert (report.done, report.blocked) == (1, 0)
+
+
+def plan_body(*tasks):
+    lines = "\n".join(f"- [ ] {title} — assert: {assertion}" for title, assertion in tasks)
+    return (
+        "<!-- plan-gh:plan v1 -->\n## Implementation Phases\n\n### Phase 1: Maths · `idle`\n\n"
+        f"#### 1. Build\n\n{lines}\n\n## Validation Commands\n\n- [ ] `true` — passes\n"
+    )
+
+
+def test_a_plan_issue_run_builds_its_tasks_without_a_planner_call(git_repo, cfg):
+    from issue_runner import plan_issue
+
+    cfg.plan_issue = plan_issue.parse(plan_body(("subtract ints", "subtract(5,3) == 2")))
+    client = FakeClient(
+        [
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert report.done == 1
+    assert "planner" not in [c["role"] for c in client.calls]
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert [(t.title, t.plan_phase) for t in store.tickets] == [("subtract ints", 1)]
+    assert store.plan_fingerprint == cfg.plan_issue.fingerprint
+
+
+def test_a_plan_issue_over_max_tickets_is_not_built(git_repo, cfg):
+    from issue_runner import plan_issue
+
+    cfg.max_tickets = 3
+    cfg.plan_issue = plan_issue.parse(plan_body(*[(f"task {n}", f"f({n}) == {n}") for n in range(4)]))
+    client = FakeClient([])
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert (report.plan_too_large, report.done) == (4, 0)
+    assert client.calls == []
+
+
+def test_resuming_after_the_plan_changed_is_refused(git_repo, cfg):
+    from issue_runner import plan_issue
+    from issue_runner.tickets import StateError
+
+    cfg.plan_issue = plan_issue.parse(plan_body(("subtract ints", "subtract(5,3) == 2")))
+    run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state", plan_only=True)
+    started_with = cfg.plan_issue.fingerprint
+    cfg.plan_issue = plan_issue.parse(plan_body(("subtract ints", "subtract(5,3) == 3")))
+
+    with pytest.raises(StateError, match="plan fingerprint") as raised:
+        run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state", plan_only=True)
+
+    assert started_with in str(raised.value)
+
+
+def test_a_plan_issue_pr_refers_to_the_plan_without_closing_it(tmp_path):
+    from issue_runner.orchestrator import RunReport, _pr_body
+
+    store = TicketStore(tmp_path, issue_ref="17")
+    store.plan_fingerprint = "abc"
+
+    body = _pr_body(ISSUE, store, RunReport(branch="b"))
+
+    assert body.startswith("Refs #17")
+    assert "Closes #17" not in body

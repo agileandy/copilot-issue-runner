@@ -342,12 +342,17 @@ def _run_issue(
     cfg.control.check()
 
     if store.tickets:
+        _check_plan_unchanged(cfg, store, issue)
         log.info("resuming: %d tickets loaded from %s", len(store.tickets), store.state_file)
     else:
         _render_visual(cfg, plan="pending", branch="pending", tickets=[])
         where = None
         try:
-            if cfg.deploy and cfg.preflight is not None:
+            if cfg.plan_issue is not None:
+                # the issue already holds the plan: no planner call
+                summary = cfg.plan_issue.summary
+                tickets = [Ticket.from_dict(t.to_dict()) for t in cfg.plan_issue.tickets]
+            elif cfg.deploy and cfg.preflight is not None:
                 summary, tickets, where = plan_with_criteria(
                     client, cfg, issue, cfg.preflight.criteria
                 )
@@ -371,6 +376,8 @@ def _run_issue(
             return report
         store.plan_summary = summary
         store.set_tickets(tickets)
+        if cfg.plan_issue is not None:
+            store.plan_fingerprint = cfg.plan_issue.fingerprint
         if where is not None:
             store.delivery = Delivery(
                 criteria=delivery.criteria_records(cfg.preflight.criteria, where, tickets)
@@ -508,6 +515,23 @@ def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunRep
         _block_unsatisfiable(cfg, store, report)
 
 
+def _check_plan_unchanged(cfg: RunnerConfig, store: TicketStore, issue: dict) -> None:
+    """A resume must build the plan it started with, never a mix of two plans."""
+    current = cfg.plan_issue.fingerprint if cfg.plan_issue is not None else None
+    if store.plan_fingerprint == current:
+        return
+    if current is None:
+        raise StateError(
+            f"issue #{issue['number']} was started with --plan-from-issue; re-run with it, "
+            f"or delete {store.state_file} to plan afresh"
+        )
+    raise StateError(
+        f"cannot resume issue #{issue['number']}: its plan changed since this run started "
+        f"(plan fingerprint {store.plan_fingerprint or 'none'} is now {current}). "
+        f"Restore the plan, or delete {store.state_file} to start over"
+    )
+
+
 def _mirror_tickets(cfg: RunnerConfig, issue: dict, store: TicketStore) -> None:
     """Mirror tickets to the tracker; also backfills runs planned without a backend."""
     if not (cfg.tickets_backend and issue["number"]):
@@ -523,7 +547,9 @@ def _mirror_tickets(cfg: RunnerConfig, issue: dict, store: TicketStore) -> None:
 
 
 def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
-    lines = [f"Closes #{issue['number']}", ""]
+    # a plan issue stays open after the merge, as it does after an in-session plan-gh build
+    keyword = "Refs" if store.plan_fingerprint else "Closes"
+    lines = [f"{keyword} #{issue['number']}", ""]
     if store.plan_summary:
         lines += [store.plan_summary, ""]
     lines.append("### Tickets")
@@ -554,7 +580,8 @@ def _open_pull_request(
         return
     if report.blocked or not report.done or report.budget_exhausted:
         return
-    title = f"Fixes #{issue['number']} — {issue['title']}"
+    keyword = "Refs" if store.plan_fingerprint else "Fixes"
+    title = f"{keyword} #{issue['number']} — {issue['title']}"
     try:
         cfg.control.check()
         devops.push_branch(cfg.repo_dir, report.branch)
