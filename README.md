@@ -231,6 +231,66 @@ This needs a GitHub repo (`--repo`, or a github.com `origin`); it is skipped for
 `--no-pr` or `open_pr = false` in `runner.toml`. A push or `gh` failure is
 reported, not fatal — the commits are already on the branch.
 
+### Plans from a plan issue
+
+`--plan-from-issue` builds from a plan that already exists in the issue, written
+by the plan-gh skill or by hand, instead of asking the planner. The runner makes
+no planner call. Without the flag it plans for itself as usual.
+
+The issue body must contain the marker `<!-- plan-gh:plan v1 -->`, or the run
+stops before any model call. The runner reads three parts of the body:
+
+- **Tasks.** Every checkbox under `## Implementation Phases`, inside a
+  `### Phase N: <name>` heading, becomes one ticket in order. A task line is
+  `- [ ] <action> — assert: <single test assertion>`. A task without
+  ` — assert: ` is refused. Tickets pass the planner's own checks: one
+  behaviour, one assertion, provable by this repository's tests.
+- **Phase gates.** Checkboxes under a `#### ... Testing Strategy` heading in a
+  phase. The first `` `command` `` on each line is run after that phase's last
+  ticket commits.
+- **Final gates.** Checkboxes under `## Validation Commands`, run before the PR.
+
+Gate commands come from an issue body that anyone with edit rights can change,
+so they run only when you also pass `--run-plan-commands`. Without it they are
+listed as not run and stay unticked.
+
+The runner's state stays the source of truth. It mirrors each ticket to a
+sub-issue as usual, and to its line in the plan, which only ever gains these
+runner-owned markers:
+
+| Marker | Meaning |
+|---|---|
+| ` · #N` at the end | the ticket's sub-issue |
+| `- [ ] wip ` | the ticket is being built |
+| `- [x] ` | the ticket is done, or its gate passed |
+| `- [ ] failed ` and ` — failed: <reason>` at the end | the ticket blocked, or its gate failed |
+| `` · `wip` `` / `` · `done` `` / `` · `failed` `` on a phase heading | the phase's state |
+
+A task already ticked when the run starts counts as done. The plan's tasks and
+gates are fingerprinted when the run starts. If they change before a resume, the
+resume stops instead of mixing two plans. The pull request says `Refs #<n>`, so
+merging it leaves the plan issue open. `--plan-from-issue` needs a GitHub issue
+and refuses `--issue-file`, `--demo`, `--deploy` and Gitea remotes.
+
+```markdown
+<!-- plan-gh:plan v1 -->
+## Implementation Phases
+
+### Phase 1: Limiter · `idle`
+
+#### 1. Bucket
+
+- [ ] Add TokenBucket — assert: `TokenBucket(2).take()` returns False on the third call
+
+#### 2. Testing Strategy
+
+- [ ] `uv run pytest tests/test_limiter.py` — the bucket works
+
+## Validation Commands
+
+- [ ] `uv run pytest` — everything passes
+```
+
 ### Agent mode
 
 `--agent` is for runs driven by another agent or a queue. The run summary is

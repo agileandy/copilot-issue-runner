@@ -178,6 +178,8 @@ class Ticket:
     kind: str = "tdd"
     pre_pr_command: str | None = None
     adopted_commits: list[str] = field(default_factory=list)
+    plan_phase: int | None = None  # --plan-from-issue: the plan phase this task belongs to
+    plan_task: str | None = None  # --plan-from-issue: the task's text, which finds its checkbox
 
     def __post_init__(self) -> None:
         self.status = self._status
