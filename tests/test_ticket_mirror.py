@@ -297,3 +297,23 @@ def test_edit_issue_body_sends_the_body_on_stdin():
 
     assert seen["argv"][:4] == ["gh", "issue", "edit", "7"]
     assert "--body-file" in seen["argv"] and seen["input"] == "new body"
+
+
+def test_plan_body_mirror_keeps_an_edit_made_while_it_was_rewriting():
+    state = {"body": PLAN, "reads": 0}
+
+    def fetch():
+        state["reads"] += 1
+        if state["reads"] == 2:  # a person edits the plan between our read and our write
+            state["body"] = state["body"].replace("Rate limit search.", "Rate limit search, gently.")
+        return state["body"]
+
+    mirror = plan_issue.PlanBodyMirror(
+        "o/r", 7, fetch=fetch, edit=lambda new: state.update(body=new)
+    )
+    tickets = _tickets()
+    tickets[0].status = "done"
+
+    assert mirror.sync(tickets) is True
+    assert "Rate limit search, gently." in state["body"]
+    assert T1.replace("- [ ]", "- [x]") + "\n" in state["body"]

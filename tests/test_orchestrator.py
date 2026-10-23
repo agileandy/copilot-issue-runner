@@ -1424,3 +1424,61 @@ def test_gates_already_ticked_in_the_plan_start_as_passed(git_repo, cfg):
     store = TicketStore(git_repo / ".state", issue_ref="17")
     store.load()
     assert [status for _, _, status in store.plan_gates] == ["pass", "pass"]
+
+
+def test_only_the_earliest_unfinished_plan_phase_may_build(tmp_path):
+    from issue_runner import plan_issue
+    from issue_runner.orchestrator import _current_plan_phase
+
+    plan = plan_issue.parse(
+        gated_plan_body(
+            [("One", [("a", "a() == 1")], ["true"]), ("Two", [("b", "b() == 2")], ["true"])], []
+        )
+    )
+    store = TicketStore(tmp_path, issue_ref="17")
+    store.set_tickets(plan.tickets)
+    store.tickets[0].status = "blocked"
+
+    assert _current_plan_phase(store, store.ready()) == []
+    store.tickets[0].status = "done"
+    assert [t.title for t in _current_plan_phase(store, store.ready())] == ["b"]
+
+
+def test_a_failed_gate_still_blocks_a_rerun_without_consent(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    cfg.run_plan_commands = True
+    cfg.plan_issue = plan_issue.parse(
+        gated_plan_body([("One", [("subtract ints", "subtract(5,3) == 2")], ["false"])], ["true"])
+    )
+    client = FakeClient(one_ticket_script(git_repo))
+    assert run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state").blocked == 1
+
+    cfg.run_plan_commands = False
+    report = run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state")
+
+    assert report.blocked >= 1
+    assert any("FAILED in an earlier run: false" in d for d in report.details)
+    assert pull_requests.created == []
+
+
+def test_a_gate_that_changes_the_worktree_fails(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    cfg.run_plan_commands = True
+    cfg.plan_issue = plan_issue.parse(
+        gated_plan_body(
+            [("One", [("subtract ints", "subtract(5,3) == 2")], ["touch stray.txt"])], ["true"]
+        )
+    )
+    client = FakeClient(one_ticket_script(git_repo))
+
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert any(
+        "phase 1 gate FAILED: touch stray.txt" in d and "stray.txt" in d.split("—")[-1]
+        for d in report.details
+    )
+    assert pull_requests.created == []

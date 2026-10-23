@@ -302,10 +302,25 @@ class PlanBodyMirror:
         self._fetch = fetch or (lambda: github_io.fetch_issue(str(number), repo=repo)["body"])
         self._edit = edit or (lambda body: github_io.edit_issue_body(repo, number, body))
 
-    def sync(self, tickets: list, gates: dict | None = None) -> bool:
-        body = self._fetch() or ""
-        updated = rewrite(body, tickets, gates)
-        if updated == body:
-            return False
-        self._edit(updated)
-        return True
+    def sync(self, tickets: list, gates: dict | None = None, attempts: int = 3) -> bool:
+        """Rewrite the markers against the latest body; False when nothing changed.
+
+        GitHub has no conditional write for an issue body, so a person's edit can
+        still land between the last read and the write. The body is read again
+        just before writing and after it, and the rewrite is retried when it moved,
+        which leaves that window as small as the API allows.
+        """
+        for _ in range(attempts):
+            body = self._fetch() or ""
+            updated = rewrite(body, tickets, gates)
+            if updated == body:
+                return False
+            if (self._fetch() or "") != body:
+                continue  # edited while we were rewriting: start again from the new body
+            self._edit(updated)
+            if (self._fetch() or "") == updated:
+                return True
+        raise PlanIssueError(
+            f"#{self.number} kept changing while the runner updated its checkboxes; "
+            "they will be rewritten at the next update"
+        )

@@ -501,7 +501,7 @@ def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunRep
         cfg.control.check()
         if not _plan_gates_pass(cfg, store, report):
             break
-        ready = store.ready()
+        ready = _current_plan_phase(store, store.ready())
         if not ready:
             break
         unfinished = [t for t in store.tickets if t.base_commit and t.status != "done"]
@@ -528,6 +528,19 @@ def _build_tickets(cfg: RunnerConfig, client, store: TicketStore, report: RunRep
         _block_unsatisfiable(cfg, store, report)
 
 
+def _current_plan_phase(store: TicketStore, ready: list[Ticket]) -> list[Ticket]:
+    """For a plan issue, only the earliest unfinished phase may build.
+
+    Plan tickets carry no dependencies, so without this a blocked phase 1
+    ticket would let phase 2 build before phase 1 and its gate are done.
+    """
+    phases = [t.plan_phase for t in store.tickets if t.plan_phase is not None and t.status != "done"]
+    if not phases:
+        return ready
+    current = min(phases)
+    return [t for t in ready if t.plan_phase is None or t.plan_phase == current]
+
+
 def _plan_gates_pass(
     cfg: RunnerConfig, store: TicketStore, report: RunReport, final: bool = False
 ) -> bool:
@@ -552,17 +565,27 @@ def _plan_gates_pass(
     for gate in store.plan_gates:
         phase, command, status = gate
         due = final if phase is None else done_through is not None and phase <= done_through
-        if not due or status in ("pass", "skipped"):
+        if not due or status == "pass":
             continue
+        where = "final gate" if phase is None else f"phase {phase} gate"
         if not cfg.run_plan_commands:
-            gate[2] = "skipped"
-            report.details.append(f"plan gate not run (no --run-plan-commands): {command}")
-            changed = True
+            if status == "fail":
+                # a failed gate stays failed until it is run again and passes
+                report.blocked += 1
+                report.details.append(
+                    f"{where} FAILED in an earlier run: {command}; "
+                    "re-run with --run-plan-commands to retry it"
+                )
+                ok = False
+                break
+            if status != "skipped":
+                gate[2] = "skipped"
+                report.details.append(f"plan gate not run (no --run-plan-commands): {command}")
+                changed = True
             continue
         passed, output = _run_plan_command(cfg, command)
         gate[2] = "pass" if passed else "fail"
         changed = True
-        where = "final gate" if phase is None else f"phase {phase} gate"
         if passed:
             report.details.append(f"{where} passed: {command}")
             continue
@@ -577,6 +600,7 @@ def _plan_gates_pass(
 
 
 def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
+    before = devops.changed_paths(cfg.repo_dir)
     try:
         result = subprocess.run(
             ["sh", "-c", command],
@@ -589,6 +613,11 @@ def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"timed out after {cfg.test_timeout_s}s"
     tail = (result.stdout + result.stderr).strip().splitlines()
+    left = sorted(set(devops.changed_paths(cfg.repo_dir)) - set(before))
+    if left:
+        # a passing command that changed the worktree would publish a branch without
+        # those changes while reporting success
+        return False, f"left changes in the worktree: {', '.join(left[:5])}"
     return result.returncode == 0, tail[-1][:200] if tail else ""
 
 
