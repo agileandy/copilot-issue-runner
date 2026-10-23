@@ -28,6 +28,13 @@ def fetch_issue(issue_ref: str, repo: str | None = None, run=subprocess.run) -> 
     return json.loads(_run(argv, run))
 
 
+def edit_issue_body(repo: str, number: int, body: str, run=subprocess.run) -> None:
+    argv = ["gh", "issue", "edit", str(number), "-R", repo, "--body-file", "-"]
+    result = run(argv, input=body, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise GithubError(f"gh issue edit failed: {(result.stderr or '').strip()[:400]}")
+
+
 def issue_from_file(path: Path) -> dict:
     lines = Path(path).read_text().strip().splitlines()
     title = lines[0].lstrip("# ").strip() if lines else "untitled"

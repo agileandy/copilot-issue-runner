@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 import pytest
 
+from issue_runner import plan_issue
 from issue_runner.ticket_mirror import GiteaTickets, upsert_task_line
 from issue_runner.tickets import Ticket
 from issue_runner.trackers import TrackerError, gitea_write_token
@@ -189,3 +191,109 @@ def test_github_create_logs_failed_subissue_link_and_returns_ticket(monkeypatch,
         and "could not link #42 as a sub-issue of #17" in caplog.text
         and "HTTP 422" in caplog.text
     )
+
+
+# --- plan issue body mirror (--plan-from-issue) ---
+
+PLAN = (Path(__file__).parent / "fixtures" / "plan_gh_issue.md").read_text()
+T1 = "- [ ] Add TokenBucket — assert: `TokenBucket(2).take()` returns False on the third call"
+T2 = (
+    "- [ ] Refill over time — assert: after one refill interval `TokenBucket(2).take()` "
+    "returns True again"
+)
+
+
+def _tickets():
+    return plan_issue.parse(PLAN).tickets
+
+
+def test_plan_rewrite_links_sub_issues_and_changes_nothing_else():
+    tickets = _tickets()
+    for ticket, number in zip(tickets, (12, 13, 14)):
+        ticket.github_issue = number
+
+    body = plan_issue.rewrite(PLAN, tickets)
+
+    expected = PLAN.replace(T1, T1 + " · #12").replace(T2, T2 + " · #13")
+    expected = expected.replace("status 429\n", "status 429 · #14\n")
+    assert body == expected
+
+
+def test_plan_rewrite_ticks_a_done_ticket():
+    tickets = _tickets()
+    tickets[0].status = "done"
+
+    body = plan_issue.rewrite(PLAN, tickets)
+
+    assert T1.replace("- [ ]", "- [x]") + "\n" in body
+    assert "### Phase 1: Limiter · `wip`" in body
+
+
+def test_plan_rewrite_shows_wip_and_failed_with_the_reason_last():
+    tickets = _tickets()
+    tickets[0].status = "in_progress"
+    tickets[1].status = "blocked"
+    tickets[1].blocked_reason = "no clock seam\nmore detail"
+
+    body = plan_issue.rewrite(PLAN, tickets)
+
+    assert T1.replace("- [ ] ", "- [ ] wip ") + "\n" in body
+    assert T2.replace("- [ ] ", "- [ ] failed ") + " — failed: no clock seam\n" in body
+    assert "### Phase 1: Limiter · `failed`" in body
+
+
+def test_plan_rewrite_marks_a_phase_done_once_its_tickets_and_gate_pass():
+    tickets = _tickets()
+    tickets[0].status = tickets[1].status = "done"
+    gates = {(1, "uv run pytest tests/test_limiter.py"): "pass"}
+
+    body = plan_issue.rewrite(PLAN, tickets, gates)
+
+    assert "### Phase 1: Limiter · `done`" in body
+    assert "- [x] `uv run pytest tests/test_limiter.py` — the bucket works" in body
+    assert "### Phase 2: Wire into search · `idle`" in body
+
+
+def test_plan_rewrite_round_trips_through_parse():
+    tickets = _tickets()
+    tickets[0].status, tickets[0].github_issue = "done", 12
+
+    again = plan_issue.parse(plan_issue.rewrite(PLAN, tickets))
+
+    assert again.fingerprint == plan_issue.parse(PLAN).fingerprint
+    assert [t.status for t in again.tickets] == ["done", "pending", "pending"]
+
+
+def test_plan_body_mirror_writes_only_when_the_body_changes():
+    state = {"body": PLAN}
+    edits = []
+
+    def edit(body):
+        edits.append(body)
+        state["body"] = body
+
+    mirror = plan_issue.PlanBodyMirror("o/r", 7, fetch=lambda: state["body"], edit=edit)
+    tickets = _tickets()
+    tickets[0].status = "done"
+
+    assert mirror.sync(tickets) is True
+    assert mirror.sync(tickets) is False
+    assert len(edits) == 1
+
+
+def test_edit_issue_body_sends_the_body_on_stdin():
+    from issue_runner.github_io import edit_issue_body
+
+    seen = {}
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    def run(argv, **kwargs):
+        seen.update(argv=argv, input=kwargs.get("input"))
+        return Done()
+
+    edit_issue_body("o/r", 7, "new body", run=run)
+
+    assert seen["argv"][:4] == ["gh", "issue", "edit", "7"]
+    assert "--body-file" in seen["argv"] and seen["input"] == "new body"

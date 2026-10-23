@@ -1293,3 +1293,31 @@ def test_a_plan_issue_pr_refers_to_the_plan_without_closing_it(tmp_path):
 
     assert body.startswith("Refs #17")
     assert "Closes #17" not in body
+
+
+def test_a_plan_issue_run_mirrors_progress_into_the_plan(git_repo, cfg):
+    from issue_runner import plan_issue
+
+    body = plan_body(("subtract ints", "subtract(5,3) == 2"))
+    cfg.plan_issue = plan_issue.parse(body)
+    state = {"body": body}
+    seen = []
+
+    def edit(new):
+        seen.append(new)
+        state["body"] = new
+
+    cfg.plan_mirror = plan_issue.PlanBodyMirror("o/r", 17, fetch=lambda: state["body"], edit=edit)
+    client = FakeClient(
+        [
+            (json.dumps({"test_path": "test_sub.py"}), write_test(git_repo, "assert RED")),
+            ("done", implement(git_repo)),
+            (verdict("pass"), None),
+        ]
+    )
+
+    run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert any("- [ ] wip subtract ints" in b for b in seen)
+    assert "- [x] subtract ints — assert: subtract(5,3) == 2" in state["body"]
+    assert "### Phase 1: Maths · `done`" in state["body"]

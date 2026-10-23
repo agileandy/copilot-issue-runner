@@ -218,6 +218,7 @@ class TicketStore:
         self.branch: str | None = None
         self.plan_summary: str | None = None
         self.plan_fingerprint: str | None = None  # set when the tickets came from a plan issue
+        self.plan_gates: list[list] = []  # [phase or None, command, status] for plan gates
         self.worktree: str | None = None
         self.source_repo: str | None = None
         self.pr_url: str = ""
@@ -235,6 +236,10 @@ class TicketStore:
 
     def set_tickets(self, tickets: list[Ticket]) -> None:
         self.tickets = list(tickets)
+
+    def plan_gate_map(self) -> dict:
+        """(phase or None, command) -> "pass" | "fail" | "skipped" | "pending"."""
+        return {(phase, command): status for phase, command, status in self.plan_gates}
 
     def pending(self) -> list[Ticket]:
         return [t for t in self.tickets if t.status in ("pending", "in_progress")]
@@ -278,6 +283,7 @@ class TicketStore:
             "branch": self.branch,
             "plan_summary": self.plan_summary,
             "plan_fingerprint": self.plan_fingerprint,
+            "plan_gates": self.plan_gates,
             "worktree": self.worktree,
             "source_repo": self.source_repo,
             "pr_url": self.pr_url,
@@ -315,6 +321,7 @@ class TicketStore:
         self.branch = payload.get("branch")
         self.plan_summary = payload.get("plan_summary")
         self.plan_fingerprint = payload.get("plan_fingerprint")
+        self.plan_gates = payload.get("plan_gates", [])
         self.worktree = payload.get("worktree")
         self.source_repo = payload.get("source_repo")
         self.pr_url = payload.get("pr_url", "")

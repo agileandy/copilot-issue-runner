@@ -532,9 +532,25 @@ def _check_plan_unchanged(cfg: RunnerConfig, store: TicketStore, issue: dict) ->
     )
 
 
+def _sync_plan(cfg: RunnerConfig, store: TicketStore | None) -> None:
+    """Mirror the run's state into the plan issue's checkboxes (--plan-from-issue).
+
+    Best-effort like the other status lights: the runner's state stays the
+    source of truth, and a plan that will not take the update never stops a run.
+    """
+    mirror = cfg.plan_mirror
+    if mirror is None or store is None or not store.plan_fingerprint:
+        return
+    try:
+        mirror.sync(store.tickets, store.plan_gate_map())
+    except Exception:
+        log.warning("could not update the plan issue's checkboxes", exc_info=True)
+
+
 def _mirror_tickets(cfg: RunnerConfig, issue: dict, store: TicketStore) -> None:
     """Mirror tickets to the tracker; also backfills runs planned without a backend."""
     if not (cfg.tickets_backend and issue["number"]):
+        _sync_plan(cfg, store)
         return
     for ticket in store.tickets:
         cfg.control.check()
@@ -544,6 +560,7 @@ def _mirror_tickets(cfg: RunnerConfig, issue: dict, store: TicketStore) -> None:
             if ticket.status == "done":
                 cfg.tickets_backend.close(ticket, "completed in an earlier run")
     store.save()
+    _sync_plan(cfg, store)
 
 
 def _pr_body(issue: dict, store: TicketStore, report: RunReport) -> str:
@@ -616,6 +633,7 @@ def _emit_finished(
 ) -> None:
     announce_stop(cfg)
     _clear_parent_in_progress(cfg, report)
+    _sync_plan(cfg, store)
     ledger = getattr(client, "usage", None)
     if ledger is not None:
         report.usage_summary = ledger.summary_line()
@@ -712,6 +730,7 @@ def _process_ticket(
     log.info("ticket %d: %s", ticket.id, ticket.title)
     emit(cfg.events, "ticket_started", ticket_id=ticket.id, title=ticket.title)
     _mark_in_progress(cfg, ticket)
+    _sync_plan(cfg, store)
     if ticket.phase == "tester" and ticket.rounds == 0:
         # only on the ticket's first start: a resumed run must not repost the brief,
         # since the in-process duplicate guard is gone once the process restarts
@@ -1183,6 +1202,8 @@ def _finish_ticket(
                 f"ticket {ticket.id} is committed at {sha[:12]} but its sub-issue "
                 f"#{ticket.github_issue} could not be closed"
             )
+    if cfg.plan_mirror is not None:
+        _sync_plan(cfg, store)
 
 
 def _block(
@@ -1208,3 +1229,5 @@ def _block(
     backend = cfg.tickets_backend if cfg else None
     if ticket.github_issue and backend and hasattr(backend, "block"):
         backend.block(ticket, reason)
+    if cfg is not None:
+        _sync_plan(cfg, store)

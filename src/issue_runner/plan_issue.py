@@ -199,3 +199,107 @@ def parse(body: str, title: str = "") -> ParsedPlan:
         final_gates=final_gates,
         fingerprint=fingerprint,
     )
+
+
+def _ticket_line(task: TaskLine, ticket) -> TaskLine:
+    reason = None
+    if ticket.status == "blocked":
+        reason = (ticket.blocked_reason or "blocked").strip().splitlines()[0][:160]
+    state = {"in_progress": "wip", "blocked": "failed"}.get(ticket.status, "")
+    return TaskLine(ticket.status == "done", state, task.text, ticket.github_issue, reason)
+
+
+def _gate_line(task: TaskLine, status: str | None) -> TaskLine:
+    if status == "fail":
+        return TaskLine(False, "failed", task.text, None, "gate command failed")
+    return TaskLine(status == "pass", "", task.text, None, None)
+
+
+def _phase_status(tickets: list, gates: list[str | None]) -> str:
+    if any(t.status == "blocked" for t in tickets) or "fail" in gates:
+        return "failed"
+    if tickets and all(t.status == "done" for t in tickets) and all(g != "pending" for g in gates):
+        return "done"
+    if any(t.status in ("in_progress", "done") for t in tickets) or "pass" in gates:
+        return "wip"
+    return "idle"
+
+
+def rewrite(body: str, tickets: list, gates: dict | None = None) -> str:
+    """Write the run's state into the plan's runner-owned markers, and nothing else.
+
+    `gates` maps (phase number, command) for a phase gate, or (None, command)
+    for a final gate, to "pass", "fail", "skipped" or "pending". Only task
+    lines, gate lines and phase headings change, so text a person wrote in the
+    plan is left byte for byte as it was.
+    """
+    gates = gates or {}
+    crlf = "\r\n" in body
+    lines = body.replace("\r\n", "\n").split("\n")
+    by_key = {(t.plan_phase, t.plan_task): t for t in tickets if t.plan_task}
+    section = None
+    phase = None
+    in_gate = False
+    in_fence = False
+    headings: dict[int, int] = {}
+    for i, line in enumerate(lines):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
+        h2 = _H2.match(line)
+        if h2:
+            section, phase, in_gate = h2.group(1), None, False
+            continue
+        task = split_line(line)
+        if section == "Implementation Phases":
+            match = _PHASE.match(line)
+            if match:
+                phase, in_gate = int(match.group(1)), False
+                headings[phase] = i
+                continue
+            heading = _TASK_HEADING.match(line)
+            if heading:
+                in_gate = "testing strategy" in heading.group(1).lower()
+                continue
+            if task is None or phase is None:
+                continue
+            if in_gate:
+                command = _COMMAND.search(task.text)
+                if command:
+                    status = gates.get((phase, command.group(1).strip()))
+                    lines[i] = render_line(_gate_line(task, status))
+            elif (phase, task.text) in by_key:
+                lines[i] = render_line(_ticket_line(task, by_key[(phase, task.text)]))
+        elif section == "Validation Commands" and task is not None:
+            command = _COMMAND.search(task.text)
+            if command:
+                lines[i] = render_line(_gate_line(task, gates.get((None, command.group(1).strip()))))
+    for number, index in headings.items():
+        mine = [t for t in tickets if t.plan_phase == number]
+        statuses = [s for (p, _), s in gates.items() if p == number]
+        status = _phase_status(mine, statuses)
+        line = re.sub(r" · `(idle|wip|done|failed)`\s*$", "", lines[index])
+        lines[index] = f"{line} · `{status}`"
+    text = "\n".join(lines)
+    return text.replace("\n", "\r\n") if crlf else text
+
+
+class PlanBodyMirror:
+    """Mirror run state into the plan issue's body: the GitHub side of rewrite()."""
+
+    def __init__(self, repo: str, number: int, fetch=None, edit=None):
+        from . import github_io
+
+        self.repo = repo
+        self.number = number
+        self._fetch = fetch or (lambda: github_io.fetch_issue(str(number), repo=repo)["body"])
+        self._edit = edit or (lambda body: github_io.edit_issue_body(repo, number, body))
+
+    def sync(self, tickets: list, gates: dict | None = None) -> bool:
+        body = self._fetch() or ""
+        updated = rewrite(body, tickets, gates)
+        if updated == body:
+            return False
+        self._edit(updated)
+        return True

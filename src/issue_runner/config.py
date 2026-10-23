@@ -133,6 +133,7 @@ class RunnerConfig:
     plan_from_issue: bool = False  # --plan-from-issue; never from runner.toml
     run_plan_commands: bool = False  # --run-plan-commands; never from runner.toml
     plan_issue: object | None = None  # the parsed plan for --plan-from-issue, set by the CLI
+    plan_mirror: object | None = None  # PlanBodyMirror for --plan-from-issue, set by the CLI
     control: RunControl = field(default_factory=RunControl, repr=False)
 
     def role(self, name: str) -> RoleConfig:

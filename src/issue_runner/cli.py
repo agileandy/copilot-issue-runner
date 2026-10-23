@@ -377,6 +377,8 @@ def main(argv=None) -> int:
         except (plan_issue.PlanIssueError, PlanError) as e:
             print(f"error: #{issue.get('number')}: {e}", file=sys.stderr)
             return 2
+        if cfg.repo and not args.dry_run:
+            cfg.plan_mirror = plan_issue.PlanBodyMirror(cfg.repo, int(issue["number"]))
 
     post = None
     if args.agent and not args.dry_run:
