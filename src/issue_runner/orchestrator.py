@@ -621,14 +621,14 @@ def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            pass  # the whole group already exited between the timeout and the kill
         proc.communicate()
         return False, f"timed out after {cfg.test_timeout_s}s"
     finally:
         try:
             os.killpg(proc.pid, signal.SIGKILL)  # background children left after a clean exit
         except (ProcessLookupError, PermissionError):
-            pass
+            pass  # no process is left in the group, so there is nothing to stop
     result = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
     tail = (result.stdout + result.stderr).strip().splitlines()
     # a gate that commits, resets or switches branch would publish unverified history
