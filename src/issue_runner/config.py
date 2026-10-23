@@ -130,6 +130,9 @@ class RunnerConfig:
     deploy: bool = False
     pre_pr: PrePrConfig = field(default_factory=PrePrConfig)
     preflight: object | None = None  # set by the CLI for --deploy; never from runner.toml
+    plan_from_issue: bool = False  # --plan-from-issue; never from runner.toml
+    run_plan_commands: bool = False  # --run-plan-commands; never from runner.toml
+    plan_issue: object | None = None  # the parsed plan for --plan-from-issue, set by the CLI
     control: RunControl = field(default_factory=RunControl, repr=False)
 
     def role(self, name: str) -> RoleConfig:

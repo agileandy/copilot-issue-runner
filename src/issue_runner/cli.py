@@ -14,6 +14,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from . import plan_issue
 from .budget import BudgetExhausted
 from .config import ROLES, ConfigError, RoleConfig, load_config, validate_config
 from .control import stop_signals
@@ -84,6 +85,16 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         help="do not mirror tickets as GitHub sub-issues",
     )
     p.add_argument("--plan-only", action="store_true", help="stop after the plan phase")
+    p.add_argument(
+        "--plan-from-issue",
+        action="store_true",
+        help="build from the plan-gh plan in the issue body (one ticket per task) instead of planning",
+    )
+    p.add_argument(
+        "--run-plan-commands",
+        action="store_true",
+        help="with --plan-from-issue: run the plan's Testing Strategy and Validation Commands as gates",
+    )
     p.add_argument(
         "--no-pr",
         action="store_true",
@@ -174,6 +185,8 @@ def _load_issue(args, cfg, repo_dir: Path) -> dict:
             cfg.tickets_backend = GithubTickets(cfg.repo)
         return fetch_issue(args.issue, repo=cfg.repo)
     info = resolve(repo_dir)
+    if info.kind == "gitea" and cfg.plan_from_issue:
+        raise TrackerError("--plan-from-issue needs a GitHub issue; this origin is Gitea")
     if info.kind == "gitea":
         import os
 
@@ -216,6 +229,27 @@ def main(argv=None) -> int:
 
     if args.update_pr is not None:
         return _update_pr(args)
+
+    if args.run_plan_commands and not args.plan_from_issue:
+        print("error: --run-plan-commands only applies with --plan-from-issue", file=sys.stderr)
+        return 2
+
+    if args.plan_from_issue:
+        conflicts = [
+            flag
+            for flag, value in (
+                ("--issue-file", args.issue_file),
+                ("--demo", args.demo),
+                ("--deploy", args.deploy),
+            )
+            if value
+        ]
+        if conflicts:
+            print(
+                f"error: --plan-from-issue cannot be used with {', '.join(conflicts)}",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.deploy and DEPLOY_BROKEN:
         print(
@@ -288,6 +322,9 @@ def main(argv=None) -> int:
         cfg.open_pr = True
     if args.retry_blocked:
         cfg.retry_blocked = True
+    if args.plan_from_issue:
+        cfg.plan_from_issue = True
+        cfg.run_plan_commands = args.run_plan_commands
     if args.visual:
         cfg.visual = True
     if args.agent and not args.visual:
@@ -334,6 +371,13 @@ def main(argv=None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    if cfg.plan_from_issue:
+        try:
+            cfg.plan_issue = plan_issue.parse(issue.get("body") or "", issue.get("title", ""))
+        except (plan_issue.PlanIssueError, PlanError) as e:
+            print(f"error: #{issue.get('number')}: {e}", file=sys.stderr)
+            return 2
+
     post = None
     if args.agent and not args.dry_run:
         post = _summary_poster(cfg, repo_dir, issue, args.comment_issue)
@@ -364,6 +408,15 @@ def main(argv=None) -> int:
                 logging.getLogger("issue_runner").info(line)
 
     client = CopilotClient(cfg)
+    if args.dry_run and cfg.plan_issue is not None:
+        tickets = cfg.plan_issue.tickets
+        print(f"dry run — no planner call; {len(tickets)} tickets from the plan issue:")
+        for t in tickets:
+            print(
+                f"  {t.id}. [phase {t.plan_phase}] [{t.status}] {t.title}"
+                f" — assert: {t.test_assertion}"
+            )
+        return 0
     if args.dry_run:
         preview = dict(issue, number="<new clone>") if args.demo else issue
         prompt = build_plan_prompt(

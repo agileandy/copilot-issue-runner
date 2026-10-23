@@ -1453,3 +1453,109 @@ def test_validate_config_rejects_a_negative_pre_pr_max_rounds(tmp_path):
     (tmp_path / "runner.toml").write_text("[pre_pr]\nmax_rounds = -1\n")
     with pytest.raises(ConfigError, match="pre_pr.*max_rounds"):
         validate_config(load_config(tmp_path))
+
+
+PLAN_BODY = (Path(__file__).parent / "fixtures" / "plan_gh_issue.md").read_text()
+
+
+def _plan_repo(tmp_path, monkeypatch, body=PLAN_BODY):
+    from issue_runner import cli
+
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    monkeypatch.setattr(
+        cli,
+        "fetch_issue",
+        lambda ref, repo=None: {"number": 7, "title": "Plan: Limits", "body": body, "url": "u"},
+    )
+    return repo
+
+
+def test_plan_from_issue_flags_reach_config(tmp_path, monkeypatch):
+    from issue_runner import cli
+    from issue_runner.orchestrator import RunReport
+
+    repo = _plan_repo(tmp_path, monkeypatch)
+    seen = {}
+
+    def capture(cfg, client, issue, plan_only=False):
+        seen.update(
+            flag=cfg.plan_from_issue,
+            commands=cfg.run_plan_commands,
+            tickets=[t.title for t in cfg.plan_issue.tickets],
+        )
+        return RunReport()
+
+    monkeypatch.setattr(cli, "run_issue", capture)
+    args = build_parser().parse_args(["7", "--plan-from-issue", "--run-plan-commands"])
+    assert (args.plan_from_issue, args.run_plan_commands) == (True, True)
+
+    cli.main(
+        ["7", "--dir", str(repo), "--repo", "o/r", "--no-github-tickets"]
+        + ["--plan-from-issue", "--run-plan-commands"]
+    )
+
+    assert seen == {
+        "flag": True,
+        "commands": True,
+        "tickets": ["Add TokenBucket", "Refill over time", "Reject over-limit requests"],
+    }
+
+
+def test_run_plan_commands_needs_plan_from_issue(tmp_path, capsys):
+    assert main(["7", "--dir", str(tmp_path), "--run-plan-commands"]) == 2
+    assert "--plan-from-issue" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra, flag",
+    [
+        (["--issue-file", "x.md"], "--issue-file"),
+        (["--demo"], "--demo"),
+        (["7", "--deploy"], "--deploy"),
+    ],
+)
+def test_plan_from_issue_refuses_incompatible_modes(tmp_path, capsys, extra, flag):
+    assert main([*extra, "--dir", str(tmp_path), "--plan-from-issue"]) == 2
+    err = capsys.readouterr().err
+    assert "--plan-from-issue" in err and flag in err
+
+
+def test_plan_from_issue_refuses_gitea(tmp_path, capsys):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    git_init(repo)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "http://gitea.local:3000/Org/thing.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    assert main(["1", "--dir", str(repo), "--plan-from-issue"]) == 2
+    err = capsys.readouterr().err
+    assert "--plan-from-issue" in err and "Gitea" in err
+
+
+def test_plan_from_issue_refuses_a_body_that_is_not_a_plan(tmp_path, monkeypatch, capsys):
+    repo = _plan_repo(tmp_path, monkeypatch, body="just an issue")
+
+    assert main(["7", "--dir", str(repo), "--repo", "o/r", "--plan-from-issue"]) == 2
+    assert "plan-gh:plan v1" in capsys.readouterr().err
+
+
+def test_plan_from_issue_dry_run_lists_tickets_without_a_planner_call(
+    tmp_path, monkeypatch, capsys
+):
+    repo = _plan_repo(tmp_path, monkeypatch)
+    fake = make_fake_copilot(tmp_path, "this binary must not be called")
+
+    rc = main(
+        ["7", "--dir", str(repo), "--repo", "o/r", "--copilot-cmd", str(fake)]
+        + ["--plan-from-issue", "--dry-run"]
+    )
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "no planner call" in out and "Reject over-limit requests — assert:" in out
