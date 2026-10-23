@@ -112,7 +112,10 @@ def _command(line: str) -> str:
     found = _COMMAND.search(line)
     if not found:
         raise PlanIssueError(f"gate checkbox has no `command`: {line!r}")
-    return found.group(1).strip()
+    command = found.group(1).strip()
+    if not command:
+        raise PlanIssueError(f"gate checkbox has an empty `command`: {line!r}")
+    return command
 
 
 def parse(body: str, title: str = "") -> ParsedPlan:

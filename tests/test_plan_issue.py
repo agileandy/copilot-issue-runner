@@ -132,3 +132,10 @@ def test_an_empty_assertion_is_refused():
 
     with pytest.raises(plan_issue.PlanIssueError, match="Refill over time"):
         plan_issue.parse(body)
+
+
+def test_a_whitespace_only_gate_command_is_refused():
+    body = FIXTURE.replace("`uv run pytest tests/test_search.py`", "`   `")
+
+    with pytest.raises(plan_issue.PlanIssueError, match="search enforces the limit"):
+        plan_issue.parse(body)

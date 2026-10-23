@@ -1388,6 +1388,27 @@ def test_a_failing_final_gate_opens_no_pull_request(git_repo, cfg, pull_requests
     assert pull_requests.created == []
 
 
+def test_a_final_gate_that_moves_the_branch_fails(git_repo, cfg, pull_requests):
+    from issue_runner import plan_issue
+
+    cfg.repo = "owner/repo"
+    cfg.run_plan_commands = True
+    cfg.plan_issue = plan_issue.parse(
+        gated_plan_body(
+            [("One", [("subtract ints", "subtract(5,3) == 2")], ["true"])],
+            ["git commit --allow-empty -m sneaky"],
+        )
+    )
+
+    client = FakeClient(one_ticket_script(git_repo))
+    report = run_issue(cfg, client, ISSUE, state_dir=git_repo / ".state")
+
+    assert any(
+        d.startswith("final gate FAILED: git commit --allow-empty -m sneaky") for d in report.details
+    )
+    assert pull_requests.created == []
+
+
 def test_plan_gates_do_not_run_without_consent(git_repo, cfg, pull_requests):
     from issue_runner import plan_issue
 

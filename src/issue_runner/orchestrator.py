@@ -601,6 +601,8 @@ def _plan_gates_pass(
 
 def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
     before = devops.changed_paths(cfg.repo_dir)
+    head_before = devops.head_commit(cfg.repo_dir)
+    branch_before = devops.current_branch(cfg.repo_dir)
     try:
         result = subprocess.run(
             ["sh", "-c", command],
@@ -613,6 +615,13 @@ def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"timed out after {cfg.test_timeout_s}s"
     tail = (result.stdout + result.stderr).strip().splitlines()
+    # a gate that commits, resets or switches branch would publish unverified history
+    branch_after = devops.current_branch(cfg.repo_dir)
+    if branch_after != branch_before:
+        return False, f"changed the run branch: {branch_before or '(detached)'} -> {branch_after or '(detached)'}"
+    head_after = devops.head_commit(cfg.repo_dir)
+    if head_after != head_before:
+        return False, f"changed the run branch: HEAD {head_before[:12]} -> {head_after[:12]}"
     left = sorted(set(devops.changed_paths(cfg.repo_dir)) - set(before))
     if left:
         # a passing command that changed the worktree would publish a branch without
