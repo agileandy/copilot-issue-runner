@@ -1503,3 +1503,18 @@ def test_a_gate_that_changes_the_worktree_fails(git_repo, cfg, pull_requests):
         for d in report.details
     )
     assert pull_requests.created == []
+
+
+def test_a_timed_out_gate_stops_everything_it_started(git_repo, cfg):
+    import time
+
+    from issue_runner.orchestrator import _run_plan_command
+
+    cfg.test_timeout_s = 1
+    late = git_repo / "late.txt"
+
+    passed, output = _run_plan_command(cfg, f"(sleep 2; touch {late}) & sleep 30")
+    time.sleep(3)
+
+    assert (passed, output) == (False, "timed out after 1s")
+    assert not late.exists()

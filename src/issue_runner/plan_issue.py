@@ -200,7 +200,12 @@ def parse(body: str, title: str = "") -> ParsedPlan:
             ticket.status = "done"
 
     final_gates = []
-    for task in map(split_line, sections.get("Validation Commands", [])):
+    in_fence = False
+    for line in sections.get("Validation Commands", []):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        task = None if in_fence else split_line(line)
         if task is not None:
             final_gates.append(_command(task.text))
             if task.checked:

@@ -139,3 +139,12 @@ def test_a_whitespace_only_gate_command_is_refused():
 
     with pytest.raises(plan_issue.PlanIssueError, match="search enforces the limit"):
         plan_issue.parse(body)
+
+
+def test_a_fenced_example_under_validation_commands_is_not_a_gate():
+    body = FIXTURE.replace(
+        "## Validation Commands\n\n",
+        "## Validation Commands\n\n```markdown\n- [ ] `rm -rf build` — example only\n```\n\n",
+    )
+
+    assert plan_issue.parse(body).final_gates == ["uv run pytest"]

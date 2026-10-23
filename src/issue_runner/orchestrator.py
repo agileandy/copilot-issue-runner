@@ -12,6 +12,8 @@ Unaccepted edits remain in the run workspace and never enter a later ticket.
 import base64
 import hashlib
 import logging
+import os
+import signal
 import subprocess
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -603,17 +605,31 @@ def _run_plan_command(cfg: RunnerConfig, command: str) -> tuple[bool, str]:
     before = devops.changed_paths(cfg.repo_dir)
     head_before = devops.head_commit(cfg.repo_dir)
     branch_before = devops.current_branch(cfg.repo_dir)
+    # its own process group, so a timeout stops everything the command started,
+    # not just the shell, and nothing keeps changing the worktree afterwards
+    proc = subprocess.Popen(
+        ["sh", "-c", command],
+        cwd=cfg.repo_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        result = subprocess.run(
-            ["sh", "-c", command],
-            cwd=cfg.repo_dir,
-            capture_output=True,
-            text=True,
-            timeout=cfg.test_timeout_s,
-            check=False,
-        )
+        stdout, stderr = proc.communicate(timeout=cfg.test_timeout_s)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
         return False, f"timed out after {cfg.test_timeout_s}s"
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # background children left after a clean exit
+        except (ProcessLookupError, PermissionError):
+            pass
+    result = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
     tail = (result.stdout + result.stderr).strip().splitlines()
     # a gate that commits, resets or switches branch would publish unverified history
     branch_after = devops.current_branch(cfg.repo_dir)
