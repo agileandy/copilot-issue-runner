@@ -1411,3 +1411,16 @@ def test_plan_gates_do_not_run_without_consent(git_repo, cfg, pull_requests):
     assert report.details.count(f"plan gate not run (no --run-plan-commands): touch {marker}") == 2
     assert f"- [ ] `touch {marker}` — gate" in state["body"]
     assert "### Phase 1: One · `done`" in state["body"]
+
+
+def test_gates_already_ticked_in_the_plan_start_as_passed(git_repo, cfg):
+    from issue_runner import plan_issue
+
+    body = gated_plan_body([("One", [("subtract ints", "subtract(5,3) == 2")], ["false"])], ["false"])
+    cfg.plan_issue = plan_issue.parse(body.replace("- [ ] `false`", "- [x] `false`"))
+
+    run_issue(cfg, FakeClient([]), ISSUE, state_dir=git_repo / ".state", plan_only=True)
+
+    store = TicketStore(git_repo / ".state", issue_ref="17")
+    store.load()
+    assert [status for _, _, status in store.plan_gates] == ["pass", "pass"]

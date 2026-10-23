@@ -77,6 +77,7 @@ class ParsedPlan:
     phase_gates: dict[int, list[str]] = field(default_factory=dict)
     final_gates: list[str] = field(default_factory=list)
     fingerprint: str = ""
+    gates_ticked: set = field(default_factory=set)  # (phase or None, command) already ticked
 
 
 def _sections(body: str) -> dict[str, list[str]]:
@@ -116,6 +117,7 @@ def parse(body: str, title: str = "") -> ParsedPlan:
 
     raw: list[dict] = []
     keys: list[tuple[int, str, bool]] = []
+    gates_ticked: set = set()
     phase_names: dict[int, str] = {}
     phase_gates: dict[int, list[str]] = {}
     phase = None
@@ -151,6 +153,8 @@ def parse(body: str, title: str = "") -> ParsedPlan:
             continue
         if in_gate:
             phase_gates[phase].append(_command(task.text))
+            if task.checked:
+                gates_ticked.add((phase, phase_gates[phase][-1]))
             continue
         if ASSERT_SEP not in task.text:
             raise PlanIssueError(f"task has no '{ASSERT_SEP.strip()}' test assertion: {line!r}")
@@ -179,11 +183,12 @@ def parse(body: str, title: str = "") -> ParsedPlan:
         if checked:
             ticket.status = "done"
 
-    final_gates = [
-        _command(task.text)
-        for task in map(split_line, sections.get("Validation Commands", []))
-        if task is not None
-    ]
+    final_gates = []
+    for task in map(split_line, sections.get("Validation Commands", [])):
+        if task is not None:
+            final_gates.append(_command(task.text))
+            if task.checked:
+                gates_ticked.add((None, final_gates[-1]))
     shape = {
         "tasks": [[p, t] for p, t, _ in keys],
         "phase_gates": {str(k): v for k, v in phase_gates.items()},
@@ -198,6 +203,7 @@ def parse(body: str, title: str = "") -> ParsedPlan:
         phase_gates=phase_gates,
         final_gates=final_gates,
         fingerprint=fingerprint,
+        gates_ticked=gates_ticked,
     )
 
 

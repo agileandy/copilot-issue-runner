@@ -101,3 +101,13 @@ def test_readme_example_parses():
     plan = plan_issue.parse(example)
 
     assert plan.tickets and plan.final_gates
+
+
+def test_ticked_gates_are_reported_so_a_run_does_not_untick_them():
+    body = FIXTURE.replace(
+        "- [ ] `uv run pytest tests/test_limiter.py`", "- [x] `uv run pytest tests/test_limiter.py`"
+    ).replace("- [ ] `uv run pytest` —", "- [x] `uv run pytest` —")
+
+    plan = plan_issue.parse(body)
+
+    assert plan.gates_ticked == {(1, "uv run pytest tests/test_limiter.py"), (None, "uv run pytest")}

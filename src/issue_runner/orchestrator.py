@@ -379,11 +379,16 @@ def _run_issue(
         store.set_tickets(tickets)
         if cfg.plan_issue is not None:
             store.plan_fingerprint = cfg.plan_issue.fingerprint
-            store.plan_gates = [
-                [phase, command, "pending"]
+            ticked = cfg.plan_issue.gates_ticked
+            gates = [
+                (phase, command)
                 for phase, commands in sorted(cfg.plan_issue.phase_gates.items())
                 for command in commands
-            ] + [[None, command, "pending"] for command in cfg.plan_issue.final_gates]
+            ] + [(None, command) for command in cfg.plan_issue.final_gates]
+            store.plan_gates = [
+                [phase, command, "pass" if (phase, command) in ticked else "pending"]
+                for phase, command in gates
+            ]
         if where is not None:
             store.delivery = Delivery(
                 criteria=delivery.criteria_records(cfg.preflight.criteria, where, tickets)
