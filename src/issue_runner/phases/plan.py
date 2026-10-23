@@ -238,9 +238,17 @@ def _validate(data: dict, criteria_ids=None, first_id: int = 1, existing_ids=())
     known = set(existing_ids) | set(range(first_id, first_id + len(raw)))
     tickets = []
     for i, item in enumerate(raw, start=first_id):
+        if not isinstance(item, dict):
+            raise PlanError(f"ticket {i} must be a JSON object")
         for field in REQUIRED_FIELDS:
-            if not item.get(field):
+            if field not in item or item[field] is None:
                 raise PlanError(f"ticket {i} is missing required field {field!r}")
+            value = item[field]
+            if not isinstance(value, str) or not value.strip():
+                raise PlanError(f"ticket {i} field {field!r} must be a nonempty string")
+        files_hint = item.get("files_hint", [])
+        if not isinstance(files_hint, list) or not all(isinstance(f, str) for f in files_hint):
+            raise PlanError(f"ticket {i} field 'files_hint' must be a list of strings")
         for field in REQUIRED_FIELDS:
             demand = live_evidence_demand(str(item[field]))
             if demand:
@@ -264,7 +272,7 @@ def _validate(data: dict, criteria_ids=None, first_id: int = 1, existing_ids=())
                 title=item["title"],
                 description=item["description"],
                 test_assertion=item["test_assertion"],
-                files_hint=list(item.get("files_hint", [])),
+                files_hint=files_hint,
                 depends_on=depends_on,
                 criteria=named,
             )
